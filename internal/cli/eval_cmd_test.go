@@ -448,3 +448,23 @@ func TestResolveEvalConfigurationsRefusesBadPositionals(t *testing.T) {
 		t.Errorf("duplicate paid configuration was not refused with repetition guidance: %v", err)
 	}
 }
+
+// A plan the options make impossible is rejected input (exit 2, as the help page says), not a run
+// that could not start.
+func TestEvalRunRefusesAnImpossiblePlanAsInput(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	suite := trialSuite(t)
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}}
+	loopConfig := filepath.Join(t.TempDir(), "loop.yaml")
+	if err := os.WriteFile(loopConfig, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range map[string][]string{
+		"--loop-config on an agent suite": {suite.Path, "codex", "--timeout", "10m", "--loop-config", loopConfig, "--dry-run"},
+		"--timeout below a case budget":   {suite.Path, "codex", "--timeout", "1s", "--dry-run"},
+	} {
+		if code, err := a.evalRun(args); code != 2 || err == nil {
+			t.Errorf("%s = (%d, %v), want exit 2", name, code, err)
+		}
+	}
+}

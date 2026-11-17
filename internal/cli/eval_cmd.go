@@ -166,7 +166,9 @@ func (a *app) evalRun(args []string) (int, error) {
 	}
 	plan, err := eval.BuildPlan(suite, configs, opts)
 	if err != nil {
-		return 1, err
+		// The options make this plan impossible (--loop-config on an agent suite, a --timeout below
+		// a case's budget): rejected input, before anything was launched.
+		return refusalExit(err), err
 	}
 	// Resolve the loop config to freeze: the suite's own loop_config is relative to the suite (the
 	// loader validated it does not escape or pass a symlink), but a --loop-config OVERRIDE is the
