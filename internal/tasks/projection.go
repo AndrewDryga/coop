@@ -1395,7 +1395,8 @@ func snapshotForkProjection(authorityRepo, root, id string, expected ForkTaskOwn
 	if err != nil {
 		return ProjectionResult{}, "", err
 	}
-	// The snapshot is made, filled and removed through the fork records' own folders, never by name.
+	// The snapshot is made and filled through the fork records' own folders, never by name; callers
+	// remove it by path once it is hashed.
 	snapshots := filepath.Join(forkspace.StateDir(authorityRepo), "projection-snapshots")
 	state, err := openStateRoot(authorityRepo, snapshots, true)
 	if err != nil {

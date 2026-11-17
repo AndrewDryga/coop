@@ -102,7 +102,7 @@ func truncate(s string, n int) string {
 
 // padRight right-pads s to w columns counted in RUNES — unlike fmt's %-Ns, which counts bytes and
 // so mis-pads a value carrying a multibyte glyph (e.g. a truncated name's "…"). internal/cli/util.go
-// keeps its own copy (used well beyond the task views) for the same reason gitOut does; see git.go.
+// keeps its own copy, used well beyond the task views.
 func padRight(s string, w int) string {
 	if n := utf8.RuneCountInString(s); n < w {
 		return s + strings.Repeat(" ", w-n)
@@ -131,8 +131,8 @@ func unknownOptionErr(option, command string, valid []string) error {
 // flagValue parses one `--flag value` or `--flag=value` occurrence at args[i]. ok reports whether
 // args[i] names flag at all; ok can be true with a non-nil err (e.g. a bare trailing --flag with no
 // value). consumed is how many args[i:] elements the flag+value occupy (1 for `--flag=value`, 2 for
-// `--flag value`) — internal/cli/commands.go keeps its own copy (used across many non-task flags) for
-// the same reason gitOut does; see git.go.
+// `--flag value`) — internal/cli/commands.go keeps its own copy, used across many
+// non-task flags.
 func flagValue(args []string, i int, flag string) (val string, consumed int, ok bool, err error) {
 	switch a := args[i]; {
 	case a == flag:

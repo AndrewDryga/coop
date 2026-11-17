@@ -582,7 +582,7 @@ const watchRefresh = 10 * time.Second
 // included: about 70 ms for a 650-task queue, so a board that re-read on every 400 ms tick spent a
 // third of a CPU showing nothing new. A tick re-reads only when something the board lists changed
 // on disk, or after watchRefresh. A held lease turns stalled by its heartbeat's age alone, so the
-// lease of each task in progress is still looked at every tick.
+// lease of each task in progress that no fork owns is still looked at every tick.
 type boardCache struct {
 	roots  []string
 	read   func() boardRead
