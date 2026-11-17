@@ -3,7 +3,7 @@
 # Reads the tool call on stdin; only acts on `git commit`. Fails open.
 input=$(cat)
 echo "$input" | grep -q '"command"[^}]*git commit' || exit 0
-staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
+staged=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null) || exit 0
 # Go — collect into an array so a path with a space stays one argument to gofmt.
 go_files=()
 while IFS= read -r file; do

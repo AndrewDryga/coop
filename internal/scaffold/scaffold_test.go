@@ -745,10 +745,12 @@ func assertProjectClaudeCommitGate(t *testing.T, data []byte) {
 		t.Fatal(err)
 	}
 	groups := settings.Hooks["PreToolUse"]
-	if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Command != `$CLAUDE_PROJECT_DIR/.claude/hooks/commit-gate.sh` {
+	if len(groups) != 1 || len(groups[0].Hooks) != 1 || groups[0].Hooks[0].Command != `"$CLAUDE_PROJECT_DIR"/.claude/hooks/commit-gate.sh` {
 		t.Fatalf("project commit gate command missing or changed: %s", data)
 	}
-	projectDir := t.TempDir()
+	// A space in the project path must not split the command: an unquoted one exits 127, which
+	// Claude Code reads as a non-blocking error, and the gate silently stops guarding commits.
+	projectDir := filepath.Join(t.TempDir(), "my project")
 	hook := filepath.Join(projectDir, ".claude/hooks/commit-gate.sh")
 	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
 		t.Fatal(err)

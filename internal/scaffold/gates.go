@@ -341,7 +341,7 @@ func preCommitHook(langs []string) string {
 # check the way they bypass Claude-only hooks. Fast by design. Skip once: git commit --no-verify.
 set -f          # the file lists below are word-split on purpose; don't also glob-expand a name
 IFS=$'\n'       # …and split only on newlines, so a staged filename with a space stays one path
-staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
+staged=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null) || exit 0
 
 ` + gateBody(langs, "1") + "\n\nexit 0\n"
 }

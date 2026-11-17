@@ -510,7 +510,7 @@ set -f          # the file lists below are word-split on purpose; don't also glo
 IFS=$'\n'       # …and split only on newlines, so a staged filename with a space stays one path
 input=$(cat)
 echo "$input" | grep -q '"command"[^}]*git commit' || exit 0
-staged=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null) || exit 0
+staged=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null) || exit 0
 
 `, Suffix: "\n\nexit 0\n", FailureCode: "2"},
 	}

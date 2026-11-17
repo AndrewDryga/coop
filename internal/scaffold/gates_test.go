@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 )
 
@@ -370,6 +372,93 @@ func TestPreCommitHookStopsWhenTheFormatterFails(t *testing.T) {
 			}
 			if string(out) != tc.want {
 				t.Errorf("the commit printed %q, want %q", out, tc.want)
+			}
+		})
+	}
+}
+
+// A renamed file is staged as R, not A or M: `git mv a.go b.go` plus an unformatted edit must still
+// be checked by every gate — the Git pre-commit hook (exit 1), the Claude gate coop scaffolds
+// (exit 2) and this repository's own Claude gate (exit 2).
+func TestCommitGatesCheckRenamedFiles(t *testing.T) {
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	claude, ok := agents.Get("claude")
+	if !ok || claude.Scaffold().CommitGate == nil {
+		t.Fatal("claude has no commit gate")
+	}
+	gate := claude.Scaffold().CommitGate
+	repoGate, err := os.ReadFile(filepath.Join("..", "..", ".claude", "hooks", "commit-gate.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The stub gofmt names every file it is given as needing a format, as gofmt -l does.
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "gofmt"), []byte("#!/bin/sh\nfor a; do case \"$a\" in -*) ;; *) echo \"$a\" ;; esac; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := "PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH")
+	noConfig := []string{"GIT_CONFIG_GLOBAL=" + filepath.Join(t.TempDir(), "noglobal"),
+		"GIT_CONFIG_SYSTEM=" + filepath.Join(t.TempDir(), "nosystem")}
+	// The edit is small next to the file, so Git stages it as a rename rather than a delete and an add.
+	base := "package a\n\n" + strings.Repeat("// Unchanged context that keeps the edited file a rename.\n", 20)
+	renamed := func(t *testing.T) string {
+		t.Helper()
+		repo, git := gitrepo.New(t)
+		if err := os.WriteFile(filepath.Join(repo, "a.go"), []byte(base), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "a.go")
+		git("-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "base")
+		git("mv", "a.go", "b.go")
+		if err := os.WriteFile(filepath.Join(repo, "b.go"), []byte(base+"func  F() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "b.go")
+		status := exec.Command(gitBin, "diff", "--cached", "--name-status")
+		status.Dir = repo
+		if out, err := status.Output(); err != nil || !strings.HasPrefix(string(out), "R") {
+			t.Fatalf("fixture is not a staged rename (%v): %q", err, out)
+		}
+		return repo
+	}
+
+	t.Run("git pre-commit hook", func(t *testing.T) {
+		repo := renamed(t)
+		hook := filepath.Join(repo, ".githooks", "pre-commit")
+		if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(hook, []byte(preCommitHook([]string{"go"})), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(gitBin, "-c", "core.hooksPath=.githooks", "-c", "maintenance.auto=false", "commit", "-q", "-m", "rename")
+		cmd.Dir = repo
+		cmd.Env = append(append(os.Environ(), path), noConfig...)
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "b.go") {
+			t.Fatalf("a renamed unformatted file committed (err %v):\n%s", err, out)
+		}
+	})
+	for name, script := range map[string]string{
+		"scaffolded claude gate":  gate.Prefix + gateBody([]string{"go"}, gate.FailureCode) + gate.Suffix,
+		"this repo's claude gate": string(repoGate),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := renamed(t)
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Dir = repo
+			cmd.Env = append(append(os.Environ(), path), noConfig...)
+			cmd.Stdin = strings.NewReader(`{"tool_input":{"command":"git commit -m rename"}}`)
+			out, err := cmd.CombinedOutput()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "b.go") {
+				t.Fatalf("a renamed unformatted file passed the gate (err %v), want exit 2 naming b.go:\n%s", err, out)
 			}
 		})
 	}
