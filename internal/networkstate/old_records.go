@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -114,13 +115,40 @@ type recordHead struct {
 	Project string `json:"project"`
 }
 
+type cachedHead struct {
+	info os.FileInfo
+	head recordHead
+	ok   bool
+}
+
+// fileHead reads a record's version and project. A head is kept while the file stays the same file
+// (same inode, size and modification time): every project lookup scans each run record, one launch
+// looks its project up several times, and a host keeps thousands of runs. A record replaced or
+// rewritten since is read again, so an old record that appears later is still found.
 func (s *Store) fileHead(name string) (recordHead, bool) {
-	data, err := s.read(name)
-	var head recordHead
-	if err != nil || json.Unmarshal(data, &head) != nil {
+	info, err := s.root.Lstat(name)
+	if err != nil {
 		return recordHead{}, false
 	}
-	return head, true
+	s.headsMu.Lock()
+	cached, hit := s.heads[name]
+	s.headsMu.Unlock()
+	if hit && os.SameFile(cached.info, info) && cached.info.Size() == info.Size() && cached.info.ModTime().Equal(info.ModTime()) {
+		return cached.head, cached.ok
+	}
+	data, err := s.read(name)
+	var head recordHead
+	ok := err == nil && json.Unmarshal(data, &head) == nil
+	if !ok {
+		head = recordHead{}
+	}
+	s.headsMu.Lock()
+	if s.heads == nil {
+		s.heads = map[string]cachedHead{}
+	}
+	s.heads[name] = cachedHead{info: info, head: head, ok: ok}
+	s.headsMu.Unlock()
+	return head, ok
 }
 
 // runIsOld reports whether an execution record is below the current version and could be this

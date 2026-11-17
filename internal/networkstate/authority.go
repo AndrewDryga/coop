@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -32,6 +33,12 @@ type Store struct {
 	// afterPublish, set only by tests, runs once a record is in place under its final name: where an
 	// interruption would leave it published and the steps after it undone.
 	afterPublish func(name string) error
+	// onRead, set only by tests, sees each record name read.
+	onRead func(name string)
+	// heads keeps the record heads the old-record scan read, so the several project lookups of
+	// one launch read each run record once. See fileHead.
+	headsMu sync.Mutex
+	heads   map[string]cachedHead
 }
 
 // Open must be given all wholesale mount sources, including repo, companions,
@@ -296,6 +303,9 @@ func (s *Store) removeRecord(name string) error {
 func (s *Store) read(name string) ([]byte, error) {
 	if filepath.Base(name) != name || name == "." || name == ".." {
 		return nil, errors.New("invalid network record name")
+	}
+	if s.onRead != nil {
+		s.onRead(name)
 	}
 	return s.root.ReadFile(name)
 }

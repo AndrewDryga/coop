@@ -271,3 +271,58 @@ func TestExecutionWithAnOldLinuxSupervisorTokenIsRefusedByName(t *testing.T) {
 		t.Fatalf("the refusal changed the run record: %v", err)
 	}
 }
+
+// One launch looks its project up several times on one Store; the old-record scan behind each
+// lookup reads every run record, so it runs once per Store and project, not once per lookup.
+func TestOldRecordScanReadsEachRunOncePerStore(t *testing.T) {
+	setup, record := executionFixture(t)
+	s, err := Open(setup.Path(), nil) // a fresh Store, as each launch opens one
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	name := "execution-" + record.ID + ".json"
+	reads := 0
+	s.onRead = func(read string) {
+		if read == name {
+			reads++
+		}
+	}
+	mode := egress.Filtered
+	input := Admission{InvocationMode: &mode}
+	if _, err := s.admissionPreview(record.Project, input); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := s.Admit(record.Project, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := s.LoadSnapshot(record.Project, snapshot.Fingerprint); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("the run record was read %d times across one launch's lookups; want once", reads)
+	}
+
+	// A record an older coop rewrites afterwards is read again and refuses the project.
+	path := filepath.Join(s.Path(), name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["version"] = 1
+	if data, err = json.Marshal(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Admit(record.Project, input)
+	wantOldRecords(t, err, name)
+}
