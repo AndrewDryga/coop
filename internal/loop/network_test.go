@@ -181,6 +181,24 @@ func TestNetworkLogSummaryRanksAndPointsAtTheReceipts(t *testing.T) {
 	}
 }
 
+// The --debug-on-fail shell is a filtered box too: what it could not reach prints when the shell
+// ends, under its own name, not after the next attempt under the failed attempt's name.
+func TestDebugShellReportsItsOwnNetworkRefusals(t *testing.T) {
+	c := New(&config.Config{Shell: "/bin/bash"}, runtime.Runtime{Name: "true"}, "test", Host{})
+	c.net = newNetworkLog()
+	c.net.setStage("Task attempt 1")
+	c.boxRun = func(spec box.RunSpec) (int, error) {
+		spec.OnNetworkReport(box.NetworkReport{RunID: "shell-run", Denials: []box.NetworkDenial{
+			{Destination: "x.example", Name: "x.example", Basis: "dns", Count: 1},
+		}})
+		return 0, nil
+	}
+	out := captureStderr(t, func() { c.debugShell(t.TempDir(), "image", "claude", "") })
+	if !strings.Contains(out, "Debug shell could not reach 1 remote address") || strings.Contains(out, "Task attempt 1") {
+		t.Errorf("debug shell network report = %q", out)
+	}
+}
+
 // An alert needs no refusal (a large upload, many new connections), so a run with alerts alone
 // says so instead of "Traffic to 0 remote addresses was blocked".
 func TestNetworkLogSummaryWithAlertsOnly(t *testing.T) {

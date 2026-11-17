@@ -28,6 +28,10 @@ func (c *Control) debugShell(repo, img, agent, forkName string) {
 	if forkName != "" {
 		kind = forkspace.ExecutionForkInteractive
 	}
+	// The shell is a filtered box too: print what it could not reach under its own name, now,
+	// rather than after the next attempt under the failed attempt's name.
+	c.net.setStage("Debug shell")
+	defer c.net.finishIteration()
 	_, _ = c.runBox(box.RunSpec{
 		Image: img, Repo: repo, Cmd: []string{c.cfg.Shell}, Agent: agent,
 		Homes: c.cfg.Homes, Network: c.cfg.Network, Cache: c.cfg.Cache,
