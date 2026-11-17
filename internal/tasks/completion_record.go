@@ -34,7 +34,7 @@ func StateTemplateText(labels []string) string {
 	if len(labels) > 1 {
 		verb = "hold"
 	}
-	return "state.md's " + joinWithAnd(labels) + " still " + verb + " the template's <…> text"
+	return "state.md's " + ui.List(labels, "and") + " still " + verb + " the template's <…> text"
 }
 
 // stateTemplateFix is what a person writes in such a field instead. The dash is spelled out: a

@@ -3783,14 +3783,6 @@ func isPlaceholder(s string) bool {
 	return len(s) >= 2 && s[0] == '<' && s[len(s)-1] == '>' && !strings.ContainsAny(s[1:len(s)-1], "<>")
 }
 
-// joinWithAnd reads a list the way a sentence does: "a, b and c".
-func joinWithAnd(parts []string) string {
-	if len(parts) < 2 {
-		return strings.Join(parts, "")
-	}
-	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
-}
-
 func tasksFolderLint(root string) (int, error) {
 	known, err := taskIDsIn([]string{root})
 	if err != nil {
@@ -3928,7 +3920,7 @@ func lintTaskQueue(root string, known map[string]bool) (int, error) {
 				add(t.ID, "not self-contained: "+issue)
 			}
 			if parts := unfilledParts(body); len(parts) > 0 {
-				add(t.ID, "not filled in yet: "+joinWithAnd(parts)+" (an agent that takes the task fills them in first)")
+				add(t.ID, "not filled in yet: "+ui.List(parts, "and")+" (an agent that takes the task fills them in first)")
 			}
 		}
 		// A done task is the shipped record: it says what was done, not what Coop's scaffold asked

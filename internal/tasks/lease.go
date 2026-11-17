@@ -924,7 +924,7 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
 			return nil, TaskLeaseObservation{}, err
 		}
-		observed := observeHeldTaskLease(item, owner.now())
+		observed := observeTaskLease(item, owner.now())
 		if observed.State == leaseUnleased {
 			return nil, TaskLeaseObservation{}, errLeaseCandidateGone
 		}
@@ -1010,18 +1010,14 @@ func TryTaskLease(root string, item Item, owner TaskLeaseOwner) (*TaskLease, Tas
 	return l, TaskLeaseObservation{}, nil
 }
 
-func observeTaskLease(item Item, now time.Time) TaskLeaseObservation {
-	return observeHeldTaskLease(item, now)
-}
-
-// observeHeldTaskLease never creates lease state: task/watch is read-only. An unlocked or missing
+// observeTaskLease never creates lease state: task/watch is read-only. An unlocked or missing
 // lock is unleased even if a crashed controller left stale metadata behind; only a HELD lock means
 // another controller owns the work.
-func observeHeldTaskLease(item Item, now time.Time) TaskLeaseObservation {
+func observeTaskLease(item Item, now time.Time) TaskLeaseObservation {
 	return observeLeaseAt(filepath.Dir(filepath.Dir(item.Dir)), item.ID, now)
 }
 
-// observeLeaseAt is observeHeldTaskLease for task id of the queue at root. The probe is shared, so
+// observeLeaseAt is observeTaskLease for task id of the queue at root. The probe is shared, so
 // it collides only with a real (exclusive) lease, never with another observer or a receipt read.
 func observeLeaseAt(root, id string, now time.Time) TaskLeaseObservation {
 	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_SH|syscall.LOCK_NB)

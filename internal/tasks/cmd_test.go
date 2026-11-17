@@ -1239,7 +1239,7 @@ func TestTasksFolderLintReportsUnfilledTasksAndMissingFrontmatter(t *testing.T) 
 		}
 	}
 	for _, want := range []string{
-		stub + ": not filled in yet: Context, Acceptance criteria, Approach and a subtask",
+		stub + ": not filled in yet: Context, Acceptance criteria, Approach, and a subtask",
 		"2026-01-02-bare: task.md has no frontmatter",
 	} {
 		if !strings.Contains(out, want) {
@@ -1380,7 +1380,7 @@ func TestTaskTemplateFallbackShape(t *testing.T) {
 	if issues := taskShapeIssues(body); len(issues) != 0 {
 		t.Errorf("scaffold has all sections present, want no issues, got %v", issues)
 	}
-	if parts := joinWithAnd(unfilledParts(body)); parts != "Context, Acceptance criteria, Approach and a subtask" {
+	if parts := ui.List(unfilledParts(body), "and"); parts != "Context, Acceptance criteria, Approach, and a subtask" {
 		t.Errorf("unfilled parts of the fallback scaffold = %q", parts)
 	}
 	filled, err := template.render("2026-01-01-task", "Task", "2026-01-01T00:00:00Z",

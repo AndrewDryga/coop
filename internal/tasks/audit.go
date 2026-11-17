@@ -546,7 +546,7 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 		return nil, nil
 	}
 	// Last, so the note never outlives a close that failed; a retry finds the receipt instead.
-	if err := AppendTaskLogStrict(current.Dir, forcedCompletionNote(waived, opts.actor)); err != nil {
+	if err := AppendTaskLogStrict(current.Dir, forcedCompletionNote(waived)); err != nil {
 		return waived, fmt.Errorf("task %s is done, but its log.md could not record the forced close: %w", current.ID, err)
 	}
 	return waived, nil

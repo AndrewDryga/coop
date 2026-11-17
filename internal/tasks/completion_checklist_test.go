@@ -677,14 +677,14 @@ func TestForcedCloseNoteWaitsForTheReceipt(t *testing.T) {
 	}
 }
 
-// The note names the override, the process that ran it when Coop knows one, and what was open.
+// The note names the override and what was open.
 func TestForcedCompletionNote(t *testing.T) {
 	open := &IncompleteChecklistError{ID: "t", Done: 1, Total: 3, Open: []string{"Run the gate", "Review it"}}
-	if got, want := forcedCompletionNote(open, ClaimActor{Label: "claude", PID: 4242}),
-		`Closed with coop tasks done --force by claude (PID 4242) while 2 of 3 checklist items were open: "Run the gate", "Review it".`; got != want {
+	if got, want := forcedCompletionNote(open),
+		`Closed with coop tasks done --force while 2 of 3 checklist items were open: "Run the gate", "Review it".`; got != want {
 		t.Errorf("note = %q\nwant %q", got, want)
 	}
-	if got, want := forcedCompletionNote(&IncompleteChecklistError{ID: "t"}, ClaimActor{}), "Closed with coop tasks done --force without a checklist."; got != want {
+	if got, want := forcedCompletionNote(&IncompleteChecklistError{ID: "t"}), "Closed with coop tasks done --force without a checklist."; got != want {
 		t.Errorf("note = %q\nwant %q", got, want)
 	}
 }

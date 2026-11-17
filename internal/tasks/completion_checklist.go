@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"strconv"
@@ -92,13 +91,11 @@ func requireCurrentCompletedChecklist(taskDir string) error {
 }
 
 // forcedCompletionNote is the log line a person's `coop tasks done --force` leaves, so the archive
-// never reads as verified: the override, who ran it when Coop knows the process, and what was
-// still open. The checklist itself stays as the person left it.
-func forcedCompletionNote(e *IncompleteChecklistError, actor ClaimActor) string {
+// never reads as verified: the override and what was still open. Only a person at a terminal can
+// force a close, and such a claim carries no process. The checklist itself stays as the person
+// left it.
+func forcedCompletionNote(e *IncompleteChecklistError) string {
 	note := "Closed with coop tasks done --force"
-	if actor.PID != 0 {
-		note += fmt.Sprintf(" by %s (PID %d)", cmp.Or(actor.Label, "a process"), actor.PID)
-	}
 	if e.Total == 0 {
 		return note + " without a checklist."
 	}
