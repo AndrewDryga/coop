@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -68,6 +70,46 @@ func TestOutputContractRejectsAmbiguousJSON(t *testing.T) {
 	for _, data := range []string{`{"a":{"answer":1},"b":{"answer":2}}`, `[{"answer":1},{"answer":2}]`, "{}\n\t"} {
 		if err := validator.Validate([]byte(data)); err != nil {
 			t.Fatalf("valid response: %s %v", data, err)
+		}
+	}
+}
+
+// A controller's schema stands alone. A reference to a local file was once opened by the worker,
+// and values from that file came back in validation errors.
+func TestOutputContractRefusesExternalReferences(t *testing.T) {
+	secret := filepath.Join(t.TempDir(), "secret.json")
+	if err := os.WriteFile(secret, []byte(`{"const":"SECRET-VALUE"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contract := func(schema string) *OutputContract {
+		digest := sha256.Sum256([]byte(schema))
+		return &OutputContract{SHA256: hex.EncodeToString(digest[:]), JSONSchema: json.RawMessage(schema)}
+	}
+	for _, schema := range []string{
+		`{"$ref":"file://` + secret + `"}`,
+		`{"$schema":"file://` + secret + `"}`,
+		`{"properties":{"a":{"$ref":"file://` + secret + `#/const"}}}`,
+		`{"$ref":"https://example.com/schema.json"}`,
+		`{"$ref":"file:///nonexistent/coop-audit.json"}`,
+	} {
+		validator, err := CompileOutputContract(contract(schema))
+		if CodeOf(err) != CodeInvalidRequest {
+			t.Errorf("schema %s compiled (err %v)", schema, err)
+			if validator != nil {
+				t.Logf("validation of \"other\": %v", validator.Validate([]byte(`"other"`)))
+			}
+		}
+		if err != nil && strings.Contains(err.Error(), "SECRET-VALUE") {
+			t.Errorf("the refusal quotes the file: %v", err)
+		}
+	}
+	for _, schema := range []string{
+		`{"$defs":{"name":{"type":"string"}},"type":"object","properties":{"name":{"$ref":"#/$defs/name"}}}`,
+		`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"string"}`,
+		`{"$schema":"http://json-schema.org/draft-07/schema#","type":"string"}`,
+	} {
+		if _, err := CompileOutputContract(contract(schema)); err != nil {
+			t.Errorf("self-contained schema %s was refused: %v", schema, err)
 		}
 	}
 }

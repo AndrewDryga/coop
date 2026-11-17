@@ -35,6 +35,10 @@ func CompileOutputContract(contract *OutputContract) (*OutputValidator, error) {
 		return nil, &Error{Code: CodeInvalidRequest, Detail: "output contract is not valid JSON Schema"}
 	}
 	compiler := jsonschema.NewCompiler()
+	// The schema is the controller's, so it must stand alone: the default loader opens local files,
+	// and a "$ref": "file:///..." made the worker read any file its user can. The draft
+	// meta-schemas are embedded and never reach this loader.
+	compiler.UseLoader(jsonschema.SchemeURLLoader{})
 	compiler.AssertFormat()
 	name := "urn:coop:output-contract:" + contract.SHA256
 	if err := compiler.AddResource(name, document); err != nil {
