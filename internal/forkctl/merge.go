@@ -39,6 +39,22 @@ func readForkChanges(repo, ref string) ([]gitdiff.Change, error) {
 	return changes, nil
 }
 
+// configuredSurfaces names the box inputs the PARENT's project.yaml points Coop at, so a fork's
+// change to a Dockerfile or compose file kept outside .agent still counts as running on your
+// machine. A project file that does not load names none: the build or launch that reads it
+// refuses on its own.
+func configuredSurfaces(repo string) hostsurface.Configured {
+	var surfaces hostsurface.Configured
+	if p, err := project.Load(repo); err == nil {
+		surfaces.Dockerfiles = append(surfaces.Dockerfiles, p.Box.Dockerfile)
+		surfaces.Composes = append(surfaces.Composes, p.Box.Compose)
+	}
+	if review, err := project.LoadReview(repo); err == nil {
+		surfaces.Composes = append(surfaces.Composes, review.Compose)
+	}
+	return surfaces
+}
+
 // PolicyScan returns human-readable concerns about a fork's added/changed files:
 // secret-looking filenames, large blobs, and — by scanning each changed blob's
 // content — real tokens sitting in ordinary files (which a filename check can't see).
@@ -56,6 +72,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 	// Flag a credential-looking filename with the SAME decider that shadows secrets from the box,
 	// so the merge gate can't drift from the shadow denylist.
 	shadowed := box.NewShadowDecider(repo)
+	surfaces := configuredSurfaces(repo)
 	unreadable := map[string]bool{} // each .coopignore coop cannot read is one warning, not one per file
 	var warns []string
 	for _, change := range changes {
@@ -103,7 +120,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		if rel := hostsurface.Key(filepath.ToSlash(path)); rel == ".coop" || strings.HasPrefix(rel, ".coop/") {
 			warns = append(warns, label+" — this is Coop's private fork folder, not project source")
 		}
-		if reason, automatic := hostsurface.Classify(change.Status, path); automatic {
+		if reason, automatic := surfaces.Classify(change.Status, path); automatic {
 			warns = append(warns, label+" — "+reason) // runs by itself: blocks the merge unless forced
 		}
 		// Tasks come from the host's queue, never from a fork: a task a box committed would land as

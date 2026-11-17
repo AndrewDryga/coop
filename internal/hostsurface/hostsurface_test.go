@@ -104,3 +104,35 @@ func TestPublicationAllowsCIWithoutChangingLocalForkProtection(t *testing.T) {
 		}
 	}
 }
+
+// project.yaml may point box.dockerfile, box.compose and review.compose anywhere in the repository;
+// the files it names run on your machine as the .agent defaults do, in every spelling.
+func TestConfiguredBoxInputsAreAutomaticSurfaces(t *testing.T) {
+	configured := Configured{Dockerfiles: []string{"deploy/box.Dockerfile"}, Composes: []string{"ops/stack.yml", ".agent/review-compose.yml", ""}}
+	for p, want := range map[string]string{
+		"deploy/box.Dockerfile":     "build the box",
+		"Deploy/BOX.dockerfile":     "build the box",
+		"ops/stack.yml":             "Starts containers",
+		".agent/review-compose.yml": "Starts containers",
+		".agent/compose.yml":        "Starts containers",
+	} {
+		if reason, automatic := configured.Classify("M", p); !strings.Contains(reason, want) || !automatic {
+			t.Errorf("Configured.Classify(%q) = %q, %v; want an automatic surface that mentions %q", p, reason, automatic, want)
+		}
+	}
+	for _, p := range []string{"ops/other.yml", "deploy/Dockerfile.old", "main.go"} {
+		if reason, _ := configured.Classify("M", p); reason != "" {
+			t.Errorf("Configured.Classify(%q) = %q, want nothing", p, reason)
+		}
+	}
+	if reason, _ := configured.Classify("D", "ops/stack.yml"); reason != "" {
+		t.Errorf("a deleted compose file cannot run anything, got %q", reason)
+	}
+	if reason, _ := Classify("M", "ops/stack.yml"); reason != "" {
+		t.Errorf("without the project's settings ops/stack.yml = %q, want nothing", reason)
+	}
+	got := configured.Findings([]gitdiff.Change{{Status: "A", Path: "ops/stack.yml"}})
+	if len(got) != 1 || got[0].Path != "ops/stack.yml" {
+		t.Errorf("Configured.Findings = %+v, want the configured compose file", got)
+	}
+}

@@ -13,7 +13,6 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/gitdiff"
-	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -464,7 +463,7 @@ func (c *Control) forkBriefAt(repo, authority, into, commits, name, ref string, 
 		if scanErr != nil {
 			warns = append(warns, "Coop could not check these changes: "+scanErr.Error())
 		}
-		surfaces := hostsurface.Findings(changes)
+		surfaces := configuredSurfaces(repo).Findings(changes)
 		if len(warns) > 0 || len(surfaces) > 0 {
 			cause := append([]string{}, warns...)
 			for _, f := range surfaces {

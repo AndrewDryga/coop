@@ -243,6 +243,7 @@ func nestedSourcesRefusal(path string) *ui.UsageError {
 // terminal diff cannot grant permission to import unsafe intermediate history.
 func validateIsolatedHistory(repo, authority, upstream, head string) error {
 	shadowed := box.NewShadowDecider(authority)
+	surfaces := configuredSurfaces(authority)
 	commits, err := observed(repo, "rev-list", "--reverse", upstream+".."+head)
 	if err != nil {
 		return err
@@ -277,7 +278,7 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 			if entry.mode == "160000" || previous.mode == "160000" || filepath.Base(hostsurface.Key(entry.path)) == ".gitmodules" {
 				return nestedSourcesRefusal(entry.path)
 			}
-			if reason, automatic := hostsurface.Classify("M", entry.path); automatic {
+			if reason, automatic := surfaces.Classify("M", entry.path); automatic {
 				return isolatedRefusal(fmt.Sprintf("The fork changes %q, which Coop will not merge", entry.path), reason, changeInYourCheckout)
 			}
 			if err := isolatedPolicyPath(authority, entry.path); err != nil {

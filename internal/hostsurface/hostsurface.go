@@ -108,9 +108,9 @@ func classify(status, relPath string, includeCI bool) (reason string, automatic 
 		case hasSegment(p, "skills"):
 			return "Runs when your host agent uses the skill.", true
 		case base == "compose.yml" || base == "compose.yaml" || base == "docker-compose.yml":
-			return "Starts containers on your runtime when services start.", true
+			return composeReason, true
 		case base == "dockerfile" || strings.HasPrefix(base, "dockerfile."):
-			return "Runs build steps on your runtime when you build the box.", true
+			return dockerfileReason, true
 		case base == "project.yaml" || base == "loop.yaml":
 			return "Changes Coop settings used on your machine.", true
 		}
@@ -128,13 +128,52 @@ func classify(status, relPath string, includeCI bool) (reason string, automatic 
 	return "", false
 }
 
+const (
+	composeReason    = "Starts containers on your runtime when services start."
+	dockerfileReason = "Runs build steps on your runtime when you build the box."
+)
+
+// Configured names the box inputs a project's own project.yaml points Coop at, anywhere in the
+// repository: box.dockerfile, and the compose files of box.compose and review.compose. They run on
+// your machine as the .agent defaults do. Callers fill it from the trusted parent's project.yaml,
+// never the fork's, which could point the setting away from the file it changes.
+type Configured struct {
+	Dockerfiles []string
+	Composes    []string
+}
+
+// Classify is the package Classify, with the configured paths automatic surfaces too.
+func (c Configured) Classify(status, relPath string) (reason string, automatic bool) {
+	reason, automatic = Classify(status, relPath)
+	if automatic || status != "" && status[0] == 'D' {
+		return reason, automatic
+	}
+	key := Key(strings.ReplaceAll(relPath, "\\", "/"))
+	for _, configured := range []struct {
+		paths  []string
+		reason string
+	}{{c.Composes, composeReason}, {c.Dockerfiles, dockerfileReason}} {
+		for _, p := range configured.paths {
+			if p != "" && Key(path.Clean(strings.ReplaceAll(p, "\\", "/"))) == key {
+				return configured.reason, true
+			}
+		}
+	}
+	return reason, automatic
+}
+
 // Findings classifies exact changed paths. A rename's new path counts; results
 // are sorted by path and deduplicated. Display escaping belongs to the caller.
 func Findings(changes []gitdiff.Change) []Finding {
+	return Configured{}.Findings(changes)
+}
+
+// Findings is the package Findings, with the configured paths.
+func (c Configured) Findings(changes []gitdiff.Change) []Finding {
 	seen := map[string]bool{}
 	var out []Finding
 	for _, change := range changes {
-		reason, _ := Classify(change.Status, change.Path)
+		reason, _ := c.Classify(change.Status, change.Path)
 		if reason == "" || seen[change.Path] {
 			continue
 		}
