@@ -216,19 +216,8 @@ var (
 	errReplaySuperseded = errors.New("acpproxy: replacement superseded by a newer restart")
 )
 
-// Run proxies ACP between the editor and children from factory until the editor
-// closes clientIn (clean shutdown) or ctx is cancelled. A child that exits while the
-// editor is still connected is transparently replaced.
-//
-// Single-use contract: Run spawns an editor→child reader goroutine that blocks on
-// clientIn until EOF. Run does not own clientIn (it's passed in) and can't interrupt a
-// blocked Read, so on a ctx-cancel return that goroutine lives until the editor closes
-// clientIn. That's fine for the one intended caller — the `coop acp` process, where
-// clientIn is os.Stdin and process exit reaps it — but it means Run is single-use per
-// clientIn, not a reusable in-process library: don't call it in a loop expecting the
-// reader to stop when ctx cancels. Close clientIn to release the goroutine.
 // RunOpts carries resume/reload state for a supervisor re-exec (a SIGHUP reload). The zero value is
-// a normal start (both nil), so Run is unchanged for callers that don't reload.
+// a normal start (both nil).
 type RunOpts struct {
 	Resume   *Snapshot       // seed + replay this session state on the FIRST child (a resumed start)
 	Reload   <-chan struct{} // a receive triggers a graceful reload: snapshot + stop child + return reloadError
@@ -267,9 +256,20 @@ func ReloadSnapshot(err error) (*Snapshot, bool) {
 	return nil, false
 }
 
-// RunWith is Run plus resume/reload: opts.Resume seeds + replays session state onto the first child
-// (a resumed start), and a receive on opts.Reload snapshots, stops the child, and returns a
-// reloadError carrying the snapshot. Both are guarded by non-nil opts, so the zero value is plain Run.
+// RunWith proxies ACP between the editor and children from factory until the editor closes
+// clientIn (clean shutdown) or ctx is cancelled. A child that exits while the editor is still
+// connected is transparently replaced. opts.Resume seeds + replays session state onto the first
+// child (a resumed start), and a receive on opts.Reload snapshots, stops the child, and returns a
+// reloadError carrying the snapshot. Both are guarded by non-nil opts, so the zero value is a plain
+// proxy run.
+//
+// Single-use contract: RunWith spawns an editor→child reader goroutine that blocks on clientIn
+// until EOF. RunWith does not own clientIn (it's passed in) and can't interrupt a blocked Read, so
+// on a ctx-cancel return that goroutine lives until the editor closes clientIn. That's fine for the
+// one intended caller — the `coop acp` process, where clientIn is os.Stdin and process exit reaps
+// it — but it means RunWith is single-use per clientIn, not a reusable in-process library: don't
+// call it in a loop expecting the reader to stop when ctx cancels. Close clientIn to release the
+// goroutine.
 func RunWith(ctx context.Context, clientIn io.Reader, clientOut io.Writer, factory Factory, hooks *Hooks, opts RunOpts) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
