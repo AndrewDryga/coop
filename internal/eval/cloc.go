@@ -178,7 +178,9 @@ func projectRegularFiles(ctx context.Context, src string, ignore ...string) (str
 		if rel == "." {
 			return nil
 		}
-		if isIgnored(rel, ignore) {
+		// cloc never counts a .git directory, so copying the workspace's history would only cost
+		// disk and time on every measurement.
+		if isIgnored(rel, ignore) || d.IsDir() && strings.EqualFold(d.Name(), ".git") {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}

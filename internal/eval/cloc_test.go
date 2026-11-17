@@ -136,3 +136,30 @@ func TestMeasureSizeRefusesAMissingDir(t *testing.T) {
 		t.Error("measuring a missing directory returned no error")
 	}
 }
+
+// The workspace's .git is history, not the solution, and cloc ignores it anyway: the projection
+// cloc reads leaves it out instead of copying it on every measurement.
+func TestProjectRegularFilesLeavesOutGit(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.go", filepath.Join(".git", "objects", "x.go"), filepath.Join("sub", ".GIT", "y.go")} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	proj, skipped, err := projectRegularFiles(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(proj)
+	if _, err := os.Stat(filepath.Join(proj, "a.go")); err != nil || len(skipped) != 0 {
+		t.Fatalf("a.go not projected (%v) or paths skipped: %v", err, skipped)
+	}
+	for _, name := range []string{".git", filepath.Join("sub", ".GIT")} {
+		if _, err := os.Stat(filepath.Join(proj, name)); !os.IsNotExist(err) {
+			t.Errorf("%s was copied into the projection: %v", name, err)
+		}
+	}
+}
