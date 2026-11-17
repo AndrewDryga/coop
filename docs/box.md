@@ -19,7 +19,8 @@ shell `while read` loop, give each `coop run` its own input, as in
 co:op hides files and directories whose names look like secrets, including `.env`, `*.tfvars`,
 `*.pem`, `*.key`, `id_rsa*`, `secrets/`, `.ssh`, dotfiles ending in `secrets` such as `.shell-secrets`, and config
 files such as `secrets.env`. Source and docs like `secrets.go` and `secrets.md` stay readable, and
-templates (`*.example`, `*.sample`, `*.template`) stay visible.
+templates (`*.example`, `*.sample`, `*.template`) stay visible, except key names such as
+`id_rsa.example`.
 
 ### SSH keys and agent forwarding
 
@@ -509,9 +510,10 @@ Agents can change data in services they can reach, so use disposable development
 
 Each project's `~/.cache` is a volume of its own that keeps downloads between runs, so one
 project's box cannot change the modules another project's box uses. Forks share their project's
-cache; isolated forks share one of their own. These volumes are named `coop-cache-<project>-<id>`;
-remove one with `docker volume rm` when you no longer need the project. Claude's MCP logs at
-`~/.cache/claude-cli-nodejs` are kept separately: each run starts with an empty log folder.
+cache; isolated forks share one of their own. These volume names start with `coop-cache-`: list
+them with `docker volume ls --filter name=coop-cache-` and remove one with `docker volume rm` when
+you no longer need the project. Claude's MCP logs at `~/.cache/claude-cli-nodejs` are kept
+separately: each run starts with an empty log folder.
 
 ### Volumes from outside the project
 
