@@ -230,9 +230,10 @@ under `gate_sources:` in `.agent/project.yaml`.
 The loop keeps the list it read at startup, so a task can't remove itself from review. Restart
 the loop to apply a deliberate change to the list.
 
-Settings live in the same file: `signoff.rounds`, `preflight.enabled`, `verify.enabled` and
-`work.command`. Every field is optional, and without the file co:op uses the built-in defaults.
-`coop init` creates a fully commented starter file.
+Settings live in the same file: `signoff.rounds`, `preflight.enabled`, `verify.enabled`,
+`work.command`, and `mcp: false`, which runs every stage without the shared MCP servers
+(`--no-mcp` does that for one run). Every field is optional, and without the file co:op uses the
+built-in defaults. `coop init` creates a fully commented starter file.
 
 ## The .agent/ folder
 
