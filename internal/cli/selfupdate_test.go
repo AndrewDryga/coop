@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -100,8 +101,13 @@ func TestInstallRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := installRelease(exe, "v9.9.9"); err != nil {
+	withoutCosign(t)
+	signed, err := installRelease(exe, "v9.9.9")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if signed {
+		t.Error("signed = true without cosign installed")
 	}
 	got, err := os.ReadFile(exe)
 	if err != nil {
@@ -151,7 +157,8 @@ func TestInstallReleaseFailuresKeepExecutable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := installRelease(exe, "v9.9.9"); err == nil {
+			withoutCosign(t)
+			if _, err := installRelease(exe, "v9.9.9"); err == nil {
 				t.Fatal("want install failure")
 			}
 			got, err := os.ReadFile(exe)
@@ -252,6 +259,7 @@ func TestSelfUpdate(t *testing.T) {
 		exe := filepath.Join(exeDir, "coop")
 		mustWrite(t, exe, "old")
 		defer stub(&executablePath, func() (string, error) { return exe, nil })()
+		withoutCosign(t)
 
 		result, err := selfUpdate()
 		if result.Outcome != selfUpdateInstalled || err != nil {
@@ -359,6 +367,113 @@ func TestParseUpdateFlags(t *testing.T) {
 			}
 			if self != c.self || box != c.box || check != c.check {
 				t.Errorf("self=%v box=%v check=%v, want %v/%v/%v", self, box, check, c.self, c.box, c.check)
+			}
+		})
+	}
+}
+
+// withoutCosign hides any cosign the machine has, so a test sees the checksum-only path.
+func withoutCosign(t *testing.T) {
+	t.Helper()
+	t.Setenv("PATH", pathWithoutCosign())
+}
+
+// pathWithoutCosign is PATH minus every folder that holds a cosign; everything else stays reachable.
+func pathWithoutCosign() string {
+	var keep []string
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if _, err := os.Stat(filepath.Join(dir, "cosign")); err != nil {
+			keep = append(keep, dir)
+		}
+	}
+	return strings.Join(keep, string(os.PathListSeparator))
+}
+
+// fakeCosign puts a cosign on PATH that records its arguments and exits with code.
+func fakeCosign(t *testing.T, code int) (argsFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsFile = filepath.Join(dir, "args")
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho 'error: none of the expected identities matched' >&2\nexit %d\n", argsFile, code)
+	if err := os.WriteFile(filepath.Join(dir, "cosign"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	return argsFile
+}
+
+// With cosign installed, coop update checks the release signature the way install.sh does: a
+// release whose checksums.txt does not verify, or that has no signature at all, is refused and
+// the installed binary stays as it was.
+func TestInstallReleaseVerifiesSignatureWithCosign(t *testing.T) {
+	archive := testReleaseArchive(t, "new binary", "coop")
+	asset := fmt.Sprintf("coop_9.9.9_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	sums := releaseChecksum(asset)(archive)
+	for name, tc := range map[string]struct {
+		cosignExit int
+		bundle     bool
+		wantErr    string
+	}{
+		"signature verifies":     {0, true, ""},
+		"replaced release files": {1, true, "Cosign could not verify the release signature, so the update stopped: error: none of the expected identities matched"},
+		"missing signature":      {0, false, "Could not download the release signature (checksums.txt.bundle)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var paths []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.URL.Path)
+				switch filepath.Base(r.URL.Path) {
+				case "checksums.txt":
+					_, _ = w.Write(sums)
+				case "checksums.txt.bundle":
+					if !tc.bundle {
+						http.NotFound(w, r)
+						return
+					}
+					_, _ = w.Write([]byte(`{"bundle":"stub"}`))
+				case asset:
+					_, _ = w.Write(archive)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			defer stub(&releaseFileURLFor, func(tag, name string) string { return srv.URL + "/" + tag + "/" + name })()
+			argsFile := fakeCosign(t, tc.cosignExit)
+			exe := filepath.Join(t.TempDir(), "coop")
+			mustWrite(t, exe, "old binary")
+
+			signed, err := installRelease(exe, "v9.9.9")
+			got, readErr := os.ReadFile(exe)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if tc.wantErr != "" {
+				var hard *installFailure
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !errors.As(err, &hard) || !hard.unchanged {
+					t.Fatalf("err = %v, want an unchanged-binary refusal containing %q", err, tc.wantErr)
+				}
+				if signed || string(got) != "old binary" {
+					t.Errorf("refused release changed the binary: signed=%v bytes=%q", signed, got)
+				}
+				if slices.Contains(paths, "/v9.9.9/"+asset) {
+					t.Errorf("archive was downloaded after the signature failed: %v", paths)
+				}
+				return
+			}
+			if err != nil || !signed || string(got) != "new binary" {
+				t.Fatalf("install = signed %v, err %v, bytes %q; want a signed install", signed, err, got)
+			}
+			args, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"verify-blob\n", "--bundle\n",
+				"--certificate-identity\nhttps://github.com/AndrewDryga/coop/.github/workflows/release.yml@refs/tags/v9.9.9\n",
+				"--certificate-oidc-issuer\nhttps://token.actions.githubusercontent.com\n"} {
+				if !strings.Contains(string(args), want) {
+					t.Errorf("cosign args missing %q:\n%s", want, args)
+				}
 			}
 		})
 	}

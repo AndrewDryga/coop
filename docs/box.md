@@ -727,8 +727,9 @@ co:op version it installed. A filtered project keeps co:op's pinned client base,
 offline project gets fresh OS packages. See [stable and fresh rebuilds](#stable-and-fresh-rebuilds).
 
 If GitHub has a newer release, `coop update` downloads its versioned archive and checksum, verifies
-the archive and replaces the `coop` binary atomically. The new binary takes effect on your next
-`coop` run.
+the archive and replaces the `coop` binary atomically. If cosign is installed, it first verifies the
+release signature, as `install.sh` does, and stops if the signature is missing or does not match.
+The new binary takes effect on your next `coop` run.
 
 When the binary is not replaced:
 

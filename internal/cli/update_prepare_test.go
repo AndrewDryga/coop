@@ -34,6 +34,7 @@ func updateReleaseFixture(t *testing.T, binary string) string {
 	exe := filepath.Join(dir, "installed coop")
 	mustWrite(t, exe, "old executable")
 	t.Cleanup(stub(&executablePath, func() (string, error) { return exe, nil }))
+	withoutCosign(t) // the fixture release is unsigned; a cosign on this machine would refuse it
 	return exe
 }
 
@@ -71,6 +72,7 @@ func TestUpdateHandoffFailureNeverBuildsWithOldDefinitions(t *testing.T) {
 	var err error
 	out := captureTerminal(t, func() { code, err = a.cmdUpdate(nil) })
 	if code != 1 || err == nil || !strings.Contains(out, "v2.7.3 is installed") ||
+		!strings.Contains(out, "Cosign is not installed, so the release signature was not verified.") ||
 		!strings.Contains(out, "coop update --box-only") || a.rtSet {
 		t.Fatalf("handoff failure lost installed version or continued old build: %d / %v\n%s", code, err, out)
 	}
@@ -191,7 +193,8 @@ func TestUpdateActuallyExecutesTheInstalledRelease(t *testing.T) {
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "COOP_TEST_UPDATE_EXEC_CHILD=1", "COOP_TEST_UPDATE_API="+api.URL,
 		"COOP_TEST_UPDATE_RELEASE="+release.URL, "COOP_TEST_UPDATE_EXECUTABLE="+exe,
-		"COOP_TEST_UPDATE_CUSTODY=original", "COOP_TEST_UPDATE_MARKER="+marker)
+		"COOP_TEST_UPDATE_CUSTODY=original", "COOP_TEST_UPDATE_MARKER="+marker,
+		"PATH="+pathWithoutCosign()) // the fixture release is unsigned
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != 37 {

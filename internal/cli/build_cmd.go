@@ -458,6 +458,13 @@ func reportSelfUpdate(result selfUpdateResult) {
 		ui.Note("Keeping Coop v%s; the latest release is v%s.", result.Current, result.Latest)
 	case selfUpdateInstalled:
 		ui.OK("Coop updated to v%s", result.Latest)
+		// The same rule install.sh follows, said the same way: the checksum is always checked, and
+		// the signature only when cosign is there to check it.
+		if result.Signed {
+			ui.Note("  Release signature verified with Cosign.")
+		} else {
+			ui.Note("  Cosign is not installed, so the release signature was not verified.")
+		}
 	}
 	ui.Note("")
 }

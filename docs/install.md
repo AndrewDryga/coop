@@ -47,6 +47,11 @@ git clone https://github.com/AndrewDryga/coop && cd coop && make install
 `coop update` updates the binary, then prepares the image for this project's network mode.
 [Upgrading](../MIGRATING.md) lists what to change when a new version needs it.
 
+`coop update` and `install.sh` check a release the same way. Both always check the archive against
+the release's `checksums.txt`. When [cosign](https://github.com/sigstore/cosign) is installed, both
+also verify the release signature and stop if it is missing or does not match. Without cosign, the
+signature is not checked; see [Verifying a download](#verifying-a-download) to check it by hand.
+
 ## Verifying a download
 
 `install.sh` comes from the `main` branch, served by GitHub Pages at coop.dryga.com. You can also

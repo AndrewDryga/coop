@@ -2,12 +2,14 @@ package cli
 
 // Self-update replaces the running coop binary with a newer GitHub release. It
 // downloads the versioned GoReleaser archive and checksum as data, verifies them
-// locally, and never executes a downloaded installer.
+// locally, and never executes a downloaded installer. When cosign is installed it also
+// verifies the checksums' Sigstore signature, as install.sh does; cosign stays optional.
 
 import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -15,11 +17,14 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // These are vars (not consts) so tests can point them at an httptest server.
@@ -145,6 +150,7 @@ type selfUpdateResult struct {
 	Current    string // this binary's version, normalized (no leading v)
 	Latest     string // the latest release, normalized; "" when it was never resolved
 	Executable string // resolved path actually replaced; only set after a verified install
+	Signed     bool   // cosign verified the release signature; false when cosign is not installed
 }
 
 // installFailure is a hard binary-install failure, carrying the sentence a person reads and
@@ -203,10 +209,12 @@ func selfUpdate() (selfUpdateResult, error) {
 	if err := dirWritable(filepath.Dir(exe)); err != nil {
 		return result, &installFailure{reason: exe + " could not be replaced: " + osCause(err) + ".", unchanged: true, err: err}
 	}
-	if err := installRelease(exe, latest); err != nil {
+	signed, err := installRelease(exe, latest)
+	if err != nil {
 		return result, err
 	}
 	result.Outcome = selfUpdateInstalled
+	result.Signed = signed
 	result.Executable = exe
 	return result, nil
 }
@@ -226,7 +234,8 @@ func dirWritable(dir string) error {
 // installRelease downloads the exact GoReleaser archive and checksums for tag,
 // verifies the archive locally, then atomically replaces exe. Every failure before the rename
 // leaves the installed binary untouched and says so; only the rename itself can change it.
-func installRelease(exe, tag string) error {
+// signed reports whether cosign verified checksums.txt, which happens only when cosign is installed.
+func installRelease(exe, tag string) (signed bool, err error) {
 	version := normalizeVersion(tag)
 	asset := fmt.Sprintf("coop_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
 	fail := func(reason string, err error) error {
@@ -234,20 +243,69 @@ func installRelease(exe, tag string) error {
 	}
 	checksums, err := fetchReleaseFile(tag, "checksums.txt", maxReleaseChecksumsBytes)
 	if err != nil {
-		return fail("Could not download the release checksums: "+err.Error()+".", err)
+		return false, fail("Could not download the release checksums: "+err.Error()+".", err)
+	}
+	if cosign, lookErr := exec.LookPath("cosign"); lookErr == nil {
+		if err := verifyReleaseSignature(cosign, tag, checksums); err != nil {
+			return false, fail(sentence(err.Error()), err)
+		}
+		signed = true
 	}
 	archive, err := fetchReleaseFile(tag, asset, maxReleaseArchiveBytes)
 	if err != nil {
-		return fail("Could not download "+asset+": "+err.Error()+".", err)
+		return false, fail("Could not download "+asset+": "+err.Error()+".", err)
 	}
 	if err := verifyReleaseChecksum(asset, archive, checksums); err != nil {
-		return fail(sentence(err.Error()), err)
+		return false, fail(sentence(err.Error()), err)
 	}
 	binary, err := releaseBinary(archive)
 	if err != nil {
-		return fail(sentence(err.Error()), err)
+		return false, fail(sentence(err.Error()), err)
 	}
-	return replaceExecutable(exe, binary)
+	return signed, replaceExecutable(exe, binary)
+}
+
+// releaseSignatureTimeout bounds cosign, which may fetch Sigstore's trust root over the network.
+const releaseSignatureTimeout = 2 * time.Minute
+
+// verifyReleaseSignature runs cosign on checksums.txt and its Sigstore bundle with the identity
+// install.sh checks: the release workflow for exactly this tag. A missing bundle is a refusal,
+// never a skip: every release a running Coop can update to is signed (all tags from v2.2.2 on),
+// and an attacker who can replace the archive and checksums.txt can just as easily drop the bundle.
+func verifyReleaseSignature(cosign, tag string, checksums []byte) error {
+	bundle, err := fetchReleaseFile(tag, "checksums.txt.bundle", maxReleaseChecksumsBytes)
+	if err != nil {
+		return fmt.Errorf("could not download the release signature (checksums.txt.bundle): %w; releases are signed, so the update stopped", err)
+	}
+	dir, err := os.MkdirTemp("", "coop-update-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	sums, sig := filepath.Join(dir, "checksums.txt"), filepath.Join(dir, "checksums.txt.bundle")
+	if err := os.WriteFile(sums, checksums, 0o600); err != nil {
+		return err
+	}
+	if err := os.WriteFile(sig, bundle, 0o600); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), releaseSignatureTimeout)
+	defer cancel()
+	args := []string{"verify-blob", sums,
+		"--bundle", sig,
+		"--certificate-identity", "https://github.com/AndrewDryga/coop/.github/workflows/release.yml@refs/tags/" + tag,
+		"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com"}
+	cmd := exec.CommandContext(ctx, cosign, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		reason := "cosign could not verify the release signature, so the update stopped"
+		if line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); line != "" {
+			reason += ": " + ui.SafeInline(strings.TrimSpace(line))
+		}
+		return errors.New(reason)
+	}
+	return nil
 }
 
 func fetchReleaseFile(tag, name string, limit int64) ([]byte, error) {
