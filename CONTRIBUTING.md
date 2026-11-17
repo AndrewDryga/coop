@@ -61,8 +61,9 @@ continue while it runs, but a check that's still pending isn't a pass.
 `make check` runs the static owner first, then the test owners side by side, each writing its own
 log under `.agent/gate/`. A pass prints one line, and a failure prints the log's tail.
 
-Only two `make check` runs at once on one host: every coop box shares `~/.cache`, and the gate
-holds a slot there while it runs. A third gate says it is waiting for another gate and starts
+Only two `make check` runs at once for the project and its forks: the gate holds a slot in
+`~/.cache`, which is the project's shared cache volume in a coop box. On the host it takes one of the
+host's own two slots. A third gate says it is waiting for another gate and starts
 when one finishes; its timeouts start only then.
 
 `make check` leaves out `check-unit`, because the race owners run the same packages and tests under

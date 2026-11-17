@@ -30,7 +30,8 @@ unless the commit carries another task's `Coop-Task` trailer. The task returns t
 
 Choose an agent (`claude`, `codex`, `gemini` or `grok`) or a preset that defines the lead agent.
 To run a custom command for each task, set `work.command` in `.agent/loop.yaml`. It replaces the
-whole iteration command.
+whole iteration command and turns off preflight, the review after each task, the final review and
+verify.
 
 When the model reaches a rate or usage limit, the loop tries the next configured target. If
 every target is limited, it waits with a countdown until one can run, then retries the same
@@ -344,13 +345,14 @@ same subscription limits. A preset can define a rotation across providers and ac
 Agents running at the same time also run their full gates at the same time, which can overload
 the host until tests time out. To limit that, tell your agents to run the full gate as
 `coop-gate-slot make check` (or put `coop-gate-slot` in front of your own gate command). Every
-box has this helper. At most two gates run at once on one host; another one prints `Waiting for
-another gate to finish` and starts when a slot is free, so its timeouts start only then. The
-`coop fork merge` gate takes a slot the same way. A gate inside another gate runs in the outer
-gate's slot, so a `gate:` command that already starts with `coop-gate-slot` doesn't wait for a
-second one. Boxes share the slots through their common
-`~/.cache` volume on Docker and OrbStack. Apple container runs each box in its own VM, and
-sharing slots there hasn't been tested, so don't count on the limit there.
+box has this helper. At most two gates run at once for a project and its forks; another one prints
+`Waiting for another gate to finish` and starts when a slot is free, so its timeouts start only
+then. Isolated forks have two of their own, and a gate run on the host takes none. The `coop fork
+merge` gate takes a slot the same way. A gate inside another gate runs in the outer gate's slot, so
+a `gate:` command that already starts with `coop-gate-slot` doesn't wait for a second one. A
+project's boxes share the slots through the project's `~/.cache` volume on Docker and OrbStack.
+Apple container runs each box in its own VM, and sharing slots there hasn't been tested, so don't
+count on the limit there.
 
 On Docker, a gate under `coop-gate-slot` also keeps its temp files in memory. A box's `/tmp` is on
 the runtime's disk, where `fsync` can take several times as long as on the host, and Go tests write
