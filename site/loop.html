@@ -140,13 +140,15 @@ unless the commit carries another task&#39;s <code>Coop-Task</code> trailer. The
 <code>10_in_progress/</code> with the commit kept. <code>coop tasks ls</code> shows what each task waits for.</p>
 <p>Choose an agent (<code>claude</code>, <code>codex</code>, <code>gemini</code> or <code>grok</code>) or a preset that defines the lead agent.
 To run a custom command for each task, set <code>work.command</code> in <code>.agent/loop.yaml</code>. It replaces the
-whole iteration command.</p>
+whole iteration command and turns off preflight, the review after each task, the final review and
+verify.</p>
 <p>When the model reaches a rate or usage limit, the loop tries the next configured target. If
 every target is limited, it waits with a countdown until one can run, then retries the same
 task. A rate limit doesn&#39;t count as a failed task attempt.</p>
 <p>Add <code>--preflight</code> to check the queue before work starts. This pass unblocks tasks in
-<code>50_blocked/</code> when their <code>decision.md</code> has an answer. It leaves backlog tasks parked with
-<code>coop tasks park</code> alone, does no task work and makes no commits. Preflight is off by default.
+<code>50_blocked/</code> when their <code>decision.md</code> has an answer, and releases claims held by processes that
+have exited. It leaves backlog tasks parked with <code>coop tasks park</code> alone, does no task work and
+makes no commits. Preflight is off by default.
 A task its worker committed before blocking it waits for your answer to
 <code>coop tasks unblock &lt;id&gt; &#34;&lt;answer&gt;&#34;</code>, which names that commit and lets the next worker close the
 task without a new commit.</p>
@@ -253,10 +255,13 @@ reached. At the limit, co:op blocks that task for your decision and doesn&#39;t 
 <p>The loop allows half as many review rounds as tasks worked, rounded down, within the range
 <code>[3, signoff.rounds]</code>. <code>signoff.rounds</code> defaults to <code>5</code> and must be 1 or more. Setting it below
 three overrides the minimum.</p>
-<p>Each completed task must match exactly one commit through its <code>Coop-Task: &lt;id&gt;</code> trailer. That
-commit must be in the current iteration&#39;s commit range, and it must be the only match reachable
-from <code>HEAD</code>. When review requests rework, the worker must amend or rewrite the existing task
-commit. co:op rejects a second matching commit and returns the task to in-progress.</p>
+<p>Each completed task must match exactly one commit through its <code>Coop-Task: &lt;id&gt;</code> trailer, or close
+with a recorded no-change outcome (<code>already_satisfied</code>, <code>could_not_reproduce</code> or <code>wont_fix</code>) and
+its evidence. That commit must be in the current iteration&#39;s commit range, and it must be the only
+match reachable from <code>HEAD</code>. co:op rejects a second matching commit and returns the task to
+in-progress. When review reopens a task, the worker never amends or rewrites the bound commit: it
+adds zero new commits when only check evidence was missing, or one repair commit without a trailer
+on top of <code>HEAD</code>, which co:op binds to the task.</p>
 <p>co:op adds that trailer, and a <code>Co-authored-by</code> line naming co:op and the target, to the box&#39;s commits
 itself with a Git hook. Gemini CLI runs its shell commands with Git hooks turned off, so a Gemini
 worker writes the <code>Coop-Task</code> trailer as the loop asks, and its commits carry no co:op co-author line.
@@ -441,7 +446,8 @@ its own work, and the root queue holds changes that span members.</p>
 each member. Members share the root&#39;s AGENTS.md, <code>.agent/skills/</code>, <code>.agent/kb/</code> and box. A member
 can also commit its own <code>.agent/kb/rules/</code> when it needs additional rules.</p>
 <p>Use <code>coop tasks queues</code> when a script, such as the sweep queue guard, needs the resolved queue
-paths.</p>
+paths. <code>coop tasks queues --held</code> prints the in-progress task folders a fork, a running loop or
+another live agent holds, which a sweep must leave alone.</p>
 </section><section class="doc-section reference-section" id="parallel-forks"><h2>Parallel forks</h2>
 <p>Run several models at once, each looping unattended in its own <a href="forks.html">fork</a>. Point them all at
 the same queue in your project, called the canonical queue. The host assigns the tasks, so each
@@ -483,12 +489,13 @@ same subscription limits. A preset can define a rotation across providers and ac
 <p>Agents running at the same time also run their full gates at the same time, which can overload
 the host until tests time out. To limit that, tell your agents to run the full gate as
 <code>coop-gate-slot make check</code> (or put <code>coop-gate-slot</code> in front of your own gate command). Every
-box has this helper. At most two gates run at once on one host; another one prints <code>Waiting for another gate to finish</code> and starts when a slot is free, so its timeouts start only then. The
-<code>coop fork merge</code> gate takes a slot the same way. A gate inside another gate runs in the outer
-gate&#39;s slot, so a <code>gate:</code> command that already starts with <code>coop-gate-slot</code> doesn&#39;t wait for a
-second one. Boxes share the slots through their common
-<code>~/.cache</code> volume on Docker and OrbStack. Apple container runs each box in its own VM, and
-sharing slots there hasn&#39;t been tested, so don&#39;t count on the limit there.</p>
+box has this helper. At most two gates run at once for a project and its forks; another one prints
+<code>Waiting for another gate to finish</code> and starts when a slot is free, so its timeouts start only
+then. Isolated forks have two of their own, and a gate run on the host takes none. The <code>coop fork merge</code> gate takes a slot the same way. A gate inside another gate runs in the outer gate&#39;s slot, so
+a <code>gate:</code> command that already starts with <code>coop-gate-slot</code> doesn&#39;t wait for a second one. A
+project&#39;s boxes share the slots through the project&#39;s <code>~/.cache</code> volume on Docker and OrbStack.
+Apple container runs each box in its own VM, and sharing slots there hasn&#39;t been tested, so don&#39;t
+count on the limit there.</p>
 <p>On Docker, a gate under <code>coop-gate-slot</code> also keeps its temp files in memory. A box&#39;s <code>/tmp</code> is on
 the runtime&#39;s disk, where <code>fsync</code> can take several times as long as on the host, and Go tests write
 and sync many small files. If the gate has no <code>TMPDIR</code>, the helper makes it a folder of its own in

@@ -214,7 +214,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <tr>
 <td><code>COOP_<wbr/>NETWORK</code></td>
 <td><code>1</code></td>
-<td>Joins the services network.</td>
+<td>Joins the services network with <code>--egress open</code>. A filtered box never joins it and reaches the services its approved rules name; without such rules it refuses to start in a project with services unless this is <code>0</code>.</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>CACHE</code></td>
@@ -229,7 +229,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <tr>
 <td><code>COOP_<wbr/>SERVICES_<wbr/>NET</code></td>
 <td>auto</td>
-<td>The services network to join, so parallel forks can share one database.</td>
+<td>The network services start on, so parallel forks can share one database. An open box joins it; a filtered box with this set and no approved <code>service:</code> rule refuses to start.</td>
 </tr>
 </tbody>
 </table></div></div>

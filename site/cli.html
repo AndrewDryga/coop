@@ -855,12 +855,16 @@ EXAMPLES
   coop tasks done login-retries</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-path-print-a-tasks-folder-path"><h2>coop tasks path: print a task&#39;s folder path</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks path: print a task&#39;s folder path code example" tabindex="0"><code>Usage: coop tasks path &lt;id&gt; [--tasks &lt;path&gt;]...
 
 EXAMPLES
-  coop tasks path login-retries</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-queues-print-task-queue-paths"><h2>coop tasks queues: print task queue paths</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks queues: print task queue paths code example" tabindex="0"><code>Usage: coop tasks queues [--tasks &lt;path&gt;]...
+  coop tasks path login-retries</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-queues-print-task-queue-paths"><h2>coop tasks queues: print task queue paths</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks queues: print task queue paths code example" tabindex="0"><code>Usage: coop tasks queues [--held] [--tasks &lt;path&gt;]...
 
   Prints one absolute path per line. By default, includes the project&#39;s queues.
 
+OPTIONS
+  --held  print in-progress tasks a fork, a loop or another agent holds
+
 EXAMPLES
-  coop tasks queues</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-decisions-show-questions-waiting-for-your-answer"><h2>coop tasks decisions: show questions waiting for your answer</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks decisions: show questions waiting for your answer code example" tabindex="0"><code>Usage: coop tasks decisions [--tasks &lt;path&gt;]... [-i]
+  coop tasks queues
+  coop tasks queues --held</code></pre></div></section><section class="doc-section reference-section" id="coop-tasks-decisions-show-questions-waiting-for-your-answer"><h2>coop tasks decisions: show questions waiting for your answer</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop tasks decisions: show questions waiting for your answer code example" tabindex="0"><code>Usage: coop tasks decisions [--tasks &lt;path&gt;]... [-i]
 
 OPTIONS
   -i, --interactive  read and answer each question interactively
@@ -1258,8 +1262,8 @@ OPTIONS
   --allow-domain &lt;host&gt;  allow TLS to this exact host on port 443; repeatable
   --egress-rules &lt;path&gt;  add the network rules in this file
 
-  Without a target, Coop starts the fork&#39;s agent with its default model and
-  account; choose another model or effort in your editor.
+  Without a target, Coop starts the target the fork was made with or last
+  switched to; choose another model or effort in your editor.
 
   Open the parent project in your editor; Coop maps it to the fork. The fork,
   provider and account stay fixed.
@@ -1378,7 +1382,8 @@ EXAMPLES
 APPROVALS
   Coop asks at a terminal before a service may read a hidden secret file
   through a read-only bind, or use an external or custom-named Docker volume.
-  Declining stops startup. Until you approve, the file stays hidden.
+  Declining a volume or a changed image stops startup. Declining a first
+  secret-file approval starts the services with the file hidden.
   Automatic, filtered and non-terminal starts refuse such volumes even after
   approval. An approval covers this checkout&#39;s exact Compose file and the
   service&#39;s local image, so any change asks again.

@@ -825,12 +825,16 @@ EXAMPLES
 
 coop tasks queues: print task queue paths
 
-Usage: coop tasks queues [--tasks <path>]...
+Usage: coop tasks queues [--held] [--tasks <path>]...
 
   Prints one absolute path per line. By default, includes the project's queues.
 
+OPTIONS
+  --held  print in-progress tasks a fork, a loop or another agent holds
+
 EXAMPLES
   coop tasks queues
+  coop tasks queues --held
 
 ==============================================================================
 
@@ -1348,8 +1352,8 @@ OPTIONS
   --allow-domain <host>  allow TLS to this exact host on port 443; repeatable
   --egress-rules <path>  add the network rules in this file
 
-  Without a target, Coop starts the fork's agent with its default model and
-  account; choose another model or effort in your editor.
+  Without a target, Coop starts the target the fork was made with or last
+  switched to; choose another model or effort in your editor.
 
   Open the parent project in your editor; Coop maps it to the fork. The fork,
   provider and account stay fixed.
@@ -1522,7 +1526,8 @@ Usage:
 APPROVALS
   Coop asks at a terminal before a service may read a hidden secret file
   through a read-only bind, or use an external or custom-named Docker volume.
-  Declining stops startup. Until you approve, the file stays hidden.
+  Declining a volume or a changed image stops startup. Declining a first
+  secret-file approval starts the services with the file hidden.
   Automatic, filtered and non-terminal starts refuse such volumes even after
   approval. An approval covers this checkout's exact Compose file and the
   service's local image, so any change asks again.

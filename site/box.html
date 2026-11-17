@@ -155,7 +155,7 @@ templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code
 computer&#39;s SSH-agent socket into the box. co:op does not forward that socket by
 default. It also hides <code>.ssh</code> folders in your project.</p>
 <p>Mounts, environment variables and MCP servers you add can give the agent more
-access. Keep your SSH-agent socket and credential folders out of the box. If the
+access. Keep your SSH-agent socket and credential folders out of the sandbox. If the
 agent needs production access, give it tools limited to the actions it needs.
 See how to <a href="integrations.html#mcp-servers">connect MCP servers</a>.</p>
 <h3 id="how-secret-protection-works">How secret protection works</h3>
@@ -601,8 +601,9 @@ stays in place and this startup stops.</li>
 <li>If the approved image was removed, startup stops before creating a container. Pull the tag,
 then run <code>coop up</code> to review it again.</li>
 <li>Before asking for a first approval, co:op may pull an image that is not cached, using Docker&#39;s
-existing registry login. If you decline, the service does not start or receive access. The
-downloaded image stays in Docker&#39;s cache.</li>
+existing registry login. If you decline, the service gets no access: a declined volume stops
+startup, and a declined secret file stays hidden while the services start. The downloaded image
+stays in Docker&#39;s cache.</li>
 </ul>
 <p>Services without access to approved secret files or outside volumes keep their normal image
 update behavior.</p>
@@ -776,7 +777,7 @@ start before you repeat the same command.</li>
 </tr>
 <tr>
 <td><code>coop update</code>, open or offline project (fresh)</td>
-<td>uses the current <code>node:24-slim</code> image and rebuilds with <code>--pull --no-cache</code></td>
+<td>uses the current <code>node:24-bookworm-slim</code> image and rebuilds with <code>--pull --no-cache</code></td>
 <td>updates the OS packages and runtime to the newest available versions</td>
 </tr>
 </tbody>
