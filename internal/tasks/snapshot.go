@@ -232,11 +232,6 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 				view.Task = &instance
 				view.QueueID = instance.Ref.QueueID
 				key = snapshotTaskKey(instance.Ref.QueueID, instance.Ref.TaskID, root, item.ID)
-			} else if ownerErr == nil && owned && owner.Task != nil {
-				instance := *owner.Task
-				view.Task = &instance
-				view.QueueID = instance.Ref.QueueID
-				key = snapshotTaskKey(instance.Ref.QueueID, instance.Ref.TaskID, root, item.ID)
 			}
 			if item.State == StateInProgress {
 				// Only a HELD lock is a lease (busy or stalled); an unleased task carries no field.
