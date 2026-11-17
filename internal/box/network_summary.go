@@ -252,8 +252,9 @@ func (f *filteredExecution) printRun() {
 // networkInstructionNote is the Network section every agent in a filtered box
 // receives up front. Whatever the box may reach is fully known before it
 // starts, so stating it costs a few lines once instead of a turn spent
-// rediscovering the boundary by being refused.
-func networkInstructionNote(policy egress.Snapshot) string {
+// rediscovering the boundary by being refused. A controller job's rules come with the job alone,
+// so its agent is not told to edit a project file or ask for an approval that cannot change them.
+func networkInstructionNote(policy egress.Snapshot, controllerJob bool) string {
 	if policy.Mode != egress.Filtered {
 		return ""
 	}
@@ -267,6 +268,10 @@ func networkInstructionNote(policy egress.Snapshot) string {
 	}
 	if omitted > 0 {
 		fmt.Fprintf(&b, "- … and %d more allowed destination(s)\n", omitted)
+	}
+	if controllerJob {
+		b.WriteString("These rules came with this job; nothing in here can allow another one.\n")
+		return b.String()
 	}
 	b.WriteString("To ask for another one, add it under box.egress_rules in .agent/project.yaml and ask the\n")
 	b.WriteString("human to run \"coop approve\" on the host — nothing in here can allow it.\n")

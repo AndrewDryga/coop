@@ -1232,7 +1232,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// refused burns a turn and reports policy as a broken tool or a dead host.
 	boxNotes := ""
 	if filtered != nil {
-		boxNotes = networkInstructionNote(filtered.policy)
+		boxNotes = networkInstructionNote(filtered.policy, spec.ControllerJob)
 		if len(brokerPlan.routesOrNil()) != 0 {
 			boxNotes += "\nYour provider API keys stay outside this box: each provider's API is reachable only through Coop's session-bound credential broker."
 		}

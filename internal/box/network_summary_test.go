@@ -163,7 +163,7 @@ func TestInstructionNoteStatesPolicyAndTheWayToAsk(t *testing.T) {
 		{ID: "3", Rule: egress.Rule{To: egress.Destination{Domain: "statsig.anthropic.com"}, Protocol: "tls", Ports: []int{443}},
 			Origins: []egress.Origin{{Kind: "provider", Provider: "claude"}}},
 	}}
-	note := networkInstructionNote(policy)
+	note := networkInstructionNote(policy, false)
 	for _, want := range []string{"# Network (coop restricted egress)", "example.com tls/443", "claude core endpoints",
 		"box.egress_rules", "coop approve"} {
 		if !strings.Contains(note, want) {
@@ -180,9 +180,29 @@ func TestInstructionNoteStatesPolicyAndTheWayToAsk(t *testing.T) {
 	}
 }
 
+// A controller job reads neither the project file nor this host's approvals, so its agent is not
+// sent to either; it still learns that nothing in the box can widen the list.
+func TestInstructionNoteForAControllerJobNamesNoProjectRemedy(t *testing.T) {
+	policy := egress.Snapshot{Mode: egress.Filtered, Grants: []egress.Grant{
+		{ID: "1", Rule: egress.Rule{To: egress.Destination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}},
+			Origins: []egress.Origin{{Kind: "operator", Name: "allow-domain"}}},
+	}}
+	note := networkInstructionNote(policy, true)
+	for _, banned := range []string{"project.yaml", "egress_rules", "coop approve"} {
+		if strings.Contains(note, banned) {
+			t.Errorf("controller-job note names %q, which cannot change its rules:\n%s", banned, note)
+		}
+	}
+	for _, want := range []string{"example.com tls/443", "came with this job", "nothing in here can allow"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("controller-job note is missing %q:\n%s", want, note)
+		}
+	}
+}
+
 func TestInstructionNoteIsOnlyForFilteredRuns(t *testing.T) {
 	for _, mode := range []egress.Mode{egress.Open, egress.None, ""} {
-		if note := networkInstructionNote(egress.Snapshot{Mode: mode}); note != "" {
+		if note := networkInstructionNote(egress.Snapshot{Mode: mode}, false); note != "" {
 			t.Errorf("mode %q produced a network note: %q", mode, note)
 		}
 	}
@@ -195,7 +215,7 @@ func TestInstructionNoteBoundsTheDestinationList(t *testing.T) {
 		grants = append(grants, egress.Grant{ID: name, Rule: egress.Rule{To: egress.Destination{Domain: name},
 			Protocol: "tls", Ports: []int{443}}, Origins: []egress.Origin{{Kind: "project"}}})
 	}
-	note := networkInstructionNote(egress.Snapshot{Mode: egress.Filtered, Grants: grants})
+	note := networkInstructionNote(egress.Snapshot{Mode: egress.Filtered, Grants: grants}, false)
 	if !strings.Contains(note, "and 4 more allowed destination(s)") {
 		t.Errorf("note does not bound its list:\n%s", note)
 	}
