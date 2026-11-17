@@ -1369,10 +1369,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		for _, m := range wiring.Mounts {
 			p, err := artifacts.writeFile(artifacts.parent, m.Content)
 			if err != nil {
-				if mcpPresent || spec.Login {
-					return -1, fmt.Errorf("write MCP config for %s: %w", name, err)
-				}
-				continue
+				// Without MCP the file still carries the adapter's managed defaults (Codex's turn
+				// off its update check and telemetry export), so a box never starts without it.
+				return -1, fmt.Errorf("write MCP config for %s: %w", name, err)
 			}
 			tmpFiles = append(tmpFiles, p)
 			mcpMounts = append(mcpMounts, extraMount{p, m.BoxPath})
@@ -2124,7 +2123,7 @@ func prepareBoxEnvFileWithMarkers(cfg *config.Config, spec RunSpec, artifacts co
 			// Fail closed: if the peer keys can't be stripped, omit the env file
 			// entirely rather than leak them into a scoped box.
 			// Values are never echoed: the cause names the failure, not the keys it was filtering.
-			ui.Warning("The project environment was not loaded", err.Error(), "")
+			ui.Warning("Coop's env file was not loaded", err.Error(), "")
 			return "", "", nil
 		}
 		return p, p, nil

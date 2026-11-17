@@ -3342,6 +3342,27 @@ func TestRunActiveMCPArtifactFailuresStopBeforeProvider(t *testing.T) {
 			}
 		}
 	})
+
+	// With no MCP configured the generated file still carries the adapter's managed defaults, so
+	// failing to write it stops the launch rather than starting the agent without them.
+	t.Run("generated config write without MCP", func(t *testing.T) {
+		cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "none", AutoUp: false}
+		artifacts := defaultCompositionArtifactOps()
+		var created []string
+		originalWrite := artifacts.writeFile
+		artifacts.writeFile = func(_, content string) (string, error) {
+			if strings.Contains(content, "check_for_update_on_startup") {
+				return "", sentinel
+			}
+			path, err := originalWrite("", content)
+			if err == nil {
+				created = append(created, path)
+			}
+			return path, err
+		}
+		spec := RunSpec{Image: "i", Repo: t.TempDir(), Cmd: []string{"codex"}, Agent: "codex", AgentCommand: true, Homes: true, Batch: true, Quiet: true}
+		assertStopped(t, cfg, spec, artifacts, "write MCP config for codex", true, &created)
+	})
 }
 
 func TestRunActiveMCPDoesNotInspectOutOfScopeAdapterConfig(t *testing.T) {
