@@ -67,9 +67,6 @@ func companionSnapshotKey(stateRoot string, binding session.CompanionRepository)
 		if err != nil {
 			return "", err
 		}
-		if len(data) > 256<<10 {
-			return "", errors.New("source receipt is too large")
-		}
 		var source workerproto.JobSource
 		if err = json.Unmarshal(data, &source); err != nil {
 			return "", err

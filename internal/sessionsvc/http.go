@@ -2,7 +2,6 @@ package sessionsvc
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -873,9 +872,6 @@ func (h *sessionHTTPHandler) listSessions(w http.ResponseWriter, r *http.Request
 
 func (h *sessionHTTPHandler) getSession(w http.ResponseWriter, r *http.Request, id string) {
 	if !sessionQueryOnly(w, r) {
-		return
-	}
-	if !sessionHTTPMethod(w, r, http.MethodGet) {
 		return
 	}
 	sess, err := h.service.GetSession(r.Context(), id)
@@ -1816,9 +1812,6 @@ func sessionHTTPError(err error) (string, int, string) {
 	}
 	code := session.CodeOf(err)
 	if code == "" {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return "internal_error", http.StatusInternalServerError, "internal server error"
-		}
 		return "internal_error", http.StatusInternalServerError, "internal server error"
 	}
 	status := http.StatusBadRequest
