@@ -2,10 +2,9 @@
 name: one-upgrade-for-old-state
 description: an old on-disk format is read for one upgrade step, then refused with the state version that converts it; check a worker with the new build before swapping it
 scope: architecture
-sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
-sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/box/native_account.go, internal/box/native_home.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
+sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/box/native_account.go, internal/box/native_home.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
-updated: 2026-11-04
+updated: 2026-11-17
 ---
 
 # Read old on-disk state for one upgrade step, then refuse it by name
@@ -117,6 +116,7 @@ a Docker daemon, not a store; v1 retired on 2026-11-04 once Ryker's workers (ima
 `legacyLabelsAreLocal` stays, since network recovery judges a run record naming no host with it.
 
 ## Changelog
+- 2026-11-17 — merged two `sources:` lines into one; the second had dropped old_records.go and the first the two box files.
 - 2026-11-04 — retired the v1 box supervisor label, the version 4 service approval hint, the Linux
   start token v1, the renewal journal's undated kept answer, and the custody record written before
   the shared filesystem controller (task 2026-11-04-drop-the-old-host-state-readers). Each is refused by name or reads as
