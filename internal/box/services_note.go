@@ -47,7 +47,6 @@ const (
 	servicesNotConfigured serviceLaunchState = iota
 	servicesRunning
 	servicesObserved
-	servicesSkipped
 	servicesFailed
 	servicesUnknown
 )
@@ -137,7 +136,7 @@ func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined boo
 		}
 		lines = append(lines, "- "+detail+"; Coop observed these existing services:")
 		lines = append(lines, servicePortAvailabilityLines(ports, joined)...)
-	case services.state == servicesSkipped || services.state == servicesUnknown:
+	case services.state == servicesUnknown:
 		detail := "startup was not requested"
 		if services.err != nil {
 			detail = strings.TrimSpace(services.err.Error())

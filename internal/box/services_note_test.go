@@ -80,8 +80,8 @@ func TestServicesNoteStatesWhatTheBoxGot(t *testing.T) {
 		t.Errorf("services with no exposed port need saying:\n%s", got)
 	}
 	for name, outcome := range map[string]serviceLaunchOutcome{
-		"disabled": {state: servicesUnknown},
-		"live box": {state: servicesSkipped, err: errors.New("another box is running")},
+		"disabled":           {state: servicesUnknown},
+		"failed observation": {state: servicesUnknown, err: errors.New("daemon down")},
 	} {
 		got := servicesNote(outcome, []ServicePort{web}, true, nil)
 		if !strings.Contains(got, "availability was not checked") || strings.Contains(got, "services are running") || strings.Contains(got, "sidecar web:") {
