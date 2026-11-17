@@ -971,7 +971,7 @@ func forkStopNext(fork, approve, reason string) (state, failure, verb string, fi
 		return "loop ended unexpectedly", "", "resume", []string{restart}
 	case strings.Contains(reason, "has not been approved"):
 		return "network access not approved", "", "fix", []string{approve, restart}
-	case strings.Contains(reason, "run coop login"):
+	case strings.Contains(reason, "run coop login"), strings.Contains(reason, "authentication failed"):
 		return "sign-in no longer accepted", "", "fix", []string{"coop login", restart}
 	}
 	if _, clause, ok := strings.Cut(reason, " cannot start because "); ok && clause != "" {

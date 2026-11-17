@@ -303,6 +303,11 @@ func TestTaskWatchEdgeCaseRows(t *testing.T) {
 		{"fork loop lost its sign-in",
 			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: "the provider no longer accepts this account's saved sign-in; run coop login"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · sign-in no longer accepted", "    to fix, run: coop login, then coop fork sweep-b --loop -d"}},
+		// The loop's own sign-in failure puts a backquote after "run", and its first line may stop
+		// before the command.
+		{"fork loop's account failed to authenticate",
+			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: `Codex authentication failed for account "work" — run`}, "Stopped (1)",
+			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · sign-in no longer accepted", "    to fix, run: coop login, then coop fork sweep-b --loop -d"}},
 		{"fork loop ended, reason only in its log",
 			mergedTask{Item: task, fork: "sweep-b", phase: ForkAssignmentWorking, agent: "codex", stopReason: "Codex cannot start because the box image is missing"}, "Stopped (1)",
 			[]string{"  ✕ " + title, "    0/3 · codex in fork sweep-b · the box image is missing", "    to resume, run: coop fork sweep-b --loop -d"}},
