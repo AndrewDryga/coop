@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -104,27 +105,13 @@ func readForkProposalRecordFile(root *os.Root, name string) (ForkProposalRecord,
 	return decodeForkProposalRecord(data)
 }
 
+// writeForkProposalRecordFile writes the record whole to a temp file, then publishes it: a replace
+// renames over name, a create links it in only where name does not exist yet. A process killed
+// mid-write leaves at most a temp file, which the lister skips, never a partial record.
 func writeForkProposalRecordFile(root *os.Root, name string, record ForkProposalRecord, replace bool) error {
 	body, err := json.Marshal(record)
 	if err != nil {
 		return err
-	}
-	if !replace {
-		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
-		if err != nil {
-			return err
-		}
-		writeErr := error(nil)
-		if _, err := f.Write(append(body, '\n')); err != nil {
-			writeErr = err
-		} else {
-			writeErr = f.Sync()
-		}
-		writeErr = errors.Join(writeErr, f.Close())
-		if writeErr != nil {
-			_ = root.Remove(name)
-		}
-		return writeErr
 	}
 	tmp := fmt.Sprintf(".%s-%d-%d", name, os.Getpid(), time.Now().UnixNano())
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
@@ -139,7 +126,31 @@ func writeForkProposalRecordFile(root *os.Root, name string, record ForkProposal
 	if err := errors.Join(f.Sync(), f.Close()); err != nil {
 		return err
 	}
+	if !replace {
+		return root.Link(tmp, name)
+	}
 	return root.Rename(tmp, name)
+}
+
+// forkProposalRecordTempRE is writeForkProposalRecordFile's own temp name. One left by a killed
+// process holds nothing the record does not, so the lister skips it; any other stray name refuses.
+var forkProposalRecordTempRE = regexp.MustCompile(`^\.([^/]+)\.json-[0-9]+-[0-9]+$`)
+
+func forkProposalRecordTemp(name string) bool {
+	m := forkProposalRecordTempRE.FindStringSubmatch(name)
+	return m != nil && validAssignmentID(m[1])
+}
+
+// emptyForkProposalRecord reports a zero-byte record, which only an older Coop killed between
+// creating the record and writing it leaves behind. Its import never started, since the record is
+// written before the task is, so the proposal is still in the outbox and is prepared again.
+func emptyForkProposalRecord(root *os.Root, name string) bool {
+	id, ok := strings.CutSuffix(name, ".json")
+	if !ok || !validAssignmentID(id) {
+		return false
+	}
+	info, err := root.Lstat(name)
+	return err == nil && info.Mode().IsRegular() && info.Size() == 0
 }
 
 func createForkProposalRecord(repo string, record ForkProposalRecord) error {
@@ -153,6 +164,11 @@ func createForkProposalRecord(repo string, record ForkProposalRecord) error {
 	}
 	defer root.Close()
 	name := record.ProposalID + ".json"
+	if emptyForkProposalRecord(root, name) {
+		if err := root.Remove(name); err != nil {
+			return err
+		}
+	}
 	if current, err := readForkProposalRecordFile(root, name); err == nil {
 		if reflect.DeepEqual(current, record) {
 			return nil
@@ -253,6 +269,9 @@ func forkProposalRecordsForAssignment(repo string, identity forkspace.Identity, 
 	for {
 		entries, readErr := opened.ReadDir(128)
 		for _, entry := range entries {
+			if entry.Type().IsRegular() && (forkProposalRecordTemp(entry.Name()) || emptyForkProposalRecord(root, entry.Name())) {
+				continue
+			}
 			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 				problems = append(problems, fmt.Errorf("%s: unsupported fork proposal record entry", entry.Name()))
 				continue

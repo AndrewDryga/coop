@@ -421,6 +421,58 @@ func TestForcedForkDiscardKeepsImportedTaskAndDropsPreparedProposal(t *testing.T
 	}
 }
 
+// A host process killed while writing a proposal record leaves the writer's temp file, or (from an
+// older Coop) a zero-byte record. Neither blocks the fork: the import prepares the proposal again
+// and a discard succeeds. A stray name of any other shape still refuses.
+func TestForkProposalRecordsSurviveAKilledWriter(t *testing.T) {
+	leftovers := func(t *testing.T, repo string, assignment ForkAssignment, id string) string {
+		t.Helper()
+		dir := forkProposalAssignmentRecordRoot(repo, assignment.Owner.Fork, assignment.Owner.AssignmentID)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range map[string]string{
+			"." + id + ".json-4242-1700000000000000000": `{"version":1}`,
+			id + ".json": "",
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	t.Run("import", func(t *testing.T) {
+		repo, root, assignment := proposalAssignment(t, "proposal-killed-import")
+		proposal := testForkProposal(strings.Repeat("5", 32), "Survive a killed writer")
+		writeForkProposal(t, assignment.Owner, proposal)
+		dir := leftovers(t, repo, assignment, proposal.ID)
+		imported, err := ImportForkProposals(repo, assignment.Owner.Fork)
+		if err != nil || len(imported) != 1 {
+			t.Fatalf("import over a killed writer's leftovers = %+v, %v", imported, err)
+		}
+		if _, ok := mustCurrentTask(t, root, imported[0].TaskID); !ok {
+			t.Fatal("the proposal was not imported")
+		}
+		records, problems := forkProposalRecords(repo, assignment.Owner.Fork)
+		if len(problems) != 0 || len(records) != 1 || records[0].Phase != ForkProposalImported {
+			t.Fatalf("records = %+v, problems = %v", records, problems)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "planted.json-1-2"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ImportForkProposals(repo, assignment.Owner.Fork); err == nil || !strings.Contains(err.Error(), "unsupported fork proposal record entry") {
+			t.Fatalf("a planted name = %v, want it refused", err)
+		}
+	})
+	t.Run("discard", func(t *testing.T) {
+		repo, _, assignment := proposalAssignment(t, "proposal-killed-discard")
+		leftovers(t, repo, assignment, strings.Repeat("6", 32))
+		if err := DiscardForkTaskStateLocked(repo, assignment.Owner.Fork); err != nil {
+			t.Fatalf("discard over a killed writer's leftovers = %v", err)
+		}
+	})
+}
+
 func TestForkProposalCollisionDoesNotMutateExistingTask(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "proposal-collision")
 	proposal := testForkProposal(strings.Repeat("5", 32), "Existing collision")
