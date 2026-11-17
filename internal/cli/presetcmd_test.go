@@ -571,3 +571,24 @@ func TestPresetPagesNeverOfferANameThatRunsSomethingElse(t *testing.T) {
 		t.Errorf("the manual should list review and leave out the preset coop claude never starts:\n%s", manual)
 	}
 }
+
+// A preset Coop could not write is the command failing (exit 1), not rejected input; an existing
+// preset stays a refusal (exit 2).
+func TestCmdPresetsInitExitsOneWhenItCannotWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only folder")
+	}
+	repo := t.TempDir()
+	presets := filepath.Join(repo, ".agent", "presets")
+	if err := os.MkdirAll(presets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(presets, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(presets, 0o755) })
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	if code, err := a.cmdPresets([]string{"init", "review"}); code != 1 || err == nil || !strings.Contains(err.Error(), `Could not create preset "review"`) {
+		t.Errorf("presets init into a read-only folder = (%d, %v), want exit 1", code, err)
+	}
+}

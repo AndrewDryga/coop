@@ -209,7 +209,8 @@ func (a *app) presetsInit(repo string, args []string) (int, error) {
 	}
 	path, err := preset.Scaffold(repo, name)
 	if err != nil {
-		return 2, presetCreateErr(name, err)
+		err = presetCreateErr(name, err)
+		return refusalExit(err), err // an existing preset is refused input; a failed write exits 1
 	}
 	pal := ui.For(os.Stderr)
 	ui.OK("Created preset %q", name)
@@ -256,11 +257,8 @@ func presetCreateErr(name string, err error) error {
 			Rows:     [][2]string{{"Help:", "coop help presets init"}},
 		}
 	}
-	return &ui.UsageError{
-		Headline: fmt.Sprintf("Could not create preset %q", name),
-		Cause:    upperFirst(err.Error()) + ".",
-		Rows:     [][2]string{{"Help:", "coop help presets init"}},
-	}
+	return ui.CommandFailed(fmt.Sprintf("Could not create preset %q", name), upperFirst(err.Error())+".",
+		[2]string{"Help:", "coop help presets init"})
 }
 
 // upperFirst starts a borrowed message (a filesystem error, a loader detail) as the sentence the

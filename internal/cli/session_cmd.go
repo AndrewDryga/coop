@@ -188,7 +188,7 @@ func parseSessionQuiescenceFlags(args []string) (state string, jsonOutput bool, 
 func runSessionQuiescence(state string, jsonOutput bool) (int, error) {
 	state, err := sessionStatePath(state)
 	if err != nil {
-		return 2, err
+		return 1, err // no home folder, or a path it could not resolve: the command could not run
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -285,7 +285,7 @@ func (a *app) cmdSessions(args []string) (int, error) {
 func runSessionCompact(state, backup string) (int, error) {
 	state, err := sessionStatePath(state)
 	if err != nil {
-		return 2, err
+		return 1, err // no home folder, or a path it could not resolve: the command could not run
 	}
 	backup, err = filepath.Abs(filepath.Clean(backup))
 	if err != nil {
@@ -396,7 +396,7 @@ func connectorJournalDir(state string) string { return filepath.Join(state, "con
 func runSessionCheck(state string) (int, error) {
 	state, err := sessionStatePath(state)
 	if err != nil {
-		return 2, err
+		return 1, err // no home folder, or a path it could not resolve: the command could not run
 	}
 	// Holding the root keeps a service from starting and converting the store during the read.
 	release, err := session.HoldStateRoot(state)
@@ -658,7 +658,7 @@ func runSessionDoctor(socket string, jsonOutput bool) (int, error) {
 	socketGiven := socket != "" // a named socket keeps its own remedy; the default's is the default service
 	_, socket, err := sessionSocketPath("", socket)
 	if err != nil {
-		return 2, err
+		return 1, err // no home folder, or a path it could not resolve: the command could not run
 	}
 	result := sessionDoctorResult{Socket: socket}
 	client := sessionUnixHTTPClient(socket)

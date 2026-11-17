@@ -729,3 +729,19 @@ func TestSessionsOfferTheNearestOptionForATypo(t *testing.T) {
 		}
 	}
 }
+
+// Without a home folder the sessions commands cannot find their data: a command failure (exit 1),
+// not rejected input.
+func TestSessionsWithoutAHomeFolderExitOne(t *testing.T) {
+	t.Setenv("HOME", "")
+	for name, run := range map[string]func() (int, error){
+		"check":      func() (int, error) { return runSessionCheck("") },
+		"quiescence": func() (int, error) { return runSessionQuiescence("", false) },
+		"compact":    func() (int, error) { return runSessionCompact("", filepath.Join(t.TempDir(), "backup.sqlite")) },
+		"doctor":     func() (int, error) { return runSessionDoctor("", false) },
+	} {
+		if code, err := run(); code != 1 || err == nil {
+			t.Errorf("sessions %s without HOME = (%d, %v), want exit 1", name, code, err)
+		}
+	}
+}
