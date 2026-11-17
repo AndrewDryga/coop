@@ -886,6 +886,14 @@ and `session.target_rotated` event. For a completed turn, `assistant_message` is
 to show the user. co:op doesn't publish hidden reasoning, raw tool calls, raw ACP frames or box
 logs in that response.
 
+A completed turn's `stop_reason`, also in its `turn.completed` event, says why the agent stopped.
+`end_turn` is a finished answer. `max_tokens` (the agent ran out of output tokens),
+`max_turn_requests` (it hit its request limit) and `refusal` (it declined) still complete the turn
+with whatever reply the agent gave, so check the reason before you treat `assistant_message` as
+final. With semantic validation, the candidate carries the reason while it waits and keeps it when
+you accept it. A turn the agent ends with an error fails with `acp_agent_error`; `acp_cancelled`
+means the turn was really cancelled.
+
 A completed turn includes `usage` when the adapter reports it. The fields are `input_tokens`,
 `cached_input_tokens`, `output_tokens`, `reasoning_tokens` and, when available, the provider's
 `cost_usd`. Check `cost_recorded` to distinguish a reported zero cost from a missing cost.

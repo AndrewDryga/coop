@@ -109,7 +109,22 @@ const (
 	StopError       StopReason = "error"
 	StopInterrupted StopReason = "interrupted"
 	StopBudget      StopReason = "budget"
+	// The agent stopped early but still answered: the turn completes with the partial reply,
+	// and the reason tells a controller the reply may be cut off or a refusal.
+	StopMaxTokens       StopReason = "max_tokens"
+	StopMaxTurnRequests StopReason = "max_turn_requests"
+	StopRefusal         StopReason = "refusal"
 )
+
+// CompletedStopReason reports whether reason may end a completed turn. Empty means end_turn.
+func CompletedStopReason(reason StopReason) bool {
+	switch reason {
+	case "", StopEndTurn, StopMaxTokens, StopMaxTurnRequests, StopRefusal:
+		return true
+	default:
+		return false
+	}
+}
 
 type EventType string
 
@@ -788,6 +803,8 @@ type StageTurnCandidateRequest struct {
 	Usage             Usage
 	CumulativeCostUSD float64
 	CostRecorded      bool
+	// StopReason is the agent's reason for ending the round; empty means end_turn.
+	StopReason StopReason
 }
 
 // RecordTurnUsageRequest checkpoints token totals for this logical turn and an
@@ -828,6 +845,9 @@ type CompleteTurnRequest struct {
 	CumulativeCostUSD float64
 	CostRecorded      bool
 	CandidateSHA256   string
+	// StopReason is the agent's reason for ending the turn; empty means end_turn. A semantic
+	// acceptance leaves it empty and keeps the reason staged with the candidate.
+	StopReason StopReason
 }
 
 type FailTurnRequest struct {

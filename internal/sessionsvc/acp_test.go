@@ -503,7 +503,7 @@ func TestCompletedModelResultSurvivesShortStoreContention(t *testing.T) {
 	}
 	fixture.runner.completion = delayedCompleteTurnStore{turnCompletionStore: fixture.store, delay: 2500 * time.Millisecond}
 
-	completed, completeErr := fixture.runner.completeTurn(fixture.session, leased, "durable answer", nil, session.Usage{})
+	completed, completeErr := fixture.runner.completeTurn(fixture.session, leased, "durable answer", nil, session.Usage{}, "")
 	if completeErr != nil {
 		t.Fatalf("completed result was lost behind short store contention: %v", completeErr)
 	}
@@ -596,7 +596,7 @@ func TestTurnStartupCheckpointsSurviveWriterContention(t *testing.T) {
 			}()
 			runDone := make(chan error, 1)
 			go func() {
-				_, _, _, err := fixture.runner.runACP(ctx, process, bound, turn, turn.Prompt, true)
+				_, _, _, _, err := fixture.runner.runACP(ctx, process, bound, turn, turn.Prompt, true)
 				runDone <- err
 			}()
 			if strings.HasPrefix(stage, "sent") {
@@ -2124,7 +2124,7 @@ func TestSessionACPChildExitBeforeFirstFrameKeepsLaunchDiagnostic(t *testing.T) 
 	case <-timer.C:
 		t.Fatalf("missing-image child did not exit within %s", wait.Deadline)
 	}
-	_, _, _, err = fixture.runner.runACP(ctx, process, fixture.session, turn, turn.Prompt, false)
+	_, _, _, _, err = fixture.runner.runACP(ctx, process, fixture.session, turn, turn.Prompt, false)
 	var failure *sessionACPFailure
 	if !errors.As(err, &failure) || failure.code != sessionACPProcessError ||
 		!strings.Contains(failure.detail, "Coop box image is not built; run 'coop build'") {
@@ -2307,7 +2307,7 @@ func TestSessionACPInterruptedPromptWriteCancelsDeliveredPrompt(t *testing.T) {
 				nativeSessionID: "native-1", stopGrace: grace,
 				outputRoot: filepath.Join(fixture.session.Workspace, sessionOutputRoot),
 			}
-			_, _, _, err = fixture.runner.runACP(ctx, process, bound, turn, turn.Prompt, true)
+			_, _, _, _, err = fixture.runner.runACP(ctx, process, bound, turn, turn.Prompt, true)
 			if err == nil || ctx.Err() == nil {
 				t.Fatalf("interrupted prompt = %v, context = %v", err, ctx.Err())
 			}
@@ -2984,6 +2984,50 @@ func TestSessionTurnRunnerPersistsUsageUpdateCost(t *testing.T) {
 		result.Usage.InputTokens != 1200 || result.Usage.OutputTokens != 34 {
 		t.Fatalf("completed usage = %+v", result.Usage)
 	}
+}
+
+// A turn the agent cut short still completes with its reply, but records why it stopped, so a
+// controller can tell a cut-off or refused reply from a final one. An agent error is its own
+// failure, never a cancel.
+func TestSessionTurnRunnerRecordsTheAgentStopReason(t *testing.T) {
+	for _, reason := range []session.StopReason{session.StopMaxTokens, session.StopMaxTurnRequests, session.StopRefusal} {
+		t.Run(string(reason), func(t *testing.T) {
+			fixture := newSessionACPFixture(t, "stop-"+string(reason))
+			turn := fixture.submit(t, "stop early")
+			result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.State != session.TurnCompleted || result.StopReason != reason || result.AssistantMessage != "measured" {
+				t.Fatalf("completed turn = state %s stop %q message %q", result.State, result.StopReason, result.AssistantMessage)
+			}
+			stored, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+			if err != nil || stored.StopReason != reason {
+				t.Fatalf("stored stop reason = %q, %v", stored.StopReason, err)
+			}
+			events, err := fixture.store.ListEvents(context.Background(), fixture.session.ID, 0, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, event := range events {
+				if event.Type == session.EventTurnCompleted {
+					found = strings.Contains(string(event.Payload), `"stop_reason":"`+string(reason)+`"`)
+				}
+			}
+			if !found {
+				t.Fatalf("turn.completed does not carry %s: %+v", reason, events)
+			}
+		})
+	}
+	t.Run("error", func(t *testing.T) {
+		fixture := newSessionACPFixture(t, "stop-error")
+		turn := fixture.submit(t, "fail on its own")
+		result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+		if err == nil || result.State != session.TurnFailed || result.ErrorCode != sessionACPAgentError {
+			t.Fatalf("agent error turn = state %s code %q, %v", result.State, result.ErrorCode, err)
+		}
+	})
 }
 
 // A turn that actually failed still reports the cleanup failure — with its
@@ -3905,7 +3949,8 @@ func TestSessionACPChildHelper(t *testing.T) {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
 					"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 2},
 				}})
-			case "usage", "usage-error", "usage-cancelled":
+			case "usage", "usage-error", "usage-cancelled",
+				"stop-max_tokens", "stop-max_turn_requests", "stop-refusal", "stop-error":
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{
 					"sessionId": frame.Params.SessionID,
 					"update": map[string]any{"sessionUpdate": "usage_update", "used": 123, "size": 200000,
@@ -3918,6 +3963,9 @@ func TestSessionACPChildHelper(t *testing.T) {
 				stop := "end_turn"
 				if scenario == "usage-cancelled" {
 					stop = "cancelled"
+				}
+				if reason, ok := strings.CutPrefix(scenario, "stop-"); ok {
+					stop = reason
 				}
 
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": frame.Params.SessionID, "update": map[string]any{"sessionUpdate": "assistant_message_chunk", "content": map[string]string{"type": "text", "text": "measured"}}}})

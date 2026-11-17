@@ -75,6 +75,7 @@ const (
 	sessionACPProcessError    session.ErrorCode = "acp_process_error"
 	sessionACPTimeoutError    session.ErrorCode = "acp_timeout"
 	sessionACPCancelledError  session.ErrorCode = "acp_cancelled"
+	sessionACPAgentError      session.ErrorCode = "acp_agent_error"
 	sessionACPQuietError      session.ErrorCode = "acp_quiet"
 	sessionACPCredentialError session.ErrorCode = "credential_projection_error"
 	sessionACPCleanupError    session.ErrorCode = "session_cleanup_error"
@@ -415,6 +416,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 	var execution *sessionWarmExecution
 	runtimeRunID := leased.RuntimeRunID
 	var assistant string
+	var stopReason session.StopReason
 	usage := leased.Usage
 	var candidateUsage, pendingUsage session.Usage
 	usagePending := false
@@ -502,7 +504,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			}
 		}
 		if protocolComplete && baseErr == nil {
-			completed, err := r.completeTurn(bound, leased, assistant, outputArtifacts, usage)
+			completed, err := r.completeTurn(bound, leased, assistant, outputArtifacts, usage, stopReason)
 			if err != nil {
 				baseErr = err
 				if parked {
@@ -707,7 +709,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 		}
 
 		carriedOutputArtifacts := outputArtifacts
-		assistant, outputArtifacts, candidateUsage, err = r.runACP(
+		assistant, outputArtifacts, candidateUsage, stopReason, err = r.runACP(
 			ctx, execution.child, bound, leased, prompt, checkpointSend,
 		)
 		if candidateUsage.Recorded() {
@@ -743,7 +745,7 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 			if validationErr == nil {
 				if leased.OutputContract.RequireSemanticValidation {
 					staged, stageErr := r.stageTurnCandidate(
-						bound, leased, assistant, outputArtifacts, usage, semanticAttempt,
+						bound, leased, assistant, outputArtifacts, usage, semanticAttempt, stopReason,
 					)
 					if stageErr != nil {
 						runErr = stageErr
@@ -990,12 +992,12 @@ func turnDeadline(err error, doing string) error {
 	return classifyContextFailure(err)
 }
 
-func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string, artifacts []session.OutputArtifact, usage session.Usage) (session.Turn, error) {
+func (r *sessionTurnRunner) completeTurn(bound session.Session, leased session.Turn, assistant string, artifacts []session.OutputArtifact, usage session.Usage, stop session.StopReason) (session.Turn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
 	defer cancel()
 	return r.completion.CompleteTurn(ctx, session.CompleteTurnRequest{
 		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
-		Artifacts: artifacts, Usage: usage,
+		Artifacts: artifacts, Usage: usage, StopReason: stop,
 	})
 }
 
@@ -1006,6 +1008,7 @@ func (r *sessionTurnRunner) stageTurnCandidate(
 	artifacts []session.OutputArtifact,
 	usage session.Usage,
 	attempt int,
+	stop session.StopReason,
 ) (session.Turn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionACPCompletionTimeout)
 	defer cancel()
@@ -1013,7 +1016,7 @@ func (r *sessionTurnRunner) stageTurnCandidate(
 	return r.store.StageTurnCandidate(ctx, session.StageTurnCandidateRequest{
 		SessionID: bound.ID, TurnID: leased.ID, Message: assistant,
 		SHA256: fmt.Sprintf("%x", digest[:]), Attempt: attempt,
-		Artifacts: artifacts, Usage: usage,
+		Artifacts: artifacts, Usage: usage, StopReason: stop,
 	})
 }
 
@@ -1388,7 +1391,7 @@ func (r *sessionTurnRunner) PrepareSession(ctx context.Context, bound session.Se
 	if err != nil {
 		return errors.Join(err, r.cleanupWarmExecution(execution))
 	}
-	if _, _, _, err := r.runACP(ctx, child, bound, session.Turn{}, "", false); err != nil {
+	if _, _, _, _, err := r.runACP(ctx, child, bound, session.Turn{}, "", false); err != nil {
 		return errors.Join(err, r.cleanupWarmExecution(execution))
 	}
 	if current, err := r.store.GetSession(ctx, bound.ID); err == nil {
@@ -2740,9 +2743,9 @@ func (r *sessionTurnRunner) runACP(
 	leased session.Turn,
 	promptText string,
 	checkpointSend bool,
-) (message string, artifacts []session.OutputArtifact, reported session.Usage, runErr error) {
+) (message string, artifacts []session.OutputArtifact, reported session.Usage, stop session.StopReason, runErr error) {
 	if process == nil || process.frames == nil {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProcessError, "ACP child is unavailable")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProcessError, "ACP child is unavailable")
 	}
 	frames := process.frames
 	// The adapter's own rate-limit markers, resolved from the rung this child is running.
@@ -2977,7 +2980,7 @@ func (r *sessionTurnRunner) runACP(
 			"clientCapabilities": sessionACPClientCapabilities(),
 		}, "")
 		if err != nil {
-			return "", nil, session.Usage{}, err
+			return "", nil, session.Usage{}, "", err
 		}
 		var initialized struct {
 			ProtocolVersion   int `json:"protocolVersion"`
@@ -2989,7 +2992,7 @@ func (r *sessionTurnRunner) runACP(
 			} `json:"agentCapabilities"`
 		}
 		if json.Unmarshal(initializeResult, &initialized) != nil || initialized.ProtocolVersion != 1 {
-			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "ACP protocol version is unsupported")
+			return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "ACP protocol version is unsupported")
 		}
 		process.imageCapable = initialized.AgentCapabilities.PromptCapabilities.Image
 		process.embeddedContextCapable = initialized.AgentCapabilities.PromptCapabilities.EmbeddedContext
@@ -2998,7 +3001,7 @@ func (r *sessionTurnRunner) runACP(
 			servers, err := box.ReadSessionMCPHandoff(process.mcpHandoff, process.runID)
 			_ = removeProjectedSessionFile(process.mcpHandoff)
 			if err != nil {
-				return "", nil, session.Usage{}, errors.Join(acpFailure(sessionACPCredentialError, "the session child handed over no MCP servers"), err)
+				return "", nil, session.Usage{}, "", errors.Join(acpFailure(sessionACPCredentialError, "the session child handed over no MCP servers"), err)
 			}
 			process.mcpServers, process.mcpHandoff = servers, ""
 		}
@@ -3007,37 +3010,37 @@ func (r *sessionTurnRunner) runACP(
 		if nativeID == "" {
 			result, err := request("session/new", map[string]any{"cwd": process.cwd, "mcpServers": mcpServers}, "")
 			if err != nil {
-				return "", nil, session.Usage{}, err
+				return "", nil, session.Usage{}, "", err
 			}
 			var created struct {
 				SessionID string `json:"sessionId"`
 			}
 			if json.Unmarshal(result, &created) != nil || !validACPSessionID(created.SessionID) {
-				return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "session/new returned an invalid session id")
+				return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "session/new returned an invalid session id")
 			}
 			nativeID = created.SessionID
 		} else if !validACPSessionID(nativeID) {
-			return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "stored native session id is invalid")
+			return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "stored native session id is invalid")
 		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": process.cwd, "mcpServers": mcpServers}, nativeID); err != nil {
-			return "", nil, session.Usage{}, err
+			return "", nil, session.Usage{}, "", err
 		}
 		process.nativeSessionID = nativeID
 		process.initialized = true
 	}
 	nativeID := process.nativeSessionID
 	if !validACPSessionID(nativeID) || (bound.NativeSessionID != "" && bound.NativeSessionID != nativeID) {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "warm ACP session identity changed")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "warm ACP session identity changed")
 	}
 	if leased.ID == "" {
-		return "", nil, session.Usage{}, nil
+		return "", nil, session.Usage{}, "", nil
 	}
 	if bound.NativeSessionID == "" {
 		_, err := r.store.BindNativeSession(ctx, bound.ID, nativeID)
 		if err != nil {
 			if ctx.Err() != nil {
-				return "", nil, session.Usage{}, turnDeadline(ctx.Err(), "recording native session identity")
+				return "", nil, session.Usage{}, "", turnDeadline(ctx.Err(), "recording native session identity")
 			}
-			return "", nil, session.Usage{}, err
+			return "", nil, session.Usage{}, "", err
 		}
 	}
 	if checkpointSend {
@@ -3046,18 +3049,18 @@ func (r *sessionTurnRunner) runACP(
 		_, err := r.store.MarkTurnSendIntent(ctx, bound.ID, leased.ID)
 		if err != nil {
 			if ctx.Err() != nil {
-				return "", nil, session.Usage{}, turnDeadline(ctx.Err(), "recording prompt send intent")
+				return "", nil, session.Usage{}, "", turnDeadline(ctx.Err(), "recording prompt send intent")
 			}
-			return "", nil, session.Usage{}, acpFailure(session.CodeInternal, "prompt send intent checkpoint failed")
+			return "", nil, session.Usage{}, "", acpFailure(session.CodeInternal, "prompt send intent checkpoint failed")
 		}
 	}
 	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable, process.outputRoot)
 	if err != nil {
-		return "", nil, session.Usage{}, err
+		return "", nil, session.Usage{}, "", err
 	}
 	outputDir, outputRelative, err := prepareSessionOutputDirAtRoot(process.outputRoot, leased.ID)
 	if err != nil {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
 	}
 	defer removeSessionOutputDir(outputDir)
 	// The note follows the caller's prompt. It names this turn's own
@@ -3075,17 +3078,17 @@ func (r *sessionTurnRunner) runACP(
 			// Cancellation can win after delivery but before Write reports success.
 			cancelSession(nativeID)
 		}
-		return "", nil, session.Usage{}, sendErr
+		return "", nil, session.Usage{}, "", sendErr
 	}
 	if checkpointSend {
 		if err := r.checkpointPromptSent(bound.ID, leased.ID); err != nil {
-			return "", nil, session.Usage{}, err
+			return "", nil, session.Usage{}, "", err
 		}
 	}
 	collectAssistant = true
 	result, err := waitResponse("session/prompt", id, nativeID, true)
 	if err != nil {
-		return "", nil, session.Usage{}, err
+		return "", nil, session.Usage{}, "", err
 	}
 	// Usage, when the adapter reports it. ACP does not require it, and which
 	// adapters populate it is not something this code can assume — so it is
@@ -3106,7 +3109,7 @@ func (r *sessionTurnRunner) runACP(
 		} `json:"_meta"`
 	}
 	if json.Unmarshal(result, &promptResult) != nil || !validACPStopReason(promptResult.StopReason) {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "session/prompt returned an invalid stop reason")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "session/prompt returned an invalid stop reason")
 	}
 	observed = promptResult.Usage.session()
 	if !observed.Recorded() && promptResult.Meta != nil {
@@ -3121,37 +3124,43 @@ func (r *sessionTurnRunner) runACP(
 			promptResult.Meta.JetBrains.Air.Version,
 			promptResult.Meta.JetBrains.Air.SessionFailure,
 		); failure != nil {
-			return "", nil, session.Usage{}, failure
+			return "", nil, session.Usage{}, "", failure
 		}
 	}
-	if promptResult.StopReason == "cancelled" || promptResult.StopReason == "error" {
-		return "", nil, session.Usage{}, acpFailure(sessionACPCancelledError, "ACP prompt was cancelled")
+	switch promptResult.StopReason {
+	case "cancelled":
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPCancelledError, "ACP prompt was cancelled")
+	case "error":
+		// The agent failed on its own; nobody cancelled it.
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPAgentError, "the agent ended the turn with an error")
 	}
+	// max_tokens, max_turn_requests and refusal still carry a reply: the turn completes and
+	// records the reason, so a controller can tell a cut-off or refused reply from a final one.
 	if len(assistant) > sessionACPMessageLimit || !utf8.Valid(assistant) {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
 	}
 	payload, err := json.Marshal(map[string]any{"text": string(assistant), "final": true})
 	if err != nil || len(payload) > session.MaxEventPayloadBytes {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "assistant message exceeded its durable event bound")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "assistant message exceeded its durable event bound")
 	}
 	files, err := collectSessionOutputDir(outputDir)
 	if err != nil {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, err.Error())
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, err.Error())
 	}
 	for _, artifact := range files {
 		outputArtifacts = appendOutputArtifact(outputArtifacts, artifact.Name, artifact.MediaType, artifact.Data)
 	}
 	if len(outputArtifacts) > session.MaxTurnArtifacts {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn produced too many output artifacts")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "turn produced too many output artifacts")
 	}
 	total := 0
 	for _, artifact := range outputArtifacts {
 		total += len(artifact.Data)
 	}
 	if total > session.MaxTurnArtifactBytes {
-		return "", nil, session.Usage{}, acpFailure(sessionACPProtocolError, "turn output artifacts exceed their total bound")
+		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "turn output artifacts exceed their total bound")
 	}
-	return string(assistant), outputArtifacts, observed, nil
+	return string(assistant), outputArtifacts, observed, session.StopReason(promptResult.StopReason), nil
 }
 
 // sessionACPClientCapabilities opts into typed failures and command-output deltas.

@@ -389,6 +389,63 @@ func TestTurnOutputContractIsDurableAndRejectsTheWrongSchemaDigest(t *testing.T)
 	}
 }
 
+// A semantic candidate the agent cut short keeps its stop reason through acceptance, so the
+// accepted turn tells the controller the same thing an ordinary completed turn would.
+func TestSemanticCandidateKeepsItsStopReasonThroughAcceptance(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer func() { _ = store.Close() }()
+	sess, err := store.CreateSession(ctx, "semantic-stop-session", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+		Target: "codex:model", MaxTurns: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"]}`)
+	digest := sha256.Sum256(schema)
+	if _, err := store.SubmitTurn(ctx, "semantic-stop-turn", SubmitTurnRequest{
+		SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "answer",
+		OutputContract: &OutputContract{JSONSchema: schema, SHA256: hex.EncodeToString(digest[:]), RequireSemanticValidation: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	turn, ok, err := store.LeaseNextTurn(ctx, sess.ID)
+	if err != nil || !ok {
+		t.Fatalf("lease = %+v, ok=%v, err=%v", turn, ok, err)
+	}
+	if _, err := store.MarkTurnSendIntent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MarkTurnSent(ctx, sess.ID, turn.ID); err != nil {
+		t.Fatal(err)
+	}
+	candidate := `{"reply":"partial"}`
+	candidateDigest := sha256.Sum256([]byte(candidate))
+	staged, err := store.StageTurnCandidate(ctx, StageTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: candidate,
+		SHA256: hex.EncodeToString(candidateDigest[:]), Attempt: 1, StopReason: StopMaxTokens,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, CandidateSHA256: staged.Candidate.SHA256, StopReason: StopRefusal,
+	}); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("acceptance that rewrites the stop reason = %v", err)
+	}
+	if _, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, Message: "x", StopReason: StopCancelled,
+	}); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("completion with a failure stop reason = %v", err)
+	}
+	completed, err := store.CompleteTurn(ctx, CompleteTurnRequest{
+		SessionID: sess.ID, TurnID: turn.ID, CandidateSHA256: staged.Candidate.SHA256,
+	})
+	if err != nil || completed.State != TurnCompleted || completed.StopReason != StopMaxTokens {
+		t.Fatalf("accepted cut-off candidate = %+v, %v", completed, err)
+	}
+}
+
 func TestSemanticCandidateMustBeAcceptedByDigestBeforeTheTurnCompletes(t *testing.T) {
 	// A schema-valid Responder result could still contradict the frozen episode.
 	// Once Coop completed it, the caller could only bolt on another correction

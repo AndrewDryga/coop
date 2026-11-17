@@ -2639,8 +2639,13 @@ func isTerminal(state TurnState) bool {
 func (s *Store) StageTurnCandidate(ctx context.Context, req StageTurnCandidateRequest) (Turn, error) {
 	if !validBoundedText(req.SessionID, MaxIDBytes) || !validBoundedText(req.TurnID, MaxIDBytes) ||
 		req.Message == "" || len(req.Message) > MaxEventPayloadBytes || !utf8.ValidString(req.Message) ||
-		req.Attempt < 1 || req.Attempt > MaxOutputContractAttempts {
+		req.Attempt < 1 || req.Attempt > MaxOutputContractAttempts || !CompletedStopReason(req.StopReason) {
 		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "semantic candidate is outside bounds"}
+	}
+	// The candidate's stop reason waits with it; an ordinary end_turn stays empty until acceptance.
+	stagedStop := req.StopReason
+	if stagedStop == StopEndTurn {
+		stagedStop = ""
 	}
 	digest := sha256.Sum256([]byte(req.Message))
 	if req.SHA256 != hex.EncodeToString(digest[:]) {
@@ -2685,15 +2690,16 @@ func (s *Store) StageTurnCandidate(ctx context.Context, req StageTurnCandidateRe
 	}
 
 	if _, err := tx.ExecContext(ctx, `UPDATE turns SET state = ?, candidate_message = ?, candidate_sha256 = ?,
-		validation_attempt = ?, validation_error = '', validation_receipt = '',
+		validation_attempt = ?, validation_error = '', validation_receipt = '', stop_reason = ?,
 		usage_input_tokens = ?, usage_cached_input_tokens = ?, usage_output_tokens = ?,
 		usage_reasoning_tokens = ?, usage_cost_usd = ?, usage_cost_recorded = ? WHERE id = ?`,
-		string(TurnAwaitingValidation), req.Message, req.SHA256, req.Attempt,
+		string(TurnAwaitingValidation), req.Message, req.SHA256, req.Attempt, string(stagedStop),
 		turn.Usage.InputTokens, turn.Usage.CachedInputTokens, turn.Usage.OutputTokens,
 		turn.Usage.ReasoningTokens, turn.Usage.CostUSD, turn.Usage.CostRecorded, turn.ID); err != nil {
 		return Turn{}, fmt.Errorf("stage semantic candidate: %w", err)
 	}
 	turn.State = TurnAwaitingValidation
+	turn.StopReason = stagedStop
 	turn.Candidate = &TurnCandidate{Message: req.Message, SHA256: req.SHA256, Attempt: req.Attempt}
 	turn.CandidateSHA256 = req.SHA256
 	turn.ValidationAttempt = req.Attempt
@@ -2887,6 +2893,9 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	if req.CostRecorded && (req.CumulativeCostUSD < 0 || math.IsNaN(req.CumulativeCostUSD) || math.IsInf(req.CumulativeCostUSD, 0)) {
 		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn cost is outside bounds"}
 	}
+	if !CompletedStopReason(req.StopReason) {
+		return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "turn stop reason cannot complete a turn"}
+	}
 	total := 0
 	seenIDs := make(map[string]bool, len(req.Artifacts))
 	seenDigests := make(map[string]bool, len(req.Artifacts))
@@ -2935,10 +2944,11 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 		if req.CandidateSHA256 == "" || req.CandidateSHA256 != turn.Candidate.SHA256 {
 			return Turn{}, &Error{Code: CodeRevisionConflict, Detail: "semantic candidate digest is stale"}
 		}
-		if req.Message != "" || len(req.Artifacts) != 0 {
+		if req.Message != "" || len(req.Artifacts) != 0 || req.StopReason != "" {
 			return Turn{}, &Error{Code: CodeInvalidRequest, Detail: "semantic acceptance uses the stored candidate"}
 		}
 		req.Message = turn.Candidate.Message
+		req.StopReason = turn.StopReason
 		req.Usage = turn.Usage
 		req.CumulativeCostUSD, req.CostRecorded = 0, false
 	} else if turn.State != TurnRunning || turn.SendState != SendStateSent || req.CandidateSHA256 != "" {
@@ -2950,7 +2960,10 @@ func (s *Store) CompleteTurn(ctx context.Context, req CompleteTurnRequest) (Turn
 	now := s.now()
 	turn.State = TurnCompleted
 	turn.FinishedAt = now
-	turn.StopReason = StopEndTurn
+	turn.StopReason = req.StopReason
+	if turn.StopReason == "" {
+		turn.StopReason = StopEndTurn
+	}
 	turn.AssistantMessage = req.Message
 	if semanticAcceptance {
 		turn.ValidationReceipt = s.id("validation")
