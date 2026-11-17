@@ -47,6 +47,10 @@ type identityManager struct {
 	expiresAt    time.Time
 	workerID     string
 	workspaceRef string
+
+	// renewFailedAt is when the last renewal failed while the certificate still worked; zero once
+	// one succeeds.
+	renewFailedAt time.Time
 }
 
 type identityResponse struct {
@@ -89,12 +93,25 @@ func (m *identityManager) clientFor(ctx context.Context) (*http.Client, error) {
 		}
 	}
 	if !now.Add(m.config.renewBefore).Before(m.expiresAt) {
-		if err := m.renew(ctx, now); err != nil {
-			return nil, err
+		// A certificate that still works keeps the worker online while its renewal fails, and the
+		// renewal, a new key each time, is tried again after renewRetry rather than every poll.
+		if now.Before(m.expiresAt) && !m.renewFailedAt.IsZero() && now.Sub(m.renewFailedAt) < renewRetry {
+			return m.client, nil
 		}
+		if err := m.renew(ctx, now); err != nil {
+			if ctx.Err() != nil || !now.Before(m.expiresAt) {
+				return nil, err
+			}
+			m.renewFailedAt = now
+			return m.client, nil
+		}
+		m.renewFailedAt = time.Time{}
 	}
 	return m.client, nil
 }
+
+// renewRetry is how long a worker whose renewal failed waits before it tries again.
+const renewRetry = time.Minute
 
 func (m *identityManager) loadOrEnroll(ctx context.Context, now time.Time) error {
 	client, expiresAt, err := m.loadIdentity(now)

@@ -179,6 +179,98 @@ func TestProductionHTTPTransportEnrollsAndRotatesAWorkerOwnedIdentity(t *testing
 	}
 }
 
+// A controller whose renewal route fails leaves the worker online until its certificate ends:
+// polls go on, the renewal is tried again after a while rather than at every poll, and a worker
+// that starts in that window runs. Only an ended certificate fails the call.
+func TestAFailedRenewalKeepsAValidCertificateInUse(t *testing.T) {
+	ca := workertls.NewCA(t)
+	var renewCount, pollCount atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/coop-workers/enroll":
+			writeWorkerIdentityResponse(t, response, request, ca, http.StatusCreated)
+		case "/v1/coop-workers/renew":
+			renewCount.Add(1)
+			http.Error(response, "renewal is down", http.StatusInternalServerError)
+		case "/v1/coop-workers/poll":
+			var poll workerproto.Poll
+			if err := json.NewDecoder(request.Body).Decode(&poll); err != nil {
+				http.Error(response, "invalid poll", http.StatusBadRequest)
+				return
+			}
+			pollCount.Add(1)
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(workerproto.Response{
+				Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: time.Now().UTC(),
+				AcknowledgedResultCommandIDs: []string{}, Commands: []workerproto.Command{},
+				EventAcknowledgements: []workerproto.EventAcknowledgement{},
+			})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	clientRoots := x509.NewCertPool()
+	clientRoots.AddCert(ca.Certificate)
+	server.TLS = &tls.Config{
+		Certificates: []tls.Certificate{ca.ServerCertificate(t)}, ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs: clientRoots, MinVersion: tls.VersionTLS13,
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	directory := t.TempDir()
+	caPath := filepath.Join(directory, "ca.pem")
+	tokenPath := filepath.Join(directory, "enrollment-token")
+	identityPath := filepath.Join(directory, "identity.json")
+	if err := os.WriteFile(caPath, ca.PEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte(strings.Repeat("t", 43)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The test certificates last ten minutes, so a renewal hour puts them inside it at once.
+	config := HTTPTransportConfig{BaseURL: server.URL, CAFile: caPath, EnrollmentTokenFile: tokenPath,
+		IdentityFile: identityPath, RenewBefore: time.Hour, Timeout: time.Minute}
+	transport, err := NewHTTPTransport(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	poll := workerproto.Poll{
+		Version: workerproto.Version, PollRef: "poll:worker-a:renew-down", Worker: hello(time.Now().UTC()),
+		AcknowledgedCommandIDs: []string{}, CommandResults: []workerproto.CommandResult{}, EventBatches: []workerproto.EventBatch{},
+	}
+	for range 3 {
+		if _, err := transport.Poll(context.Background(), poll); err != nil {
+			t.Fatalf("a poll while renewal fails = %v, want the valid certificate used", err)
+		}
+	}
+	if renewCount.Load() != 1 || pollCount.Load() != 3 {
+		t.Fatalf("renew=%d poll=%d, want one renewal tried and every poll sent", renewCount.Load(), pollCount.Load())
+	}
+	transport.identity.mu.Lock()
+	transport.identity.renewFailedAt = transport.identity.renewFailedAt.Add(-renewRetry)
+	transport.identity.mu.Unlock()
+	if _, err := transport.Poll(context.Background(), poll); err != nil || renewCount.Load() != 2 {
+		t.Fatalf("a poll after the retry delay = %v with %d renewals, want the renewal tried again", err, renewCount.Load())
+	}
+
+	config.EnrollmentTokenFile = ""
+	restarted, err := NewHTTPTransport(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.Identity(context.Background()); err != nil {
+		t.Fatalf("a start with a valid certificate and a failing renewal = %v", err)
+	}
+
+	transport.identity.mu.Lock()
+	transport.identity.expiresAt = time.Now()
+	transport.identity.mu.Unlock()
+	if _, err := transport.Poll(context.Background(), poll); err == nil {
+		t.Fatal("a poll with an ended certificate and a failing renewal succeeded")
+	}
+}
+
 func TestProductionHTTPTransportRequiresHTTPSAndAWorkerOwnedIdentityFile(t *testing.T) {
 	if _, err := NewHTTPTransport(HTTPTransportConfig{BaseURL: "http://responder.example"}); err == nil {
 		t.Fatal("plaintext worker control plane was accepted")
