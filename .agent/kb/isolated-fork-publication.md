@@ -2,8 +2,8 @@
 name: isolated-fork-publication
 description: optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication
 subsystem: forkspace
-sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/state.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/isolated_dirty.go, internal/forkctl/testhelpers_test.go]
-updated: 2026-11-06
+sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/state.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/isolated_dirty.go, internal/forkctl/testhelpers_test.go, internal/forkspace/create.go, internal/ui/usage.go]
+updated: 2026-11-17
 ---
 
 `--isolated` is opt-in; ordinary shared-write behavior stays trusted collaboration. Host-private
@@ -84,6 +84,7 @@ Custom tools run at the captured base comparison while COOP_FORK_PATH points to 
 published tree, preserving HEAD...COOP_REVIEW_REF without handing over the model workspace.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K3-7; checked with grep).
 - 2026-11-06 — a parent with uncommitted changes, conflicts or hidden index flags is refused in the
   same block, naming the files and the exact command that clears them (task
   2026-11-06-put-the-isolated-fork-s-dirty-parent-refusals-in).

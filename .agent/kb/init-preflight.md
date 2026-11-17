@@ -2,8 +2,8 @@
 name: init-preflight
 description: init resolves stack prerequisites and renders the Dockerfile before any scaffold or hook mutation; its in-place edits (Compose, project.yaml, .gitignore) refuse links and files hidden from the box, new files and agent links are created, checked and removed through one parent handle, and what it prints from the repository goes through ui.SafeInline
 subsystem: scaffold
-sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go, internal/cli/cli.go]
-updated: 2026-11-06
+sources: [internal/scaffold/scaffold.go, internal/scaffold/compose_add.go, internal/scaffold/projectfile.go, internal/scaffold/gates.go, internal/scaffold/docker.go, internal/shadowpath/shadowpath.go, internal/cli/init_cmd.go, internal/cli/init_test.go, internal/cli/net_cmd.go, internal/cli/cli.go, internal/cli/report.go]
+updated: 2026-11-17
 ---
 
 # Stack validation precedes scaffold writes
@@ -131,6 +131,7 @@ yaml's `TypeError` entries and the paths of `fs.PathError` and `os.LinkError` �
 put in a key or a file name stays on its line.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K3-7; checked with grep).
 - 2026-11-06 — declining the Git question at a terminal now stops init with the no-terminal
   refusal and writes nothing (it used to ask the other questions, write the whole project into
   the plain folder and end with a "Finish setup: git init" job, now removed). The offer follows
