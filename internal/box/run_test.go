@@ -436,6 +436,40 @@ func TestRunCarriesValidatedServePortsIntoArguments(t *testing.T) {
 	}
 }
 
+// The consult lead's instruction file is written apart from the other agents' files, and it must
+// still learn which serve ports reached the host.
+func TestRunTellsTheConsultLeadItsServePorts(t *testing.T) {
+	policyRepo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(policyRepo, ".agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(policyRepo, project.File), []byte("serve:\n  ports: [5173]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "lead-instructions")
+	shim := filepath.Join(t.TempDir(), "rt")
+	script := "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in *:/home/node/.claude/CLAUDE.md:ro) cat \"${a%%:/home/node/*}\" >> " +
+		strconv.Quote(capture) + " ;; esac; done\n"
+	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+	if code, err := Run(cfg, runtime.Runtime{Name: shim}, RunSpec{
+		Image: "i", Repo: repo, PolicyRepo: policyRepo, Cmd: []string{"true"}, Batch: true, Quiet: true, Serve: true,
+		Agent: "claude", Homes: true, ConsultLead: "claude",
+	}); code != 0 || err != nil {
+		t.Fatalf("Run = (%d, %v), want success", code, err)
+	}
+	got, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("the lead's instruction file was not mounted: %v", err)
+	}
+	if want := "your port 5173 is"; !strings.Contains(string(got), want) {
+		t.Fatalf("the lead's instructions lack %q:\n%s", want, got)
+	}
+}
+
 func TestRunRepoWritableWithReadOnlyDescendant(t *testing.T) {
 	pinHome(t)
 	repo := t.TempDir()

@@ -1383,6 +1383,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// excluded from instructionPlan as the lead, so mounting nothing would leave it
 	// running with no instructions at all.
 	var consultMounts []extraMount
+	var leadInstruction []extraMount // the lead's instruction file, which instructionPlan skips
 	consultWired := false
 	if spec.Homes && spec.ConsultLead != "" {
 		content, file, wired, ok, err := leadInstructionMount(cfg, spec.ConsultLead, spec.Preset, peerProviders(spec.Peers), boxNotes, filtered != nil)
@@ -1395,7 +1396,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				return -1, fmt.Errorf("assemble lead instruction for %s: %w", spec.ConsultLead, err)
 			}
 			tmpFiles = append(tmpFiles, p)
-			consultMounts = append(consultMounts, extraMount{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file})
+			leadInstruction = []extraMount{{p, cfg.HomeInBox + "/." + spec.ConsultLead + "/" + file}}
+			consultMounts = append(consultMounts, leadInstruction...)
 			consultWired = wired
 		} else {
 			return -1, fmt.Errorf("assemble lead instruction: provider %q has no instruction file", spec.ConsultLead)
@@ -1464,6 +1466,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		tmpFiles = append(tmpFiles, p)
 		instructionMounts = append(instructionMounts, extraMount{p, cfg.HomeInBox + "/." + it.agent + "/" + it.file})
 	}
+	// Every agent's instruction file, the lead's included, takes the launch-time services note.
+	noteMounts := append(slices.Clone(instructionMounts), leadInstruction...)
 	// Synthesize workflow skills from the repo's shared source when it has no per-agent skills dir —
 	// so a repo can omit committed adapter directories and still give each agent its skills, mounted
 	// USER-level at ~/.<agent>/skills (writable copy, dies with the box). A project skills dir wins,
@@ -1898,7 +1902,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// sidecars simply start after they are assembled, so their facts are appended here.
 	joined := networkName != "" && rt.Name != "container"
 	spec.servePlan = launchServePlan(cfg, spec, filtered, hostPortFree)
-	if err := appendInstructionNote(instructionMounts, servicesNote(services, servicePorts, joined, spec.servePlan)); err != nil {
+	if err := appendInstructionNote(noteMounts, servicesNote(services, servicePorts, joined, spec.servePlan)); err != nil {
 		return finish(-1, err)
 	}
 	runPlain, runCancelable, removeCanceled := rt.Run, rt.RunInterruptible, rt.RemoveByLabel
