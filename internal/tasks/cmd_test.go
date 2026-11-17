@@ -2342,6 +2342,28 @@ func TestListingsEscapeATaskFolderName(t *testing.T) {
 	}
 }
 
+// The notes that print a task's folder path escape the folder name too: a blocked task's
+// unwritten decision, a block, and the rm confirmation.
+func TestPathNotesEscapeATaskFolderName(t *testing.T) {
+	root := t.TempDir()
+	id := "x\x1b[2Jy"
+	writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# Pick storage\n")
+	writeTaskFile(t, filepath.Join(root, StateBlocked, id+"-b", "task.md"), "# Pick a store\n")
+	outputs := map[string]string{
+		"decisions": captureStdout(t, func() { _, _ = tasksFolderDecisions("", root, nil) }),
+		"block":     captureStderr(t, func() { _, _ = CmdTasksFolder("", root, []string{"block", id}) }),
+	}
+	outputs["rm"] = captureStderr(t, func() { _, _ = CmdTasksFolder("", root, []string{"rm", id + "-b"}) })
+	for name, out := range outputs {
+		if !strings.Contains(out, "[2Jy") {
+			t.Fatalf("%s did not name the task:\n%q", name, out)
+		}
+		if strings.Contains(out, "\x1b[2J") {
+			t.Errorf("%s printed the folder name's control sequence:\n%q", name, out)
+		}
+	}
+}
+
 // A subproject path comes from project.yaml, which a box can write, so the queue banner escapes
 // it like a task id: no raw control byte reaches the terminal, colored or piped.
 func TestBannerEscapesTheQueuePath(t *testing.T) {

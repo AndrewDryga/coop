@@ -1095,7 +1095,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb string, opts
 	case StateDone:
 		dir := filepath.Join(root, StateDone, t.ID)
 		ui.OK("Completed task: %s", t.Title)
-		ui.Note("\n  %s", displayPath(dir))
+		ui.Note("\n  %s", ui.SafeInline(displayPath(dir)))
 		noteForcedClose(forced)
 		noteLandedFork(landed)
 		WarnTaskBulk(root, dir)
@@ -2485,7 +2485,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 	if !req.filled && t.State == StateBlocked {
 		ui.Note("%s is already blocked.", t.Title)
 		if t.HasDecision {
-			ui.Note("\n  %s", displayPath(filepath.Join(t.Dir, "decision.md")))
+			ui.Note("\n  %s", ui.SafeInline(displayPath(filepath.Join(t.Dir, "decision.md"))))
 		}
 		return 0, nil
 	}
@@ -2531,7 +2531,7 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 		appendTaskLog(taskDir, "Blocked for a decision in decision.md")
 	}
 	ui.OK("Blocked task: %s", t.Title)
-	ui.Note("\n  %s", displayPath(dec))
+	ui.Note("\n  %s", ui.SafeInline(displayPath(dec)))
 	if earlierAnswer != "" {
 		ui.Note("\nIt had been answered (%q); that decision is kept in its log.md.", earlierAnswer)
 	}
@@ -2620,7 +2620,7 @@ func saveRequestedDecision(taskDir, id, title string, d Decision) (earlierAnswer
 	case decisionResolution(string(existing)) != "":
 		return ReplaceDecision(taskDir, id, title, d)
 	case string(existing) != renderDecisionScaffold(id, title):
-		return "", fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, displayPath(filepath.Join(taskDir, "decision.md")))
+		return "", fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, ui.SafeInline(displayPath(filepath.Join(taskDir, "decision.md"))))
 	}
 	return "", WriteDecision(taskDir, id, d)
 }
@@ -2768,7 +2768,7 @@ func tasksFolderRemove(root string, args []string) (int, error) {
 		return lookupExit(err), err
 	}
 	ui.Note("Permanently delete %q, including its instructions,\nprogress, and saved evidence.\n", t.Title)
-	ui.Note("  %s\n", displayPath(t.Dir))
+	ui.Note("  %s\n", ui.SafeInline(displayPath(t.Dir)))
 	if err := ui.DestroyGate("Delete this task", request.yes); err != nil {
 		return ui.DeclineExit(err), cancelledDeletion(err, "coop tasks rm", "No tasks deleted.")
 	}
@@ -3298,7 +3298,7 @@ func queueDecisions(project, root string, interactive bool, merges []readyMerge)
 		if !exists || decisionUnwritten(string(body)) {
 			// The scaffold's "<title>?" and its placeholders are no question: name the file to write.
 			fmt.Printf("\n  %s\n", sanitizeCell(t.Title))
-			fmt.Printf("    %s %s\n", p.Dim("Decision not written yet:"), displayPath(decPath))
+			fmt.Printf("    %s %s\n", p.Dim("Decision not written yet:"), ui.SafeInline(displayPath(decPath)))
 			fmt.Printf("    %s\n", p.Faint(decisionID))
 			continue
 		}
@@ -3509,7 +3509,7 @@ func runDecisionBrowser(project string, refs []decisionRef, in io.Reader, out io
 		// the folder also drops its ref, so :p/:n never revisit a gone task.
 		if line == ":d" {
 			readConfirmation := false
-			gateErr := ui.DestroyGate("Delete task "+t.ID, false, func(prompt string) bool {
+			gateErr := ui.DestroyGate("Delete task "+ui.SafeInline(t.ID), false, func(prompt string) bool {
 				// The permanent loss, in the future tense, BEFORE the question — the same shape
 				// every other destructive preview uses.
 				fmt.Fprintf(out, "\n  Its instructions, progress and saved evidence will be permanently deleted.\n\n")
