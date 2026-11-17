@@ -27,13 +27,14 @@ import (
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
-// The package's API is New, Host, Preparation, Control, RunSpec, Run, and WorkspaceCost. Six more
-// names are exported for ONE reason — StageRecord, PeerRecord, ReadPeerRecords, IterationCommand,
-// LoopWorkPrompt, LoopInterruptedExitCode: internal/cli's scripted process e2e suite asserts the
-// loop's observable contract (the argv it builds, the prompt it sends, the telemetry rows it
-// writes, the exit status it returns), and those tests are welded to the shared process harness
-// that also serves the fork/consult/delegate/preset e2e families, so they cannot move here. No
-// production code outside this package reads them. See .agent/kb/provider-scripted-e2e.md.
+// The package's API is New, Host, Preparation, Control, RunSpec, Run, WorkspaceCost,
+// LoopInterruptedExitCode, NoActionableTasks, RequireHead, RecordedTarget, CandidateReviewSpec and
+// CandidateReviewFindings. Five more names are exported for ONE reason — StageRecord, PeerRecord,
+// ReadPeerRecords, IterationCommand, LoopWorkPrompt: internal/cli's scripted process e2e suite
+// asserts the loop's observable contract (the argv it builds, the prompt it sends, the telemetry
+// rows it writes), and those tests are welded to the shared process harness that also serves the
+// fork/consult/delegate/preset e2e families, so they cannot move here. No production code outside
+// this package reads those five. See .agent/kb/provider-scripted-e2e.md.
 
 // Host is what the loop needs from the CLI that owns the process and cannot own itself. All three
 // are shared with commands outside the loop, which is exactly why they stay in internal/cli.

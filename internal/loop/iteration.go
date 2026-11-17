@@ -63,9 +63,9 @@ func (c *Control) debugRetry(repo, img, agent, forkName string, stopped func() b
 
 const progressPoll = 2 * time.Second // how often the live bar checks the queue while an iteration runs
 
-// IterationCommand adds streaming flags only to coop's known headless forms on a TTY. Claude's
-// existing form appends them after the prompt; the other CLIs require their trailing prompt token
-// (or -p/value pair) to remain last.
+// IterationCommand adds streaming flags only to coop's known headless forms. Claude's existing
+// form appends them after the prompt; the other CLIs require their trailing prompt token (or
+// -p/value pair) to remain last.
 // IterationCommand always requests the adapter's structured stream for a built-in command —
 // on a TTY for the live view, and on redirected runs (fork logs, CI) because the stream is the
 // provider watchdog's only trustworthy activity signal. Custom work commands keep their own
@@ -215,7 +215,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		errWs = append(errWs, sink)
 		identityCopies = append(identityCopies, sink)
 	}
-	// A built-in loop command on a TTY emits its provider's streaming JSON. Decode it into human
+	// A built-in loop command emits its provider's streaming JSON. Decode it into human
 	// activity lines, keeping narration out of the terminal diagnostics used for recovery policy.
 	rawTrace, renderedTrace, closeTrace := c.iterationStreamTrace(repo, agent, streaming)
 	defer closeTrace()

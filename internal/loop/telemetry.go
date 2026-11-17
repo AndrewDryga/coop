@@ -29,8 +29,8 @@ import (
 // separate follow-on.
 type StageRecord struct {
 	Run              string   `json:"run"`
-	Stage            string   `json:"stage"`    // preflight | work | between | signoff | verify
-	Outcome          string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted | provider_{start,idle,tool,attempt}_timeout | background_{drained,timeout}
+	Stage            string   `json:"stage"`    // preflight | work | between | signoff | verify | candidate-review
+	Outcome          string   `json:"outcome"`  // success | authentication | rate_limit | output_limit | process_failure | malformed_stream | interrupted | completion_{rejected,blocked} | provider_{start,idle,tool,attempt}_timeout | background_{drained,timeout}
 	Provider         string   `json:"provider"` // the EFFECTIVE target, after any rate-limit rotation
 	Model            string   `json:"model,omitempty"`
 	Effort           string   `json:"effort,omitempty"`
@@ -182,7 +182,7 @@ func openRunsRoot(repo string, create bool) (*os.Root, error) {
 }
 
 // recordStage builds and appends a stage record, stamping end-time, HEAD-after, and the queue
-// counts at emit time. Best-effort — a write failure is warned once and swallowed, so telemetry can
+// counts at emit time. Best-effort — a write failure is warned and swallowed, so telemetry can
 // never break the run it observes.
 func (c *Control) recordStage(repo, run, stage, outcome string, tgt agents.Target, start time.Time, exit, retries, reopened int, headBefore string, hosts, finished, gateFiles []string, res *iterResult) {
 	cnt, _, _ := tasks.QueueProgress(hosts)

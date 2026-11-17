@@ -14,8 +14,8 @@ func shouldRunBetweenAudit(iterationSucceeded, auditAvailable, protected bool) b
 	return protected || (iterationSucceeded && auditAvailable)
 }
 
-// doneTaskDirs maps every done task's id → its folder across the queue(s). The between audit
-// diffs a before/after snapshot of it to name exactly which task(s) an iteration finished.
+// doneTaskDirs maps every done task's id → its folder across the queue(s). The final review diffs
+// it against its baseline to name exactly which tasks entered done/ since the last accepted round.
 func doneTaskDirs(hosts []string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, h := range hosts {
@@ -49,8 +49,8 @@ func completedReviewSubjects(hosts []string, completed map[string]bool) ([]strin
 	return ids, nil
 }
 
-// newlyFinished returns "id — dir" lines (sorted by id) for tasks done now but not before —
-// what the last iteration completed, and so what the between audit is about.
+// newlyFinished returns "id — dir" lines (sorted by id) for tasks done now but not before — the
+// final review round's subjects.
 func newlyFinished(before, now map[string]string) []string {
 	var out []string
 	for id, dir := range now {
