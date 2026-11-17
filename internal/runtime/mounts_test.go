@@ -78,6 +78,31 @@ esac
 	}
 }
 
+// The host-wide bind inventory inspects every listed container in one call, which fails as a whole
+// when one of them is removed after the listing. It relists and inspects the ones still there, so a
+// moment of churn does not cost the day's orphan-controller sweep.
+func TestLabelledContainerBindsRelistsAContainerRemovedBeforeItsInspect(t *testing.T) {
+	dir := t.TempDir()
+	cli := filepath.Join(dir, "docker")
+	script := `#!/bin/sh
+case "$*" in
+"ps -q -a")
+	if [ -e "$COOP_TEST_LISTED" ]; then echo live; else : > "$COOP_TEST_LISTED"; printf 'live\ngone\n'; fi ;;
+*"--format"*" live gone") printf '%s\n' '{"ID":"live","Mounts":[{"Type":"bind","Source":"/live"}]}'; echo 'error: no such object: gone' >&2; exit 1 ;;
+*"--format"*" live") printf '%s\n' '{"ID":"live","Mounts":[{"Type":"bind","Source":"/live"}]}' ;;
+*) exit 99 ;;
+esac
+`
+	if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_TEST_LISTED", filepath.Join(dir, "listed"))
+	found, err := (Runtime{Name: cli}).LabelledContainerBinds(context.Background(), nil)
+	if err != nil || !reflect.DeepEqual(found, []ContainerBinds{{ID: "live", Binds: []string{"/live"}}}) {
+		t.Fatalf("binds = %v, %v; want the live container and the removed one skipped", found, err)
+	}
+}
+
 // The daily sweep judges a run's folder by one daemon's word, so a runtime frozen to that daemon
 // lists it alone. Every call goes to its socket whatever the current context says by then, so no
 // `docker context use` and back mid-listing can slip another daemon's boxes in. Another daemon

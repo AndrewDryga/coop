@@ -360,17 +360,35 @@ func (r Runtime) LabelledContainerBinds(ctx context.Context, labels map[string]s
 	for _, filter := range filters {
 		args = append(args, "--filter", filter)
 	}
-	out, err := run(args...)
-	if err != nil {
-		return nil, fmt.Errorf("list containers: %w", err)
+	list := func() ([]string, error) {
+		out, err := run(args...)
+		if err != nil {
+			return nil, fmt.Errorf("list containers: %w", err)
+		}
+		return strings.Fields(string(out)), nil
 	}
-	ids := strings.Fields(string(out))
+	ids, err := list()
+	if err != nil {
+		return nil, err
+	}
+	var out []byte
+	// docker inspect fails as a whole when one container is removed after the listing, as Compose
+	// projects and test suites do all the time. Relist and inspect what is still there; a few tries
+	// cover churn, and a failure that persists is returned.
+	for attempt := 1; len(ids) > 0; attempt++ {
+		out, err = run(append([]string{"inspect", "--type", "container", "--format", `{"ID":{{json .Id}},"Mounts":{{json .Mounts}}}`}, ids...)...)
+		if err == nil {
+			break
+		}
+		if attempt == 3 {
+			return nil, fmt.Errorf("inspect containers: %w", err)
+		}
+		if ids, err = list(); err != nil {
+			return nil, err
+		}
+	}
 	if len(ids) == 0 {
 		return nil, nil
-	}
-	out, err = run(append([]string{"inspect", "--type", "container", "--format", `{"ID":{{json .Id}},"Mounts":{{json .Mounts}}}`}, ids...)...)
-	if err != nil {
-		return nil, fmt.Errorf("inspect containers: %w", err)
 	}
 	var found []ContainerBinds
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
