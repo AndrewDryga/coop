@@ -52,11 +52,13 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	if err := s.validateRestoreWorkspaceSession(ctx, sess, req, op.State != session.OperationReserved); err != nil {
 		return fail(err)
 	}
-	ctx, stopDiskWatch, err := s.checkpointDiskContext(ctx, sess.Workspace, req.Checkpoint.Bundle.ByteSize)
+	// A refusal returns no context, and fail records it with the caller's own.
+	watched, stopDiskWatch, err := s.checkpointDiskContext(ctx, sess.Workspace, req.Checkpoint.Bundle.ByteSize)
 	if err != nil {
 		return fail(err)
 	}
 	defer stopDiskWatch()
+	ctx = watched
 	if evicter, ok := s.runner.(sessionRunnerWarmEvicter); ok {
 		if err := evicter.EvictWarmSession(sess.ID); err != nil {
 			return fail(err)

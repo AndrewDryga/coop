@@ -587,9 +587,11 @@ When disk space is too low, the daemon refuses new workspaces with `storage_unav
 explains the cause. Reads, cleanup and discard still work. co:op doesn't delete protected data
 to make room.
 
-Checkpoint capture and restore need space for extra copies, including during recovery. They have
-a separate storage check that waits for enough space above the reserve. While a restore is
-interrupted, the session remains blocked from running work.
+Checkpoint capture and restore need space for extra copies, including during recovery, so they
+have a separate storage check. A new capture or restore without enough space above the reserve
+fails with `storage_unavailable`. That failed operation is finished, so free space and send the
+request again with a new idempotency key. An interrupted restore waits for space instead, and its
+session remains blocked from running work.
 
 The worker stops creating workspaces when disk use reaches `storage.high_watermark_bytes`, and
 starts accepting them again only when use drops to `storage.low_watermark_bytes` or below. New work

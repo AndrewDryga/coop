@@ -259,11 +259,13 @@ func (s *Service) executeCheckpointWorkspace(
 			return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 		}
 	}
-	ctx, stopDiskWatch, err := s.checkpointDiskContext(ctx, sess.Workspace, 0)
+	// A refusal returns no context, and recording it needs the caller's own.
+	watched, stopDiskWatch, err := s.checkpointDiskContext(ctx, sess.Workspace, 0)
 	if err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
 	defer stopDiskWatch()
+	ctx = watched
 	if op.State == session.OperationReserved {
 		intent, _ := json.Marshal(req)
 		if err := s.store.MarkOperationRunning(ctx, op.ID, intent); err != nil {

@@ -15,7 +15,9 @@ import (
 // Checkpoints allocate new custody even during recovery. Keep the worker's
 // reserve available for cleanup; an interrupted live restore stays fenced with
 // its original body until space is available. This is pressure protection, not
-// a filesystem quota: other host writers still share these volumes.
+// a filesystem quota: other host writers still share these volumes. A refusal
+// returns no context and no stop function, so a caller keeps its own context
+// until it has checked the error.
 func (s *Service) checkpointDiskContext(parent context.Context, workspace string, incoming int64) (context.Context, func(), error) {
 	check := func() error {
 		for _, path := range []string{s.stateRoot, workspace} {

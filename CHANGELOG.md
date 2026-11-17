@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A worker low on disk answers checkpoint and restore requests.** When a session worker doesn't
+  have enough free disk above its storage reserve, it now answers a checkpoint or a new restore
+  with `503 storage_unavailable` and records the operation as failed. It used to drop the
+  connection and leave the operation reserved.
+
 ## 13.2.1
 
 - **Box images carry patched system packages and tools.** Updated the Node 24/Bookworm base and

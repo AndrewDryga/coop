@@ -691,9 +691,11 @@ reports it for inspection instead of guessing that it can be deleted.</p>
 <p>When disk space is too low, the daemon refuses new workspaces with <code>storage_unavailable</code> and
 explains the cause. Reads, cleanup and discard still work. co:op doesn&#39;t delete protected data
 to make room.</p>
-<p>Checkpoint capture and restore need space for extra copies, including during recovery. They have
-a separate storage check that waits for enough space above the reserve. While a restore is
-interrupted, the session remains blocked from running work.</p>
+<p>Checkpoint capture and restore need space for extra copies, including during recovery, so they
+have a separate storage check. A new capture or restore without enough space above the reserve
+fails with <code>storage_unavailable</code>. That failed operation is finished, so free space and send the
+request again with a new idempotency key. An interrupted restore waits for space instead, and its
+session remains blocked from running work.</p>
 <p>The worker stops creating workspaces when disk use reaches <code>storage.high_watermark_bytes</code>, and
 starts accepting them again only when use drops to <code>storage.low_watermark_bytes</code> or below. New work
 must leave <code>storage.reserve_bytes</code> free. These checks don&#39;t limit how much data an already-running

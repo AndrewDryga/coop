@@ -184,6 +184,86 @@ func TestRestoreWaitsOutTheJanitorsCheckOfAParkedSession(t *testing.T) {
 	}
 }
 
+// A worker below its storage reserve refuses a checkpoint and a restore with storage_unavailable and
+// records the failed operation. Both callers once reassigned their own context from the refused
+// check, which returns none, and recording the refusal then panicked on a nil context. A refusal
+// holds nothing, so once space is back the same requests succeed under new keys.
+func TestCheckpointAndRestoreAnswerARefusedStorageCheck(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repository, git := gitrepo.New(t)
+	sessionWorkspaceWrite(t, filepath.Join(repository, ".gitignore"), ".agent/tasks/\n")
+	sessionWorkspaceWrite(t, filepath.Join(repository, "tracked.txt"), "base\n")
+	git("add", ".")
+	git("commit", "-qm", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repository, nil)
+	defer service.Stop()
+	ctx := context.Background()
+	source, err := service.CreateRemoteSession(ctx, "pressure-source", service.request(t, "offer:pressure"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err = service.EnsureWorkspaceTask(ctx, "pressure-task", EnsureWorkspaceTaskRequest{
+		SessionID: source.ID, ExpectedRevision: source.Revision,
+		Task: tasks.ControllerTaskDraft{OfferRef: "offer:pressure", Title: "Follow up", Prompt: "Keep the earlier work.", SuccessChecks: []string{"restored"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := func(key string) (CheckpointWorkspaceResult, error) {
+		return service.CheckpointWorkspace(ctx, key, CheckpointWorkspaceRequest{
+			SessionID: source.ID, SessionRef: "source", ExpectedRevision: source.Revision, PlacementGeneration: 1, RepositoryRef: "repo",
+		})
+	}
+	captured, err := capture("pressure-capture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := readCheckpointBundle(t, service.Service, captured.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := service.CreateRemoteSession(ctx, "pressure-target", service.request(t, "offer:pressure"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restore := func(key string) (session.Session, error) {
+		return service.RestoreWorkspaceCheckpoint(ctx, key, RestoreWorkspaceCheckpointRequest{
+			SessionID: target.ID, ExpectedRevision: target.Revision, Checkpoint: captured.Checkpoint, Stream: bytes.NewReader(bundle),
+		})
+	}
+
+	limits := storageTestLimits(t)
+	limits.ReserveBytes = 1<<63 - 1 // every real filesystem is below this floor
+	mustSetStorageLimits(t, service.Service, limits)
+	if _, err := capture("pressure-capture-refused"); session.CodeOf(err) != session.CodeStorageUnavailable {
+		t.Fatalf("a checkpoint below the reserve = %v, want storage_unavailable", err)
+	}
+	if _, err := restore("pressure-restore-refused"); session.CodeOf(err) != session.CodeStorageUnavailable {
+		t.Fatalf("a restore below the reserve = %v, want storage_unavailable", err)
+	}
+	for _, key := range []string{"pressure-capture-refused", "pressure-restore-refused"} {
+		op, err := service.Store().GetOperation(ctx, key)
+		if err != nil || op.State != session.OperationFailed || op.ErrorCode != session.CodeStorageUnavailable {
+			t.Fatalf("operation %s = %+v, %v; want a failed storage_unavailable record", key, op, err)
+		}
+	}
+
+	limits.ReserveBytes = 1 << 20
+	mustSetStorageLimits(t, service.Service, limits)
+	if _, err := capture("pressure-capture-retried"); err != nil {
+		t.Fatalf("a checkpoint stayed refused after the pressure cleared: %v", err)
+	}
+	restored, err := restore("pressure-restore-retried")
+	if err != nil {
+		t.Fatalf("a restore stayed refused after the pressure cleared: %v", err)
+	}
+	if restored.WorkspaceTask == nil || *restored.WorkspaceTask != *source.WorkspaceTask {
+		t.Fatalf("restored session = %+v, source task = %+v", restored, source.WorkspaceTask)
+	}
+}
+
 func TestCheckpointDiskRefusalCancellationAndOwnedStageCleanup(t *testing.T) {
 	ctx := context.Background()
 	repository, git := gitrepo.New(t)
