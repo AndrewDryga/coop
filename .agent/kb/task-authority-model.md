@@ -2,8 +2,8 @@
 name: task-authority-model
 description: four separate authorities decide who may act on a task/checkout — durable owner, iteration lease, checkout lock, and ref window — never merge them
 subsystem: tasks
-sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/candidate.go, internal/tasks/queue.go, internal/forkctl/land.go, internal/loop/lock.go, internal/loop/loop.go]
-updated: 2026-11-06
+sources: [internal/tasks/lease_cmd.go, internal/tasks/claimactor.go, internal/tasks/lease.go, internal/tasks/refauthority.go, internal/tasks/audit.go, internal/tasks/cmd.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/candidate.go, internal/tasks/queue.go, internal/forkctl/land.go, internal/loop/lock.go, internal/loop/loop.go, internal/tasks/completion.go, internal/tasks/session_claim.go, internal/cli/commands.go, internal/config/private.go]
+updated: 2026-11-17
 ---
 Coop has FOUR separate authorities over a task and its checkout. Each answers a different question,
 each is held a different length of time, and each fails differently — conflating any two of them is
@@ -58,14 +58,15 @@ A forced takeover (`coop tasks claim --force` over a live claim) ends the displa
 `skipOwnedCandidate` (`internal/tasks/audit.go`) checks the claim record BEFORE `TryTaskLease`
 even runs, for every in-progress AND todo candidate: an owned task is skipped like a busy lease, never
 leased, regardless of whether its lease actually is free. This ordering matters for the race between a
-human claiming a todo task and the loop scanning the same instant: `tasksFolderMove`'s claim path
+human claiming a todo task and the loop scanning the same instant: `tasksFolderMoveWith`'s claim path
 (`internal/tasks/cmd.go`) writes the owner record BEFORE it moves the folder, and rolls the record
 back if the move then loses the race — so the record is visible to any concurrent scan from the
 instant a claim begins, not from whenever its folder move happens to land. The record is cleared by
 `done` (`CompleteTrustedTask` for interactive completion; `FinalizeForkCandidateTask` for an exact
 reviewed fork candidate), `block` (`tasksFolderBlock`), `unblock`
-(`moveBlockedAuditUnblock`), and the explicit `coop tasks release <id>` (`ReleaseTrustedTask`) —
-nothing else. Release is not a bare record deletion: it takes the SAME authority flock + owner lock
+(`moveBlockedAuditUnblock`), the explicit `coop tasks release <id>` (`ReleaseTrustedTask`),
+`coop loop --preflight` finding the bound process gone (`ReleaseGoneOwners`), and `coop tasks rm`
+removing the task with its records (`removeTaskFolderAndRecords`). Release is not a bare record deletion: it takes the SAME authority flock + owner lock
 `BlockTrustedTask` takes, re-resolves the exact instance, refuses a fork-owned task / a foreign live
 lease / a claim another live process holds, returns the folder to `00_todo/` while the claim is
 still held, and only then clears it — so an interrupted release leaves the task claimed in todo,
@@ -113,6 +114,7 @@ but never replace — the folder is still the only source of a task's lifecycle 
 decide who may act on it.
 
 ## Changelog
+- 2026-11-17 — named tasksFolderMoveWith, listed every owner-record clearer (ReleaseGoneOwners, removeTaskFolderAndRecords) instead of "nothing else", and added the files the card names to sources (audit K6-4, K6-5, K6-9; checked internal/tasks/cmd.go, audit.go, internal/loop/loop.go).
 - 2026-11-04 — the paragraph on where the authorities live keeps only which package holds which. The
   account of the 2026-08 extraction, and of an `internal/authority`+`internal/taskq` split that was
   never built, is gone (the 2026-08-10 entry below records the move). Verified `LockRefAuthority`

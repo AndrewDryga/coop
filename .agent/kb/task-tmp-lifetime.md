@@ -3,10 +3,10 @@ name: task-tmp-lifetime
 description: task-local tmp survives resumable states but is containment-cleaned on done before review; artifacts persist
 subsystem: tasks
 sources: [internal/tasks/cmd.go, internal/tasks/clutter.go, internal/tasks/lease.go, internal/tasks/audit.go, internal/loop/loop.go, internal/forkctl/land.go, internal/forkctl/isolated_land.go, internal/taskmcp/tools.go, internal/taskmcp/evidence_handoff_test.go, internal/scaffold/templates/agent/tasks/README.md]
-updated: 2026-10-16
+updated: 2026-11-17
 ---
 A task's `tmp/` is disposable but resumable: because it sits inside the task folder, ordinary
-todo/in-progress/blocked/reopen moves carry it along. `tasksFolderMove` removes only `tmp/` when a
+todo/in-progress/blocked/reopen moves carry it along. `tasksFolderMoveWith` removes only `tmp/` when a
 host `coop tasks done` reaches done; `coop loop` diffs the queue after an in-box worker returns and
 removes `tmp/` from newly done tasks before between-task or signoff review can consume them.
 
@@ -45,6 +45,7 @@ Task authority does not live in `tmp/`. The host-only registry under
 scratch is never lease evidence and task-folder moves do not relocate authority.
 
 ## Changelog
+- 2026-11-17 — named the production tasksFolderMoveWith, not the test helper (audit K6-4; checked internal/tasks/cmd.go).
 - 2026-10-16 — `coop fork merge` warns too, naming each task's folder, after
   `FinalizeForkCandidateTask` has archived every task of the landing, plain or isolated;
   re-verified that landing still removes only `tmp/` (`finalizeCompletedTask`).

@@ -525,7 +525,7 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	}
 	// done ends a human claim same as block/unblock/release — a task in 99_done/ is never a loop
 	// candidate again, so a leftover record would only ever be silent dead weight, but clearing it
-	// here (not just in tasksFolderMove) covers the interactive verb and a re-run of `done` on
+	// here (not just in tasksFolderMoveWith) covers the interactive verb and a re-run of `done` on
 	// an already-done task. Fork landing finalizes its exact candidate through its durable journal.
 	released := false
 	if opts.landed != nil {
