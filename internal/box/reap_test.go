@@ -485,6 +485,29 @@ func TestReapTempLeavesDockerClientConfigs(t *testing.T) {
 	}
 }
 
+// A Compose command's snapshot, the service image pins and a toolchain build context are removed by
+// deferred calls a killed coop never makes. The sweep takes the old ones and leaves a fresh one.
+func TestReapTempRemovesKilledCommandInputs(t *testing.T) {
+	dir := t.TempDir()
+	var old []string
+	for _, name := range []string{"coop-compose-1", "coop-service-images-2", "coop-toolchain-3"} {
+		old = append(old, writeDirEntry(t, dir, name, 3*time.Hour))
+	}
+	fresh := writeDirEntry(t, dir, "coop-compose-4", time.Minute)
+	removed, err := ReapOrphanTempEntries(context.Background(), fakeMounts{sources: map[string]bool{}}, dir, time.Now())
+	if err != nil || removed != len(old) {
+		t.Fatalf("reap = %d, %v; want %d", removed, err, len(old))
+	}
+	for _, path := range old {
+		if exists(path) {
+			t.Errorf("%s survived", filepath.Base(path))
+		}
+	}
+	if !exists(fresh) {
+		t.Error("the sweep removed a running command's snapshot")
+	}
+}
+
 // A run folder in the temp directory does not say which daemon its box ran on, so no listing can
 // prove it unused and the sweep leaves it; what no box mounts, such as an audit's tree snapshot, it
 // still removes.

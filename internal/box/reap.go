@@ -44,6 +44,13 @@ var tempPrefixes = []string{
 	// A Compose command's private copy of registry auth, under the protected runfiles root. It
 	// lives for that one command, well inside the hour of grace.
 	"coop-compose-client-",
+	// One Compose command's or build's private inputs: the compose snapshot and its overrides,
+	// the approved service image pins, and a toolchain build's context. Each lives for its command
+	// or build and no container binds from it (the .coopignore copies a sidecar binds are kept in
+	// the durable service state instead), so one an hour old is a killed coop's leftover.
+	"coop-compose-",
+	"coop-service-images-",
+	"coop-toolchain-",
 }
 
 // runDirPrefix names the folder in the runfiles root where an ordinary run keeps every file its
