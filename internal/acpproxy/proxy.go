@@ -988,9 +988,9 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 		// such a child too (replayAt), and this is the line that makes the promise.
 		holding := p.child != nil && p.child.HoldPrompts
 		if holding || origin == originEditor && p.restarting {
-			waitFor := "wait for the switch to finish"
+			while, waitFor := "the provider switch is finishing", "wait for the switch to finish"
 			if holding {
-				waitFor = "wait for the project's box to be ready"
+				while, waitFor = "the project's box is starting", "wait for the project's box to be ready"
 			}
 			sid := sessionID(original.Params)
 			s := p.sessions[sid]
@@ -1001,7 +1001,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 			if known && !duplicate && !tooLarge {
 				if tooMany {
 					p.mu.Unlock()
-					_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), "too many sessions already have a prompt waiting; "+waitFor+", then send it again"))
+					_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), while, "too many sessions already have a prompt waiting; "+waitFor+", then send it again"))
 					return
 				}
 				p.restartHeld[sid] = clientLine{line: clone(line), origin: origin}
@@ -1021,12 +1021,12 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 				if tooLarge {
 					reason = "the prompt is too large to hold for now; " + waitFor + ", then send it again"
 				}
-				_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), reason))
+				_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), while, reason))
 				return
 			}
 			if holding { // no thread this session knows, so nothing to hold it for, and no turn runs here
 				p.mu.Unlock()
-				_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), "this thread is not open yet; reopen it, then send the message again"))
+				_, _ = p.out.Write(restartPromptRejectedResponse(string(original.ID), while, "this thread is not open yet; reopen it, then send the message again"))
 				return
 			}
 		}
@@ -3509,8 +3509,8 @@ func targetErrorResponse(id, detail string) []byte {
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32001,"message":` + string(message) + `}}` + "\n")
 }
 
-func restartPromptRejectedResponse(id, reason string) []byte {
-	message, _ := json.Marshal("This prompt cannot be accepted while the provider switch is finishing: " + reason)
+func restartPromptRejectedResponse(id, while, reason string) []byte {
+	message, _ := json.Marshal("This prompt cannot be accepted while " + while + ": " + reason)
 	return []byte(`{"jsonrpc":"2.0","id":` + id + `,"error":{"code":-32001,"message":` + string(message) + `}}` + "\n")
 }
 

@@ -297,7 +297,8 @@ func TestHoldingChildNeverGetsAPromptForAnUnknownThread(t *testing.T) {
 	h := newHoldingHarness(t, nil, nil)
 	h.initialize(0)
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"never-opened","prompt":[]}}`)
-	if line := readLine(t, h.clientOut); !strings.Contains(string(line), "not open yet") {
+	if line := readLine(t, h.clientOut); !strings.Contains(string(line), "not open yet") ||
+		!strings.Contains(string(line), "while the project's box is starting") || strings.Contains(string(line), "switch") {
 		t.Fatalf("the editor got %s", line)
 	}
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/w"}}`)
