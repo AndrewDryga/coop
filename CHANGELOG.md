@@ -19,6 +19,10 @@
 - **An unattended loop no longer waits forever on a stalled signing step.** When `coop loop`
   runs without a terminal, the Git command that signs its commits now stops after 15 minutes,
   like every other Git command coop runs on your computer. It used to have no limit.
+- **Fork review and merge flag changes to Grok's project folder.** A fork that adds or changes
+  files under `.grok/` is now listed with the files that run on your machine, and
+  `coop fork merge` treats it as a risky file, as it already did for `.claude/`, `.codex/` and
+  `.gemini/`.
 
 ## 13.2.1
 

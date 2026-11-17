@@ -3,7 +3,7 @@ name: host-execution-surfaces
 description: local execution classifications, fork protections and controller-authorized CI publication
 subsystem: hostsurface
 sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go, internal/sessionsvc/review_scan.go, internal/scaffold/stock.go]
-updated: 2026-11-04
+updated: 2026-11-16
 ---
 
 Shared-write boxes can plant metadata that native host tools execute even before a merge,
@@ -17,7 +17,7 @@ that reviews agent work reads it, so a new surface is added there and nowhere el
 
 Two tiers, decided by the `automatic` result of `Classify`:
 - **automatic** — runs without a deliberate command (hooks, `.envrc`, `.gitattributes` filters,
-  `.gitmodules`, pre-commit config, `.claude/`, `.codex/`, `.gemini/` settings and hooks, MCP
+  `.gitmodules`, pre-commit config, `.claude/`, `.codex/`, `.gemini/`, `.grok/` settings and hooks, MCP
   configs, `.agent/` skills, compose, Dockerfile, project/loop config, `.vscode`/`.zed`/`.idea`
   task and settings files, `.github/workflows/`). `PolicyScan` turns these into merge blockers
   (`coop fork merge` refuses without `--force`).
@@ -58,6 +58,10 @@ The consumers:
   candidate for controller-authorized publication.
 
 ## Changelog
+- 2026-11-16: `.grok/` is an automatic surface like the other three agents' folders. Coop
+  scaffolds it and the Grok client loads its skills, MCP, LSP and hooks from it, but the classifier
+  predated Grok and a fork's change there was neither listed nor a merge blocker (2026-11-10 audit,
+  find FS-7).
 - 2026-11-04: removed `Finding.Automatic`, which nothing read. `PolicyScan` and isolated publication
   read the tier from `Classify` directly; both still block as described above.
 - 2026-11-04: dropped the paragraph on the removed task-flags feature. The 2026-09-11 entry below

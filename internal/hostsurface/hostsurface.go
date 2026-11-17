@@ -101,7 +101,7 @@ func classify(status, relPath string, includeCI bool) (reason string, automatic 
 			return "Runs Claude Code hooks in your host session.", true
 		}
 		return "Provides commands or skills to your host Claude session.", true
-	case hasSegment(p, ".codex") || hasSegment(p, ".gemini"):
+	case hasSegment(p, ".codex") || hasSegment(p, ".gemini") || hasSegment(p, ".grok"):
 		return "Provides agent configuration to your host sessions.", true
 	case hasSegment(p, ".agent"):
 		switch {

@@ -22,6 +22,9 @@ func TestClassifyNamesTheActionThatRunsIt(t *testing.T) {
 		".claude/hooks/stop-guard.sh":        "Claude Code hooks",
 		".claude/commands/deploy.md":         "commands or skills",
 		".codex/config.toml":                 "agent configuration",
+		".gemini/settings.json":              "agent configuration",
+		".grok/hooks/stop.sh":                "agent configuration",
+		"sub/.grok/skills/deploy/SKILL.md":   "agent configuration",
 		".agent/skills/sweep/queue-guard.sh": "uses the skill",
 		".agent/compose.yml":                 "Starts containers",
 		".agent/Dockerfile":                  "build the box",
@@ -36,7 +39,7 @@ func TestClassifyNamesTheActionThatRunsIt(t *testing.T) {
 			t.Errorf("Classify(%q) = %q, want it to mention %q", p, got, want)
 		}
 	}
-	for _, p := range []string{"main.go", "docs/README.md", "scripts/deploy.sh", ".agent/tasks/README.md", ".agent/kb/card.md", ".agentish/project.yaml", ".githooksish/pre-commit", "internal/box/run.go", "package.json", "package-lock.json", ".vscode/extensions.json"} {
+	for _, p := range []string{"main.go", "docs/README.md", "scripts/deploy.sh", ".agent/tasks/README.md", ".agent/kb/card.md", ".agentish/project.yaml", ".grokish/hooks/stop.sh", ".githooksish/pre-commit", "internal/box/run.go", "package.json", "package-lock.json", ".vscode/extensions.json"} {
 		if got, _ := Classify("M", p); got != "" {
 			t.Errorf("Classify(%q) = %q, want nothing: ordinary files are not surfaces", p, got)
 		}
@@ -45,7 +48,7 @@ func TestClassifyNamesTheActionThatRunsIt(t *testing.T) {
 		t.Errorf("a deleted hook cannot run anything, got %q", got)
 	}
 	// Surfaces that run by themselves block a fork merge; ones you run deliberately only flag.
-	for p, automatic := range map[string]bool{".githooks/pre-commit": true, ".claude/settings.json": true, ".agent/compose.yml": true, ".envrc": true, "Makefile": false, "justfile": false} {
+	for p, automatic := range map[string]bool{".githooks/pre-commit": true, ".claude/settings.json": true, ".grok/hooks/stop.sh": true, ".agent/compose.yml": true, ".envrc": true, "Makefile": false, "justfile": false} {
 		if _, got := Classify("M", p); got != automatic {
 			t.Errorf("Classify(%q) automatic = %v, want %v", p, got, automatic)
 		}
@@ -61,6 +64,7 @@ func TestClassifyJudgesEverySpelling(t *testing.T) {
 		".agent/DOCKERFILE":        "build the box",
 		"MAKEFILE":                 "make",
 		".Claude/Settings.json":    "Claude Code hooks",
+		".GROK/Hooks/stop.sh":      "agent configuration",
 		".GitHub/Workflows/ci.yml": "CI",
 		".git\u200battributes":     "Git filters",
 	} {
