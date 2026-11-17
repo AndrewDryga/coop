@@ -7,7 +7,7 @@ import (
 )
 
 // GateSlotPath is where coop mounts coop-gate-slot in every box, on PATH, so a project's full gate
-// opts into the host-wide gate slots with one word in front of it: `coop-gate-slot make check`.
+// opts into its project's two gate slots with one word in front of it: `coop-gate-slot make check`.
 const GateSlotPath = "/usr/local/bin/coop-gate-slot"
 
 // GateTmpPath is the folder a gate keeps its temp files in. A Docker box that carries coop-gate-slot
@@ -65,9 +65,8 @@ func IsGateTmpfs(value, memory string) bool { return value == gateTmpfs(memory) 
 
 // GateSlotScript is the coop-gate-slot helper. Every box of a project mounts the project's cache
 // volume as ~/.cache, so a flock on a file there is seen by all of them: the project's own boxes and
-// its forks share the slots (isolated forks share their own set). Different projects no longer
-// share a cache, so each has its own two slots. Each of the two slots is
-// one file, held for the whole gate; coop's own make check takes the same files through
+// its forks share the slots (isolated forks share their own set). Each project has its own cache
+// volume, so each has its own two slots. Each of the two slots is one file, held for the whole gate; coop's own make check takes the same files through
 // tools/gateslot, which must keep the same count. The kernel drops a flock when its holder dies, so
 // a killed gate frees its slot. A runtime that gives each box its own VM, such as Apple container,
 // may not share that lock between boxes; that is not checked.
@@ -92,7 +91,7 @@ func IsGateTmpfs(value, memory string) bool { return value == gateTmpfs(memory) 
 func GateSlotScript() string { return gateSlotScript }
 
 const gateSlotScript = `#!/bin/sh
-# coop-gate-slot — run a full gate once it holds one of this host's two gate slots.
+# coop-gate-slot — run a full gate once it holds one of this project's two gate slots.
 #
 #   coop-gate-slot make check
 #
@@ -141,7 +140,7 @@ while :; do
 		exec 9<&-
 	done
 	if [ -z "$told" ]; then
-		echo "Waiting for another gate to finish: 2 already running on this host (slots in $dir)" >&2
+		echo "Waiting for another gate to finish: 2 already running in this project (slots in $dir)" >&2
 		told=1
 	fi
 	sleep 1

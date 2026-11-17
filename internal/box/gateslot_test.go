@@ -114,7 +114,7 @@ func gateSlotHost(t *testing.T, home string) (string, []string) {
 	return bin, append(os.Environ(), "HOME="+home, "PATH="+bin+":"+os.Getenv("PATH"), "COOP_GATE_SLOT_FLOCK_HELPER=1", "COOP_GATE_SLOT_HELD=")
 }
 
-// A project that is not coop puts its own gate under the host's gate slots with one word. With both
+// A project that is not coop puts its own gate under its project's gate slots with one word. With both
 // slots taken by running gates it says it waits and does not start, then runs once a slot frees,
 // marked as running in one and without the lock descriptor, and its exit status comes back
 // unchanged. Its slot is free afterwards.
@@ -148,7 +148,7 @@ func TestGateSlotHoldsAProjectGateUntilASlotIsFree(t *testing.T) {
 	}
 	wait.For(t, "the project gate to wait for a slot", func() bool {
 		data, _ := os.ReadFile(stderr)
-		return strings.Contains(string(data), "Waiting for another gate to finish: 2 already running on this host (slots in "+slots+")")
+		return strings.Contains(string(data), "Waiting for another gate to finish: 2 already running in this project (slots in "+slots+")")
 	})
 	if _, err := os.Stat(mark); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the gate started before it held a slot: %v", err)

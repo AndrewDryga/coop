@@ -1435,8 +1435,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	tmpFiles = append(tmpFiles, proleFiles...)
 	tmpDirs = append(tmpDirs, proleDirs...)
 
-	// coop-gate-slot goes in every box but a sign-in one, so any project's full gate can take a
-	// host-wide gate slot by running under it (GateSlotScript). Mounted, not baked into the image: it
+	// coop-gate-slot goes in every box but a sign-in one, so any project's full gate can take one of
+	// its project's gate slots by running under it (GateSlotScript). Mounted, not baked into the image: it
 	// needs no rebuild and always matches this coop.
 	if !spec.Login {
 		slot, err := artifacts.writeFile(artifacts.parent, GateSlotScript())
