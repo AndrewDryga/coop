@@ -1358,8 +1358,8 @@ OPTIONS
 ` + peerOptionRow + `
 ` + networkOptionRows + `
 
-  Without a target, Coop starts the fork's agent with its default model and
-  account; choose another model or effort in your editor.
+  Without a target, Coop starts the target the fork was made with or last
+  switched to; choose another model or effort in your editor.
 
   Open the parent project in your editor; Coop maps it to the fork. The fork,
   provider and account stay fixed.
