@@ -120,13 +120,19 @@ func TestCaptureNetworkRulesFileRefusesInvalidSources(t *testing.T) {
 			case "malformed":
 				err = os.WriteFile(path, []byte("egress_rules: [{to: {domain: example.com}, trusted: true}]"), 0o600)
 			case "parent-traversal":
+				// The file and the folder both exist, so only the '..' refusal can fail this capture.
+				err = errors.Join(os.WriteFile(path, []byte(networkRulesFixture), 0o600), os.Mkdir(filepath.Join(root, "child"), 0o700))
 				path = root + "/child/../rules.yaml"
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			if capture, err := captureNetworkRulesFile(path, nil); err == nil || capture != nil {
+			capture, err := captureNetworkRulesFile(path, nil)
+			if err == nil || capture != nil {
 				t.Fatalf("invalid source granted authority: %v %v", capture, err)
+			}
+			if kind == "parent-traversal" && !strings.Contains(err.Error(), "parent path component") {
+				t.Fatalf("parent traversal refused for another reason: %v", err)
 			}
 		})
 	}
