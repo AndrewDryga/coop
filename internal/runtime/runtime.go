@@ -908,35 +908,6 @@ func (r Runtime) ContainerLabels(ctx context.Context, key, value string, names .
 	return containers, nil
 }
 
-// ContainersByLabel returns every running or stopped container matching key=value, each with its
-// labels. A decision made per container needs the id next to the labels that answer it.
-func (r Runtime) ContainersByLabel(ctx context.Context, key, value string) ([]Container, error) {
-	if r.kind() == runtimeAppleContainer {
-		return nil, errors.New("label inspection is unsupported by Apple container")
-	}
-	ids, err := r.containerIDsContext(ctx, true, "label="+key+"="+value)
-	if err != nil {
-		return nil, fmt.Errorf("list matching containers: %w", err)
-	}
-	containers := make([]Container, 0, len(ids))
-	for _, id := range ids {
-		args := []string{"inspect", "--format", "{{json .Config.Labels}}", id}
-		out, err := contextCommand(ctx, r.Name, args...).CombinedOutput()
-		if err != nil {
-			if ctx.Err() != nil {
-				err = ctx.Err()
-			}
-			return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, out))
-		}
-		var labels map[string]string
-		if err := json.Unmarshal(bytes.TrimSpace(out), &labels); err != nil {
-			return nil, fmt.Errorf("decode labels for container %s: %w", id, err)
-		}
-		containers = append(containers, Container{ID: id, Labels: labels})
-	}
-	return containers, nil
-}
-
 // RunningContainerImages lists the running containers labeled key=value, each with its full id,
 // the immutable ID of the image it runs and the values of the named labels. A listing shows the
 // image name a container started from, and a rebuild moves that name to another image; only the

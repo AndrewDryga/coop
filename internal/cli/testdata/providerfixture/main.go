@@ -465,8 +465,8 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 	if len(args) == 3 && args[0] == "image" && args[1] == "inspect" && args[2] == image {
 		return runtimeCommand{Kind: "inspect"}, nil
 	}
-	// A credential-container check reads one container's labels back (runtime.ContainersByLabel), so
-	// the fixture answers the same `inspect --format` docker does rather than rejecting the call.
+	// A read of one container's labels gets the same `inspect --format` answer docker gives, rather
+	// than a rejection. No coop code sends this read today.
 	if len(args) == 4 && args[0] == "inspect" && args[1] == "--format" && args[2] == containerLabelsFormat {
 		return runtimeCommand{Kind: "labels", IDs: []string{args[3]}}, nil
 	}
