@@ -246,7 +246,6 @@ func sessionWorkspaceStatusContext(ctx context.Context, workspace string) ([]byt
 func runSessionPrivateGitContext(ctx context.Context, workspace string, limit int, env []string, args ...string) ([]byte, bool, error) {
 	stdout := &sessionWorkspaceLimitedWriter{limit: limit}
 	command := forkspace.TrustedGitCommand(ctx, workspace, env, args...)
-	command.Env = env
 	command.Stdout = stdout
 	if err := command.Run(); err != nil {
 		return nil, false, errors.Join(err, ctx.Err())
@@ -1253,9 +1252,9 @@ func confirmSessionWorkspaceRemoved(plan WorkspaceDiscardPlan) error {
 }
 
 // discardSessionWorkspaceLocked performs the exact-plan revalidation and removal while its caller
-// holds the fork lifecycle lock. The service uses this form after its preflight so service teardown
-// and workspace destruction share one reservation/generation window; direct tests use the locking
-// wrapper above.
+// holds the fork lifecycle lock. Only the locking wrapper above calls it (create rollback and
+// tests); executeDiscard calls the validate and apply halves itself so service teardown and
+// workspace destruction share one reservation/generation window.
 func discardSessionWorkspaceLocked(plan WorkspaceDiscardPlan) error {
 	validated, err := validateSessionWorkspaceDiscardLocked(plan)
 	if err != nil {

@@ -20,7 +20,7 @@ func streamSessionTrackedPatch(ctx context.Context, workspace, base string, outp
 		diff := forkspace.TrustedGitCommand(ctx, workspace, env, []string{
 			"diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "--submodule=short", "--binary", base, tree, "--",
 		}...)
-		diff.Env, diff.Stdout = env, output
+		diff.Stdout = output
 		return errors.Join(diff.Run(), ctx.Err())
 	})
 }
@@ -33,9 +33,7 @@ func withSessionTrackedTree(ctx context.Context, workspace string, action func(s
 	return withSessionPrivateIndex(ctx, session.CompanionRepository{Workspace: workspace, BaseCommit: head}, func(env []string) error {
 		env = append(env, "GIT_LITERAL_PATHSPECS=1")
 		command := func(args ...string) *exec.Cmd {
-			cmd := forkspace.TrustedGitCommand(ctx, workspace, env, args...)
-			cmd.Env = env
-			return cmd
+			return forkspace.TrustedGitCommand(ctx, workspace, env, args...)
 		}
 		// Export entries rather than copying index bytes: split/sparse indexes
 		// must resolve their backing data, and agent skip-worktree bits are not

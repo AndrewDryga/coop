@@ -1624,10 +1624,8 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 		if requested && !cleanupPending && !errors.Is(runErr, errTurnUsageUnsettled) {
 			// The real ACP runner performs this after child cleanup. This fallback makes injected
 			// runners obey the same durable rule without making tests depend on ACP internals.
-			cancelled, cancelErr := s.store.CompleteTurnCancellation(context.Background(), cancelKey, cancelReq)
-			if cancelErr == nil {
-				_ = cancelled
-			} else if session.CodeOf(cancelErr) != session.CodeTurnNotRunnable {
+			_, cancelErr := s.store.CompleteTurnCancellation(context.Background(), cancelKey, cancelReq)
+			if cancelErr != nil && session.CodeOf(cancelErr) != session.CodeTurnNotRunnable {
 				runErr = errors.Join(runErr, cancelErr)
 			}
 		}

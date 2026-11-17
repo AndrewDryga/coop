@@ -380,7 +380,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 	if err != nil {
 		return sessionReviewIntent{}, fmt.Errorf("resolve creation base: %w", err)
 	}
-	source, err := captureSessionReviewSource(sess.Repository, sess.Workspace, sess.ForkName)
+	source, err := captureSessionReviewSource(sess.Workspace, sess.ForkName)
 	if err != nil {
 		if errors.Is(err, errSessionReviewSourceBranch) {
 			return sessionReviewIntent{}, &session.Error{
@@ -479,7 +479,7 @@ func validReviewCommitMessage(message string) bool {
 		!strings.ContainsRune(message, 0) && strings.TrimSpace(message) != ""
 }
 
-func captureSessionReviewSource(repo, workspace, branch string) (sessionReviewSourceIdentity, error) {
+func captureSessionReviewSource(workspace, branch string) (sessionReviewSourceIdentity, error) {
 	info, err := os.Lstat(workspace)
 	if err != nil {
 		return sessionReviewSourceIdentity{}, err
@@ -691,7 +691,7 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	if !currentParentMatches {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "parent_moved")
 	}
-	if current, err := captureSessionReviewSource(intent.Repository, intent.Workspace, intent.SourceBranch); err != nil || current.Head != intent.SourceHead || current.Tree != intent.SourceTree || current.Branch != intent.SourceBranch || current.StatusDigest != intent.SourceStatusDigest {
+	if current, err := captureSessionReviewSource(intent.Workspace, intent.SourceBranch); err != nil || current.Head != intent.SourceHead || current.Tree != intent.SourceTree || current.Branch != intent.SourceBranch || current.StatusDigest != intent.SourceStatusDigest {
 		dossier.NotPublishableReasons = append(dossier.NotPublishableReasons, "source_moved")
 	}
 	if forkspace.NeedsStop(intent.Repository, intent.SourceBranch) {
@@ -719,7 +719,7 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 }
 
 func ReviewCandidateUnchanged(dir, branch, head, tree string) bool {
-	current, err := captureSessionReviewSource("", dir, branch)
+	current, err := captureSessionReviewSource(dir, branch)
 	return err == nil && current.Head == head && current.Tree == tree &&
 		current.Branch == branch && current.StatusDigest == sessionWorkspaceStatusDigest(nil)
 }

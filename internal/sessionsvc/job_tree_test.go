@@ -187,7 +187,7 @@ func TestSessionWorkspacesContainIndependentRecursiveSources(t *testing.T) {
 	if _, err := fixture.CreateRemoteSession(ctx, "create-nested", fixture.request(t, "test:nested")); err != nil {
 		t.Fatalf("replay: %v", err)
 	}
-	if _, err := captureSessionReviewSource(created.Repository, created.Workspace, created.ForkName); err != nil {
+	if _, err := captureSessionReviewSource(created.Workspace, created.ForkName); err != nil {
 		t.Fatalf("complete source is reviewable: %v", err)
 	}
 	plan, err := planSessionWorkspaceDiscard(created.Repository, created.Workspace, false, false)
@@ -198,7 +198,7 @@ func TestSessionWorkspacesContainIndependentRecursiveSources(t *testing.T) {
 	if err := os.WriteFile(leaf, []byte("uncommitted nested work\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := captureSessionReviewSource(created.Repository, created.Workspace, created.ForkName); err == nil {
+	if _, err := captureSessionReviewSource(created.Workspace, created.ForkName); err == nil {
 		t.Fatal("review silently omitted nested work")
 	}
 	if _, err := fixture.GetChanges(ctx, created.ID); err == nil {
@@ -307,7 +307,7 @@ func TestNestedWorkCannotHideBehindIndexFlags(t *testing.T) {
 			if status := sessionWorkspaceGit(t, child, "status", "--porcelain"); status != "" {
 				t.Fatalf("index flag positive control did not hide the edit: %s", status)
 			}
-			if _, err := captureSessionReviewSource(created.Repository, created.Workspace, created.ForkName); err == nil {
+			if _, err := captureSessionReviewSource(created.Workspace, created.ForkName); err == nil {
 				t.Fatal("review trusted child index flags")
 			}
 			if _, _, _, err := buildWorkspaceCheckpoint(context.Background(), t.TempDir(), created, CheckpointWorkspaceRequest{}, "hidden-checkpoint", time.Now()); err == nil || !strings.Contains(err.Error(), "nested work needs separate custody") {

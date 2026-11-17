@@ -810,7 +810,7 @@ func (s *Service) reclaimBeforeAllocation(ctx context.Context) {
 	}
 	limits := s.storageLimitsFor(volume.CapacityBytes)
 	used := volume.CapacityBytes - volume.FreeBytes
-	reservePressure := volume.FreeBytes <= limits.ReserveBytes || volume.FreeBytes-limits.ReserveBytes <= limits.ReserveBytes
+	reservePressure := volume.FreeBytes-limits.ReserveBytes <= limits.ReserveBytes
 	if used < limits.LowWatermarkBytes && !reservePressure {
 		return
 	}
