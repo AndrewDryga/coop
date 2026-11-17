@@ -226,10 +226,26 @@ func appendOutputArtifact(artifacts []session.OutputArtifact, name, mediaType st
 	})
 }
 
-func decodeACPOutputImage(data, mediaType string, ordinal int) (session.OutputArtifact, error) {
-	if ordinal >= session.MaxTurnArtifacts {
-		return session.OutputArtifact{}, errors.New("turn produced too many output artifacts")
+// addACPOutputImage keeps one image from an ACP update. A repeat of a kept image is not a new
+// artifact, so only a new one counts toward the turn's limit.
+func addACPOutputImage(artifacts *[]session.OutputArtifact, data, mediaType string) error {
+	artifact, err := decodeACPOutputImage(data, mediaType, len(*artifacts))
+	if err != nil {
+		return err
 	}
+	for _, kept := range *artifacts {
+		if kept.SHA256 == artifact.SHA256 {
+			return nil
+		}
+	}
+	if len(*artifacts) >= session.MaxTurnArtifacts {
+		return errors.New("turn produced too many output artifacts")
+	}
+	*artifacts = append(*artifacts, artifact)
+	return nil
+}
+
+func decodeACPOutputImage(data, mediaType string, ordinal int) (session.OutputArtifact, error) {
 	decoded, err := base64.StdEncoding.DecodeString(data)
 	if err != nil || len(decoded) == 0 || len(decoded) > session.MaxArtifactBytes {
 		return session.OutputArtifact{}, errors.New("ACP image content is invalid or outside bounds")

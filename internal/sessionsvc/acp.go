@@ -3441,7 +3441,8 @@ func accumulateSessionACPUpdateArtifacts(agent agents.Agent, raw json.RawMessage
 		return imageFrame, nil
 	}
 	if content.Type != "text" || content.Text == "" {
-		return false, nil
+		// An embedded image resource is an image frame too: its bytes are not transcript.
+		return imageFrame, nil
 	}
 	if !utf8.ValidString(content.Text) || len(*assistant)+len(content.Text) > sessionACPMessageLimit {
 		return false, acpFailure(sessionACPProtocolError, "assistant message exceeded its bound")
@@ -3482,11 +3483,9 @@ func visitACPOutputImages(value any, artifacts *[]session.OutputArtifact, depth 
 		if value["type"] == "image" {
 			data, _ := value["data"].(string)
 			mediaType, _ := value["mimeType"].(string)
-			artifact, err := decodeACPOutputImage(data, mediaType, len(*artifacts))
-			if err != nil {
+			if err := addACPOutputImage(artifacts, data, mediaType); err != nil {
 				return false, err
 			}
-			*artifacts = appendOutputArtifact(*artifacts, artifact.Name, artifact.MediaType, artifact.Data)
 			return true, nil
 		}
 		if value["type"] == "resource" {
@@ -3494,11 +3493,9 @@ func visitACPOutputImages(value any, artifacts *[]session.OutputArtifact, depth 
 				blob, _ := resource["blob"].(string)
 				mediaType, _ := resource["mimeType"].(string)
 				if blob != "" && strings.HasPrefix(mediaType, "image/") {
-					artifact, err := decodeACPOutputImage(blob, mediaType, len(*artifacts))
-					if err != nil {
+					if err := addACPOutputImage(artifacts, blob, mediaType); err != nil {
 						return false, err
 					}
-					*artifacts = appendOutputArtifact(*artifacts, artifact.Name, artifact.MediaType, artifact.Data)
 					return true, nil
 				}
 			}

@@ -4081,6 +4081,40 @@ func accumulateSessionACPUpdate(agent agents.Agent, raw json.RawMessage, expecte
 	return err
 }
 
+// docs/session-api.md: a repeated image is kept once, and image bytes don't count toward the
+// transcript, whether the chunk carries an image block or an embedded image resource.
+func TestACPOutputImagesKeepARepeatOnceAndAreNeverTranscript(t *testing.T) {
+	chunk := func(content map[string]any) json.RawMessage {
+		raw, err := json.Marshal(map[string]any{"sessionId": "s", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": content}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	image := func(index int) string {
+		return base64.StdEncoding.EncodeToString(append([]byte("\x89PNG\r\n\x1a\nchart"), byte(index)))
+	}
+	var assistant []byte
+	var artifacts []session.OutputArtifact
+	for index := range session.MaxTurnArtifacts {
+		if _, err := accumulateSessionACPUpdateArtifacts(nil, chunk(map[string]any{"type": "image", "data": image(index), "mimeType": "image/png"}), "s", &assistant, &artifacts); err != nil {
+			t.Fatalf("image %d: %v", index, err)
+		}
+	}
+	imageFrame, err := accumulateSessionACPUpdateArtifacts(nil, chunk(map[string]any{
+		"type": "resource", "resource": map[string]any{"uri": "file:///chart.png", "mimeType": "image/png", "blob": image(0)},
+	}), "s", &assistant, &artifacts)
+	if err != nil || len(artifacts) != session.MaxTurnArtifacts {
+		t.Fatalf("a repeat at the limit = %v with %d artifacts, want it kept once", err, len(artifacts))
+	}
+	if !imageFrame {
+		t.Fatal("an embedded image resource was charged to the transcript")
+	}
+	if _, err := accumulateSessionACPUpdateArtifacts(nil, chunk(map[string]any{"type": "image", "data": image(99), "mimeType": "image/png"}), "s", &assistant, &artifacts); err == nil {
+		t.Fatal("a sixth distinct image was accepted")
+	}
+}
+
 func TestSessionACPStopKillsResidualGroupAfterLeaderExits(t *testing.T) {
 	cmd := exec.Command("sh", "-c", "while read -r line; do :; done")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
