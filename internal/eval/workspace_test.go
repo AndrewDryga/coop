@@ -63,6 +63,7 @@ func TestPrepareWorkspaceRefusesAFixtureWithAGitEntry(t *testing.T) {
 		make func(t *testing.T, dir string)
 	}{
 		{"top-level .git dir", func(t *testing.T, dir string) { mkdir(t, filepath.Join(dir, ".git")) }},
+		{"top-level .GIT dir", func(t *testing.T, dir string) { mkdir(t, filepath.Join(dir, ".GIT")) }},
 		{"worktree .git file", func(t *testing.T, dir string) { write(t, dir, ".git", "gitdir: /somewhere/.git/worktrees/wt\n") }},
 		{".git symlink", func(t *testing.T, dir string) {
 			mkdir(t, filepath.Join(dir, "meta"))

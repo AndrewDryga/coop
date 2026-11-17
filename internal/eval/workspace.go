@@ -60,10 +60,15 @@ func PrepareWorkspace(ctx context.Context, fixture, dest string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("resolve fixture %q: %w", fixture, err)
 	}
-	if _, err := os.Lstat(filepath.Join(root, ".git")); err == nil {
-		return "", fmt.Errorf("fixture %q contains a .git — export a clean tree (git archive | tar -x) instead of a live checkout", fixture)
-	} else if !os.IsNotExist(err) {
-		return "", err
+	// Read the names rather than Lstat ".git": on a case-sensitive filesystem that misses `.GIT`.
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", fmt.Errorf("fixture %q: %w", fixture, err)
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), ".git") {
+			return "", fmt.Errorf("fixture %q contains a .git — export a clean tree (git archive | tar -x) instead of a live checkout", fixture)
+		}
 	}
 	if _, err := os.Lstat(dest); err == nil {
 		return "", fmt.Errorf("workspace %q already exists", dest)
