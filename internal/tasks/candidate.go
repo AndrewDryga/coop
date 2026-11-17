@@ -730,7 +730,11 @@ func FinalizeForkCandidateTask(authorityRepo string, candidate ForkCandidate, as
 	if result.State != StateDone || result.Digest != assignment.ProjectionDigest {
 		return errors.New("candidate projection bytes changed before landing")
 	}
-	if err := syncProjectionTree(snapshot, current.Dir, true); err != nil {
+	queue, err := forkProjectionQueue(authorityRepo, expected)
+	if err != nil {
+		return err
+	}
+	if err := syncProjectionTree(snapshot, current.Dir, filepath.Join(queue, StateDone, id), true); err != nil {
 		return err
 	}
 	if err := clearLeaseCompletionReceipt(authority); err != nil {

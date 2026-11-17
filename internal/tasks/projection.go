@@ -452,6 +452,13 @@ func MaterializeForkProjection(assignment ForkAssignment) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	canonicalEntries, err := os.ReadDir(assignment.Task.Item.Dir)
+	if err != nil {
+		return err
+	}
+	if err := checkProjectionTopLevel(canonicalEntries, assignment.Task.Item.Dir, false); err != nil {
+		return err
+	}
 	rel, err := forkProjectionRel(assignment.AuthorityRepo, assignment.Owner)
 	if err != nil {
 		return err
@@ -1002,17 +1009,36 @@ var projectionSyncTopLevel = map[string]bool{
 	"screenshots": true, "artifacts": true, "tmp": true,
 }
 
-func syncProjectionTree(src, dst string, completed bool) error {
+// checkProjectionTopLevel refuses a task folder holding a top-level name that never travels between
+// the project and a fork. The fork's copy is written by a box, so the hand-back crosses this fixed
+// list; sending a task to a fork checks the same list, so a task a fork can take is one it can hand
+// back. shown is the folder as the person finds it, so the refusal names the file to move.
+func checkProjectionTopLevel(entries []os.DirEntry, shown string, completed bool) error {
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == TaskIdentityFile || projectionSyncTopLevel[name] && !(completed && name == "tmp") {
+			continue
+		}
+		allowed := "task.md, spec.md, log.md, state.md, decision.md, screenshots/, artifacts/ and tmp/"
+		if completed {
+			allowed = "task.md, spec.md, log.md, state.md, decision.md, screenshots/ and artifacts/"
+		}
+		return fmt.Errorf("%s cannot travel between the project and its fork: a task folder holds only %s at its top level; move it into artifacts/ or delete it, then run the fork again",
+			filepath.Join(shown, name), allowed)
+	}
+	return nil
+}
+
+// syncProjectionTree copies the captured fork copy src into the project's task folder dst. shown is
+// the fork's own task folder that src was captured from.
+func syncProjectionTree(src, dst, shown string, completed bool) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
 	// Every name is checked before the first write, so a refusal leaves the canonical folder as it was.
-	for _, entry := range entries {
-		name := entry.Name()
-		if name != TaskIdentityFile && (!projectionSyncTopLevel[name] || completed && name == "tmp") {
-			return fmt.Errorf("task projection contains unsupported top-level entry %q", name)
-		}
+	if err := checkProjectionTopLevel(entries, shown, completed); err != nil {
+		return err
 	}
 	sourceNames := make(map[string]bool, len(entries))
 	for _, entry := range entries {
@@ -1346,7 +1372,11 @@ func acceptForkProjectionLocked(authorityRepo, root, id string, expected ForkTas
 	if result.State == StateBlocked && canonical.State != StateInProgress && canonical.State != StateBlocked {
 		return ProjectionResult{}, fmt.Errorf("blocked projection has canonical task in unsupported state %s", canonical.State)
 	}
-	if err := syncProjectionTree(snapshot, canonical.Dir, result.State == StateDone); err != nil {
+	queue, err := forkProjectionQueue(authorityRepo, expected)
+	if err != nil {
+		return ProjectionResult{}, err
+	}
+	if err := syncProjectionTree(snapshot, canonical.Dir, filepath.Join(queue, result.State, id), result.State == StateDone); err != nil {
 		return ProjectionResult{}, err
 	}
 	switch result.State {
