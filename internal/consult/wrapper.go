@@ -724,7 +724,9 @@ while [ "$index" -le "$total" ]; do
 		echo "[$peer: failed to capture provider output safely — retry with: $fresh_retry]" >&2
 		exit 1
 	fi
-	if [ "$st" -eq 124 ] || [ "$st" -eq 137 ]; then
+	# Only a timed run can time out: with no bound, 137 is a peer killed some other way (the OOM
+	# killer in a memory-limited box), which takes the ordinary failure path below.
+	if [ "$consult_timeout" -gt 0 ] && { [ "$st" -eq 124 ] || [ "$st" -eq 137 ]; }; then
 		rm -f "$candidate_idfile"
 		clear_failed_resume
 		publish_role_health failed "$attempts_on_target" false "no reply within ${consult_timeout}s"

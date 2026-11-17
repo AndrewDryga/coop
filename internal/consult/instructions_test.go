@@ -763,6 +763,7 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 		timeoutBody string
 		wantCode    int
 		wantText    string
+		wantAbsent  string // text the output must not carry; empty = no check
 		timeout     string // COOP_CONSULT_TIMEOUT; empty = the unbounded default
 	}{
 		{
@@ -783,6 +784,16 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 			wantText:    "no reply within 30s",
 			timeout:     "30",
 		},
+		{
+			// With no bound nothing can time out, so a peer killed with 137 (the OOM killer in a
+			// memory-limited box) is an ordinary failure: diagnostics shown, retried, no timeout claim.
+			name:        "untimed peer killed",
+			provider:    "echo PEER_KILLED >&2; exit 137",
+			timeoutBody: "exit 124",
+			wantCode:    137,
+			wantText:    "PEER_KILLED",
+			wantAbsent:  "no reply within",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -794,6 +805,9 @@ func TestConsultWrapperEmptyReplyAndTimeout(t *testing.T) {
 			}
 			if !strings.Contains(out, tc.wantText) {
 				t.Errorf("output missing %q:\n%s", tc.wantText, out)
+			}
+			if tc.wantAbsent != "" && strings.Contains(out, tc.wantAbsent) {
+				t.Errorf("output carries %q:\n%s", tc.wantAbsent, out)
 			}
 			if tc.wantCode == 1 && !strings.Contains(out, "coop-consult "+role+` --fresh "<full prompt>"`) {
 				t.Errorf("empty reply lacks actionable retry guidance:\n%s", out)
@@ -1486,6 +1500,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 		wantGemini bool
 		wantClaude int
 		wantText   string
+		timeout    string // COOP_CONSULT_TIMEOUT; empty = the unbounded default
 	}{
 		{
 			name:       "successful prose mentioning a limit",
@@ -1504,11 +1519,13 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 			wantText:   "failed after 2 attempts — trying fallback 2/2",
 		},
 		{
+			// Only a timed run can time out; the stub's 124 stands in for timeout(1) firing.
 			name:       "timeout after marker",
 			claudeBody: `echo "claude $*" >>"$CALLS"; echo "rate limit exceeded" >&2; exit 124`,
 			geminiBody: `echo "gemini $*" >>"$CALLS"`,
 			wantCode:   124,
 			wantClaude: 1,
+			timeout:    "30",
 		},
 		{
 			name:       "all rungs limited once",
@@ -1542,6 +1559,7 @@ func TestConsultWrapperFallbackDecisionMatrix(t *testing.T) {
 				"CALLS="+calls,
 				"COOP_PEERS=claude gemini",
 				"COOP_CONSULT_DECISIONTEST_TARGETS=claude:one gemini:two",
+				"COOP_CONSULT_TIMEOUT="+tc.timeout,
 			)
 			out, err := cmd.CombinedOutput()
 			code := 0
