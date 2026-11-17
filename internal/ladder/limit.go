@@ -28,6 +28,8 @@ var (
 	// "(America/Merida)". Every path component starts alphanumeric so provider
 	// prose cannot turn time.LoadLocation into a filesystem traversal.
 	tzParenRe = regexp.MustCompile(`\(([A-Za-z][A-Za-z0-9_+.-]*(?:/[A-Za-z0-9][A-Za-z0-9_+.-]*)*)\)\s*$`)
+	// An ordinal day in a reset date ("15th"); time layouts accept only the bare number.
+	ordinalDayRe = regexp.MustCompile(`\b(\d{1,2})(?:st|nd|rd|th)\b`)
 	// API-style hints carrying a delay: "retry-after: 30" (bare = seconds), "retry after 30s",
 	// "try again in 5 minutes", "retry after 2 hours", "try again in 345ms". The caller reads a
 	// bare number as seconds and a millisecond spelling (ms, msec, millisecond) as milliseconds;
@@ -150,8 +152,9 @@ func LimitNotice(s string) bool {
 }
 
 // ParseResetTime reads the "resets <when>" clause of a subscription-limit notice
-// — "resets Jun 18, 8pm (UTC)" or a bare "resets 11am" — into an absolute time.
-// `now` supplies the missing year (and the date, for a time-only reset). A zero
+// — "resets Jun 18, 8pm (UTC)", Codex's "try again at Sep 15th, 2026 4:32 PM" or a
+// bare "resets 11am" — into an absolute time. A stated year is used as is; otherwise
+// `now` supplies the year (and the date, for a time-only reset). A zero
 // return means "not stated / unrecognized" — the caller then backs off instead.
 func ParseResetTime(output string, now time.Time) time.Time {
 	m := resetsRe.FindStringSubmatch(output)
@@ -186,6 +189,17 @@ func ParseResetTime(output string, now time.Time) time.Time {
 	s = regexp.MustCompile(`(?i)\s+(am|pm)\b`).ReplaceAllString(s, "$1")
 	s = strings.ReplaceAll(s, " at ", " ")
 	s = strings.TrimRight(s, " .,")
+	// Codex dates a reset on another day with an ordinal and a year: "Sep 15th, 2026 4:32 PM".
+	s = ordinalDayRe.ReplaceAllString(s, "$1")
+	// Dated reset with a stated year: use it as stated, no rolling.
+	for _, lay := range []string{
+		"Jan 2, 2006 3:04pm", "Jan 2, 2006 3pm", "Jan 2 2006 3:04pm", "Jan 2 2006 3pm",
+		"January 2, 2006 3:04pm", "January 2, 2006 3pm", "January 2 2006 3:04pm", "January 2 2006 3pm",
+	} {
+		if t, err := time.ParseInLocation(lay, s, loc); err == nil {
+			return t
+		}
+	}
 	// Date + time: "Jun 18, 8pm" / "Jun 18, 8:30pm" (comma optional). The layout
 	// carries no year, so rebuild with now's year and roll forward past a stale
 	// month (a December notice that resets in January).

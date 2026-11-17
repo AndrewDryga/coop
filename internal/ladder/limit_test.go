@@ -86,6 +86,10 @@ func TestDetectLimit(t *testing.T) {
 		{"codex usage limit with absolute reset time",
 			"You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 1:26 AM.",
 			true, false, time.Date(now.Year(), now.Month(), now.Day()+1, 1, 26, 0, 0, time.Local)},
+		// Recorded Codex notice for a reset on another day: ordinal day and a stated year.
+		{"codex usage limit with dated reset time",
+			"You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 15th, 2026 4:32 PM.",
+			true, false, time.Date(2026, time.September, 15, 16, 32, 0, 0, time.Local)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -214,6 +218,15 @@ func TestParseResetTime(t *testing.T) {
 		{"december notice resetting in january rolls the year",
 			time.Date(2026, time.December, 30, 12, 0, 0, 0, time.UTC), "resets Jan 2, 8am (UTC)",
 			time.Date(2027, time.January, 2, 8, 0, 0, 0, time.UTC)},
+		{"stated year is used, not now's",
+			base, "try again at Jan 3rd, 2028 9:05 AM (UTC)",
+			time.Date(2028, time.January, 3, 9, 5, 0, 0, time.UTC)},
+		{"long month without ordinal and stated year",
+			base, "try again at September 1, 2026 4 PM (UTC)",
+			time.Date(2026, time.September, 1, 16, 0, 0, 0, time.UTC)},
+		{"dated reset without commas",
+			base, "resets Oct 22nd 2026 at 11:30 PM (UTC)",
+			time.Date(2026, time.October, 22, 23, 30, 0, 0, time.UTC)},
 		{"no resets clause", base, "You've hit your weekly limit.", time.Time{}},
 		{"unparseable when", base, "resets soon, hang tight", time.Time{}},
 		{"unrecognized tz falls back to backoff", base, "resets Jun 18, 8pm (PST)", time.Time{}},
