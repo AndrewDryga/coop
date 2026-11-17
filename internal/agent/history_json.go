@@ -279,10 +279,6 @@ func (p *nativeHistoryJSON) value(depth int) error {
 }
 
 func nativeHistoryObjects(reader io.Reader, keys []string, multiline bool, visit func(map[string]string, int64, int64) error) error {
-	return nativeHistoryParse(reader, keys, multiline, visit)
-}
-
-func nativeHistoryParse(reader io.Reader, keys []string, multiline bool, visit func(map[string]string, int64, int64) error) error {
 	wanted := make(map[string]bool, len(keys))
 	for _, key := range keys {
 		wanted[key] = true

@@ -48,7 +48,7 @@ func TestClaudeRefreshMergeKeepsWhatTheGrantDoesNotReplace(t *testing.T) {
 func TestGrokRefreshMergeKeepsWhatTheGrantDoesNotReplace(t *testing.T) {
 	stored := json.RawMessage(`{"key":"old-access","refresh_token":"source-refresh","expires_at":"2000-01-01T00:00:00Z","future_field":"kept"}`)
 	at := time.Unix(1_800_000_000, 0)
-	merged, expires, err := mergeGrokCredentialRefresh(stored, grokRefreshResponse{AccessToken: "renewed-access", ExpiresIn: 21600}, at)
+	merged, err := mergeGrokCredentialRefresh(stored, grokRefreshResponse{AccessToken: "renewed-access", ExpiresIn: 21600}, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +57,14 @@ func TestGrokRefreshMergeKeepsWhatTheGrantDoesNotReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 	if entry["key"] != "renewed-access" || entry["refresh_token"] != "source-refresh" || entry["future_field"] != "kept" ||
-		!expires.Equal(at.Add(6*time.Hour)) || entry["expires_at"] != at.Add(6*time.Hour).UTC().Format(time.RFC3339Nano) {
-		t.Fatalf("merged = %v, expires %v", entry, expires)
+		entry["expires_at"] != at.Add(6*time.Hour).UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("merged = %v", entry)
 	}
-	rotated, _, err := mergeGrokCredentialRefresh(stored, grokRefreshResponse{AccessToken: "a", RefreshToken: "rotated", ExpiresIn: 60}, at)
+	rotated, err := mergeGrokCredentialRefresh(stored, grokRefreshResponse{AccessToken: "a", RefreshToken: "rotated", ExpiresIn: 60}, at)
 	if err != nil || !strings.Contains(string(rotated), `"refresh_token":"rotated"`) {
 		t.Fatalf("a rotated refresh token was not kept: %s, %v", rotated, err)
 	}
-	if _, _, err := mergeGrokCredentialRefresh(stored, grokRefreshResponse{ExpiresIn: 60}, at); err == nil {
+	if _, err := mergeGrokCredentialRefresh(stored, grokRefreshResponse{ExpiresIn: 60}, at); err == nil {
 		t.Fatal("a response without an access token was merged")
 	}
 }

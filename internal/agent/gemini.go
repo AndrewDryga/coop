@@ -468,11 +468,8 @@ func geminiUsageHistory(reader io.Reader) (UsageHistory, error) {
 				Messages []geminiUsageMessage `json:"messages"`
 			} `json:"$set"`
 		}
-		err := decoder.Decode(&row)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
+		// The end of the file and a damaged line both end the scan; the history is already partial.
+		if decoder.Decode(&row) != nil {
 			break
 		}
 		if row.Session != "" {

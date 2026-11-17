@@ -187,7 +187,7 @@ func completeGrokNative(files map[string][]byte, raw []byte, at time.Time) (map[
 		response.ExpiresIn > int64(time.Duration(1<<63-1)/time.Second) {
 		return nil, errors.New("invalid Grok issued credential; retained for recovery")
 	}
-	entry, _, err := mergeGrokCredentialRefresh(doc[grokNativeScope], response, at)
+	entry, err := mergeGrokCredentialRefresh(doc[grokNativeScope], response, at)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +314,6 @@ func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, err
 	if !ok {
 		return UsageQuota{}, fmt.Errorf("quota lookup requires a deadline")
 	}
-	scope := grokIssuer + "::b1a00492-073a-47ea-816f-4c329264a828"
 	if input.Current == nil {
 		return UsageQuota{}, ErrUsageSignIn
 	}
@@ -322,7 +321,7 @@ func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, err
 	if err != nil {
 		return UsageQuota{}, fmt.Errorf("credential refresh unavailable")
 	}
-	if state.Selection != scope || state.AccessToken == "" || state.AccountID == "" {
+	if state.Selection != grokNativeScope || state.AccessToken == "" || state.AccountID == "" {
 		return UsageQuota{}, ErrUsageSignIn
 	}
 	var raw grokQuotaResponse
@@ -946,13 +945,13 @@ const (
 
 // mergeGrokCredentialRefresh edits the renewed fields into one stored entry, as the client writes
 // them — key, refresh_token, create_time and expires_at — and keeps every field coop does not model.
-func mergeGrokCredentialRefresh(stored json.RawMessage, response grokRefreshResponse, issuedAt time.Time) (json.RawMessage, time.Time, error) {
+func mergeGrokCredentialRefresh(stored json.RawMessage, response grokRefreshResponse, issuedAt time.Time) (json.RawMessage, error) {
 	if response.AccessToken == "" || response.ExpiresIn <= 0 {
-		return nil, time.Time{}, errors.New("grok credential refresh returned an unusable access token")
+		return nil, errors.New("grok credential refresh returned an unusable access token")
 	}
 	var entry map[string]json.RawMessage
 	if err := json.Unmarshal(stored, &entry); err != nil {
-		return nil, time.Time{}, fmt.Errorf("decode Grok credential entry: %w", err)
+		return nil, fmt.Errorf("decode Grok credential entry: %w", err)
 	}
 	issued := issuedAt.UTC()
 	expiresAt := issued.Add(time.Duration(response.ExpiresIn) * time.Second)
@@ -965,15 +964,15 @@ func mergeGrokCredentialRefresh(stored json.RawMessage, response grokRefreshResp
 	for name, value := range fields {
 		encoded, err := json.Marshal(value)
 		if err != nil {
-			return nil, time.Time{}, err
+			return nil, err
 		}
 		entry[name] = encoded
 	}
 	renewed, err := json.Marshal(entry)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("encode Grok credential entry: %w", err)
+		return nil, fmt.Errorf("encode Grok credential entry: %w", err)
 	}
-	return renewed, expiresAt, nil
+	return renewed, nil
 }
 
 type grokRefreshResponse struct {
