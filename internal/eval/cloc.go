@@ -18,7 +18,8 @@ import (
 // better, and tests, docs and clear code legitimately add lines.
 //
 // Measure per-language code/comment/blank totals with `cloc --json`, then derive net growth from
-// the before/after totals. The tool is pinned and ambient config is refused for reproducible counts.
+// the before/after totals. cloc comes from the host PATH and is not pinned; ambient config is
+// refused so the same cloc counts the same tree the same way.
 //
 // A missing cloc, an unparseable output or an unknown language is an explicit measurement error or
 // unknown-coverage note, never a silent zero.
@@ -26,7 +27,7 @@ import (
 // clocFlags are the explicit cloc options: machine-readable, quiet, and counting every path
 // (--skip-uniqueness, so two identical files are two files, not one — the spec counts per path).
 // Ambient config (~/.config/cloc/options.txt) is neutralized by running under a hermetic HOME in
-// runCloc; the tool itself is pinned at the preparation step, not here.
+// runCloc. The tool itself is whatever cloc the host PATH holds.
 var clocFlags = []string{"--json", "--quiet", "--skip-uniqueness"}
 
 // LangCount is one language's line tally in a snapshot.
@@ -37,8 +38,8 @@ type LangCount struct {
 	Code    int `json:"code"`
 }
 
-// SizeMetrics is a snapshot's per-language counts plus the cloc version that produced them, so a
-// comparison can refuse to rank two measurements taken with different tooling.
+// SizeMetrics is a snapshot's per-language counts plus the cloc version that produced them. The
+// version is informational: a trial records only the totals, and nothing compares versions.
 type SizeMetrics struct {
 	ClocVersion string               `json:"cloc_version"`
 	Languages   map[string]LangCount `json:"languages"`
