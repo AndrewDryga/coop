@@ -522,3 +522,32 @@ func TestUsageHistoryReadErrorIsNotCached(t *testing.T) {
 		t.Fatalf("recovered read not cached: %d", calls)
 	}
 }
+
+func TestUsageCacheEntryReplacesPrivatelyAndLeavesNoTemp(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "entry.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{"first", "second"} {
+		if err := writeUsageCacheEntry(dir, "entry.json", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := os.Lstat(filepath.Join(dir, "entry.json"))
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("entry = %v, %v; want a private regular file", info, err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "entry.json")); string(data) != "second" {
+		t.Fatalf("entry holds %q", data)
+	}
+	if data, _ := os.ReadFile(outside); string(data) != "keep" {
+		t.Fatal("cache write followed a link out of the cache")
+	}
+	if names, _ := os.ReadDir(dir); len(names) != 1 {
+		t.Fatalf("cache folder holds %d names, want only the entry", len(names))
+	}
+}

@@ -158,8 +158,32 @@ func (entries *usageCacheRoot) write(path string, source os.FileInfo, history Us
 	data, err := json.Marshal(usageCacheEntry{Version: usageCacheVersion, Source: usageFingerprint(source), History: history})
 	if err == nil && len(data) <= 64<<20 {
 		// Cache persistence is optional: failure must not discard usable native usage.
-		_ = config.WriteFileAtomic(filepath.Join(entries.dir, name), data)
+		_ = writeUsageCacheEntry(entries.dir, name, data)
 	}
+}
+
+// writeUsageCacheEntry replaces one entry through a private temp file and a rename, without the
+// fsync config.WriteFileAtomic pays: a cold run writes one entry per transcript, and a torn entry
+// after a crash only fails the read checks and is parsed again.
+func writeUsageCacheEntry(dir, name string, data []byte) error {
+	tmp, err := os.CreateTemp(dir, "."+name+"-*")
+	if err != nil {
+		return err
+	}
+	werr := tmp.Chmod(0o600)
+	if werr == nil {
+		_, werr = tmp.Write(data)
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), filepath.Join(dir, name))
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
 }
 
 // finish hands the walk's entries to the inspection and closes the root.
