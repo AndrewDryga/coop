@@ -182,11 +182,11 @@ commit there, therefore never reaches the home repository
 `.git` and a bare look-alike, each with plain git as the control). Only `git init` skips the
 check, because it never searches above its folder; the task audit and the empty session source
 create repositories that way in folders a home repository may hold. A box racing the check, which
-runs before git searches, could get past it, but gains nothing the accepted redirects do not
-already give it. FindRepo, the `.coopignore` walk above a repository
-and views share `shadowpath.HomeOrAbove`, which compares folders, not spellings. This refuses an
-accidental climb only: a box can still point a `.git` at the home repository through the
-redirects views accept (see "Redirects into another repository are accepted").
+runs before git searches, could get past it; that is the same swap-in-between residual the
+redirect checks have (docs/box.md). FindRepo, the `.coopignore` walk above a repository
+and views share `shadowpath.HomeOrAbove`, which compares folders, not spellings. A `.git` that
+points at the home repository is refused by the redirect checks above (**Redirects into another
+repository are refused**).
 
 Session workspace clones use the view itself as their local transport source. A non-local,
 no-checkout clone plus an exact fetch of the validated commit avoids racing mutable loose-object
@@ -263,6 +263,8 @@ rebase, and in an unattended loop it is a pipe or `/dev/null`, so that rebase is
 cannot exist, so it never searches a box's repository from coop's working folder.
 
 ## Changelog
+- 2026-11-17 — the climb paragraph still said redirects are accepted and pointed at a section of
+  that name; it now matches the 2026-11-08 rule that refuses them. 2026-11-10 audit, find FS-12.
 - 2026-11-17 — a folder with `HEAD` and `objects` and no `.git` passed for a bare repository and
   skipped `checkStoreLinks`, so a box could link its `objects` and `refs` to another repository.
   The bare branch now runs the store check (`TestHostGitRefusesPointersIntoAnotherRepository`,
