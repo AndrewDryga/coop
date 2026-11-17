@@ -133,10 +133,13 @@ coop run -- npm test                          # any command in the box
   your computer.
 
 `coop doctor` checks secret hiding, host access, credential isolation and offline networking
-against the real box on your computer. `coop net setup` checks that this computer can enforce
-filtered networking, and the first filtered run does that check for you. Read more in
-[the guide](https://coop.dryga.com/docs.html#sandbox), [the box](https://coop.dryga.com/box.html) and
-[networking](https://coop.dryga.com/networking.html).
+against the real box on your computer, and CI runs it on every push. See
+[what it checks](https://coop.dryga.com/docs.html#doctor), or try the protections yourself in the
+[first sandbox run](https://coop.dryga.com/sandbox-guide.html).
+
+`coop net setup` checks that this computer can enforce filtered networking, and the first filtered
+run does that check for you. Read more in [the guide](https://coop.dryga.com/docs.html#sandbox),
+[the box](https://coop.dryga.com/box.html) and [networking](https://coop.dryga.com/networking.html).
 
 ## Hand off the work
 
@@ -216,6 +219,24 @@ coop eval run core codex --timeout 35m --dry-run
 ```
 
 See [evaluations](https://coop.dryga.com/evals.html).
+
+## Limitations
+
+- The agent can change or delete anything in your project folder. That includes work you haven't
+  committed or pushed, and files that later run code on your computer, such as commit hooks and the
+  Makefile. An [isolated fork](https://coop.dryga.com/forks.html#isolated-write-forks) keeps your
+  checkout and its Git history out of reach.
+- Secrets are hidden by file name, so a key inside an ordinary file stays readable.
+  `coop check-secrets` finds those.
+- Whatever the agent can read can go to your AI provider and to any domain you approve.
+- A compromised agent can keep using the account it runs on, which costs you subscription limits
+  or API charges. A hook it adds to its own settings runs again in later boxes for the same
+  repository.
+- Filtered networking needs Docker and reaches IPv4 addresses only. Without
+  [eBPF protection](https://coop.dryga.com/box.html#hiding-secrets), a secret file you add while a
+  box is running stays readable until that box restarts.
+- co:op relies on your container runtime for isolation, so it can't protect you from a bug in that
+  runtime or the kernel.
 
 ## Documentation
 
