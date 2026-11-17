@@ -4,7 +4,7 @@ description: "usage metavariables use angle brackets and stable names; optionali
 scope: cli-grammar
 sources: [internal/ui/usage.go, internal/cli/help.go, internal/cli/usage.go, internal/cli/target.go, internal/cli/fork_cmd.go, internal/cli/presetcmd.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/loop_cmd.go, internal/cli/models.go, internal/cli/profiles.go, internal/cli/completion.go, internal/cli/session_connect.go, internal/tasks/cmd.go, internal/tasks/backlog.go, internal/forkctl/rm.go, internal/forkctl/review.go, internal/forkctl/merge.go, internal/forkctl/supervise.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/cli/conformance_test.go]
 check: none
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 # Put usage metavariables in angle brackets and name them consistently
@@ -43,8 +43,10 @@ value literally; it is no longer a metavariable.
 Inside a page where every value is the same kind of thing, the resource-name form is the plain one:
 `coop help presets` writes `coop presets <name>` / `coop presets init [<name>]` / `coop help <name>`
 because the page is about presets and nothing else. `<preset>` stays the placeholder everywhere the
-slot competes with another kind of value (`coop <target|preset>`, the top-level rows, every usage
-error the presets command raises).
+slot competes with another kind of value (`coop <target|preset>`, the top-level rows) and in a
+presets usage error about an existing preset (`coop presets [init] [<preset>]`). `presets init`
+names a new preset, so its own error keeps `[<name>]`, as `TestCLIConformance` in
+conformance_test.go pins.
 
 **Why:** bare forms such as `[agent [credential]]`, `[name]`, `[paths...]`, and single-letter
 placeholders make values look like fixed syntax and force users to learn several spellings for the
@@ -65,6 +67,7 @@ legitimately need paths, refs, task fields, and argument groups that the old tab
 Related: [[help-output-style]].
 
 ## Changelog
+- 2026-11-17 — the card said every presets usage error writes `<preset>`; `presets init`'s own error writes `[<name>]`, as the code and conformance test do. Reworded the card to match (audit find C3-24).
 - 2026-11-03 — the owner's manual test found one value spelled several ways: the menu defined a
   target as "an agent, a preset, or a model" beside `<target|preset>` rows, the menu and ACP said
   `<agent|preset>`, ACP said `--peer <agent>`, usage said `<provider>[@credential]`, and six pages
