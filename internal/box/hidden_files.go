@@ -168,8 +168,9 @@ func RememberHiddenFiles(repo, workdir string, mounts []Mount) error {
 	})
 }
 
-// Capture and persistence share this lock: concurrent launches must see each
-// other's remembered identities before deciding which existing aliases hide.
+// Concurrent launches must see each other's remembered identities before deciding which existing
+// aliases hide. The kernel backend captures and persists under this lock; the mount backend decides
+// its mounts first (ComputeMounts) and takes it only to persist them.
 func withHiddenFilesLock(ctx context.Context, repo string, apply func() error) error {
 	path, err := hiddenFilesPath(repo)
 	if err != nil {

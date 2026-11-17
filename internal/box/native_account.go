@@ -392,8 +392,8 @@ func legacyLoginPresent(cfg *config.Config, ag agents.Agent, account string) (bo
 }
 
 // refuseLegacyLogin refuses an account whose only login is one that builds before v11 saved in
-// profiles/<account> or host-credentials/<account>. Nothing reads those folders any more and
-// nothing deletes them. A nil result means the account has no such login.
+// profiles/<account> or host-credentials/<account>. Coop does not read those folders any more;
+// removing the account deletes them. A nil result means the account has no such login.
 func refuseLegacyLogin(cfg *config.Config, ag agents.Agent, account string) error {
 	present, err := legacyLoginPresent(cfg, ag, account)
 	if err != nil {

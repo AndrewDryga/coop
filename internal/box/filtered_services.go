@@ -310,8 +310,6 @@ func serviceGrants(policy egress.Snapshot) []egress.Grant {
 	return out
 }
 
-// resolveServiceBindings creates the approved service closure without starting
-// it, then binds the exact addresses the gateway and Compose will use.
 const (
 	filteredServiceNetworkKey = "coop_filtered"
 	filteredServiceProxyAlias = "coop-gateway"
@@ -419,6 +417,8 @@ func (s *preparedFilteredServices) start(ctx context.Context) (result error) {
 	return nil
 }
 
+// resolveServiceBindings creates the approved service closure without starting
+// it, then binds the exact addresses the gateway and Compose will use.
 func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, composeFile string,
 	approval *networkstate.Approval, grants []egress.Grant, sections *launchSections, exposedRoots []string) (string, []networkgateway.ServiceBinding, []networkgateway.ServiceProxyClient, *preparedFilteredServices, error) {
 	ctx = context.WithValue(ctx, isolatedServiceParentKey{}, spec.IsolatedParent)

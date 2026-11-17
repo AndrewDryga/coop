@@ -327,8 +327,6 @@ func (f *filteredExecution) waitReady(ctx context.Context) error {
 	}
 }
 
-// launch never returns with a running observation goroutine. Its caller always
-// performs exact daemon cleanup, including when attachment or setup was canceled.
 // prepareRuntime starts only release-owned network helpers. It can overlap
 // filesystem admission; services and workload execution remain behind both checks.
 func (f *filteredExecution) prepareRuntime(ctx context.Context) error {
@@ -376,6 +374,8 @@ func (f *filteredExecution) prepareRuntime(ctx context.Context) error {
 	return nil
 }
 
+// launch never returns with a running observation goroutine. Its caller always
+// performs exact daemon cleanup, including when attachment or setup was canceled.
 func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if err := f.prepareRuntime(ctx); err != nil {
 		return -1, err

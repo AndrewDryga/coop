@@ -43,7 +43,7 @@ func limitedExtraArgs(configured, spec []string, isolated bool) ([]string, error
 		case "-l", "--label":
 			// Metadata on the agent container — fleet accounting, a test supervisor's reaping
 			// key. It changes neither what the box knows nor what it can reach, and the container
-			// allowlist (validateMounts) already admits it; only this filter refused it.
+			// allowlist (validateMountsContext) already admits it; only this filter refused it.
 			want = "a KEY=VALUE label"
 		default:
 			if isolated {
