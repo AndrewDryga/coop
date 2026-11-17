@@ -338,7 +338,9 @@ these change what future boxes can see.
 The scan checks the lines the fork adds for credential patterns from AWS, OpenAI, Anthropic,
 GitHub, Slack and other providers, and for random-looking values assigned to secret-named keys, even
 if the file's name doesn't look secret. A credential your branch already has doesn't hold up a fork
-that edits its file. co:op refuses to merge while your own working tree has uncommitted changes.
+that edits its file. co:op refuses to merge while your own working tree has uncommitted changes to
+tracked files. An untracked file stops the merge only when the fork would land on it, and co:op
+names it.
 
 co:op asks before merging, then offers to delete the fork after the merge. In a non-interactive
 shell, such as CI or a pipe, you must confirm up front, or co:op refuses to run the merge.

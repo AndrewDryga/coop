@@ -1036,6 +1036,11 @@ func (c *Control) FastForwardParent(repo, ws, name string) error {
 		return fmt.Errorf("%s: acquire ref authority for %s: %w", name, repo, lockErr)
 	}
 	defer release()
+	// The fast-forward refuses to overwrite an untracked file too, but its failure would read as a
+	// moved parent; name the files instead, so the person knows what to move.
+	if collisions := untrackedCollisions(repo, "review/"+name); len(collisions) > 0 {
+		return fmt.Errorf("%s: the fork adds %s, which %s already has as untracked files — nothing landed; move or delete them, then merge again", name, fileList(collisions), repo)
+	}
 	if err := forkspace.GitRun(repo, "merge", "--ff-only", "review/"+name); err != nil {
 		return fmt.Errorf("%s: the parent advanced during the merge — nothing landed; re-run to rebase onto the new HEAD", name)
 	}
@@ -1129,7 +1134,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	} else if isolated {
 		return c.forkMergeIsolatedCommand(repo, name, identity, force, yes, false)
 	}
-	if gitDirty(repo) {
+	if gitTrackedDirty(repo) {
 		return 1, ui.CommandFailed("Your working tree has uncommitted changes",
 			"Merging needs a clean working tree.", [2]string{"", "Commit or stash them, then merge again."})
 	}

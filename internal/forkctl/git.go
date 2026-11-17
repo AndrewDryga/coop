@@ -46,3 +46,35 @@ func gitGlobalOut(args ...string) string { return forkspace.GlobalGitConfig(args
 func gitBranch(dir string) string { return forkspace.GitOut(dir, "rev-parse", "--abbrev-ref", "HEAD") }
 
 func gitDirty(dir string) bool { return forkspace.GitOut(dir, "status", "--porcelain") != "" }
+
+// gitTrackedDirty is gitDirty without untracked files. The parent's check before an ordinary merge
+// uses it, as the isolated merge does: the land is a fast-forward, and FastForwardParent refuses an
+// incoming file that would land on an untracked one, so an unrelated scratch file blocks nothing.
+func gitTrackedDirty(dir string) bool {
+	return forkspace.GitOut(dir, "status", "--porcelain", "--untracked-files=no") != ""
+}
+
+// untrackedCollisions lists the untracked, not ignored files in dir that the commit ref changes from
+// HEAD, so a fast-forward to ref would land on them. A path untracked here is not in HEAD, so ref
+// adds it. A list Git cannot give is empty, which leaves the refusal to the fast-forward.
+func untrackedCollisions(dir, ref string) []string {
+	untracked, err := forkspace.GitOutput(dir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil || untracked == "" {
+		return nil
+	}
+	incoming, err := forkspace.GitOutput(dir, "diff", "--no-renames", "--name-only", "-z", "HEAD", ref, "--")
+	if err != nil {
+		return nil
+	}
+	changed := map[string]bool{}
+	for _, path := range strings.Split(incoming, "\x00") {
+		changed[path] = path != ""
+	}
+	var hits []string
+	for _, path := range strings.Split(untracked, "\x00") {
+		if changed[path] {
+			hits = append(hits, path)
+		}
+	}
+	return hits
+}

@@ -2778,3 +2778,60 @@ func TestPolicyScanFlagsCoopsPrivateForkFolder(t *testing.T) {
 		t.Errorf("warnings = %q", joined)
 	}
 }
+
+// An untracked file in the project does not stop an ordinary merge, as it does not stop an isolated
+// one; it stays as it was. An untracked file the fork would land on still stops it, by name, and
+// nothing lands. A change to a tracked file still stops it before anything runs.
+func TestOrdinaryForkMergeIgnoresUntrackedFilesItDoesNotLandOn(t *testing.T) {
+	t.Run("unrelated", func(t *testing.T) {
+		repo := initRepo(t)
+		setupMergeFork(t, repo, "perf")
+		writeTaskFile(t, filepath.Join(repo, "scratch.txt"), "a note\n")
+		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+		var code int
+		var err error
+		stderr := captureStderr(t, func() { code, err = c.ForkMerge([]string{"perf", "--yes"}) })
+		if code != 0 || err != nil {
+			t.Fatalf("merge with an untracked file in the project = (%d, %v)\n%s", code, err, stderr)
+		}
+		if !pathExists(filepath.Join(repo, "perf.txt")) {
+			t.Error("the fork's commit did not land")
+		}
+		if got, err := os.ReadFile(filepath.Join(repo, "scratch.txt")); err != nil || string(got) != "a note\n" {
+			t.Errorf("the untracked file = %q, %v; want it kept as it was", got, err)
+		}
+	})
+	t.Run("landed on", func(t *testing.T) {
+		repo := initRepo(t)
+		ws := setupMergeFork(t, repo, "perf")
+		writeTaskFile(t, filepath.Join(repo, "perf.txt"), "my own perf.txt\n")
+		parentBefore := checkoutState(repo)
+		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+		var code int
+		var err error
+		stderr := captureStderr(t, func() { code, err = c.ForkMerge([]string{"perf", "--yes"}) })
+		if code != 1 || !strings.Contains(stderr, `the fork adds "perf.txt"`) ||
+			!strings.Contains(stderr, "move or delete them, then merge again") {
+			t.Fatalf("merge onto an untracked file = (%d, %v), want a refusal naming perf.txt\n%s", code, err, stderr)
+		}
+		if checkoutState(repo) != parentBefore || !pathExists(ws) {
+			t.Error("a refused merge changed the parent or removed the fork")
+		}
+		if got, _ := os.ReadFile(filepath.Join(repo, "perf.txt")); string(got) != "my own perf.txt\n" {
+			t.Errorf("the untracked file the fork would land on = %q, want it kept", got)
+		}
+	})
+	t.Run("tracked change", func(t *testing.T) {
+		repo := initRepo(t)
+		setupMergeFork(t, repo, "perf")
+		writeTaskFile(t, filepath.Join(repo, "README.md"), "edited\n")
+		c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+		code, err := c.ForkMerge([]string{"perf", "--yes"})
+		if block := requireBlock(t, code, err, 1); block.Headline != "Your working tree has uncommitted changes" {
+			t.Errorf("refusal = %#v", block)
+		}
+		if pathExists(filepath.Join(repo, "perf.txt")) {
+			t.Error("a merge over a tracked change landed")
+		}
+	})
+}
