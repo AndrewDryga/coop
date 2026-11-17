@@ -508,6 +508,9 @@ func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc
 		case <-ticker.C:
 		}
 		if err := f.reconcileTopology(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil // the run ended during the update; the cancellation is not a protection failure
+			}
 			cancel()
 			return err // an envelope that cannot follow the topology is not a slow probe
 		}

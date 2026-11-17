@@ -141,6 +141,22 @@ func TestFilteredHostTopologyDriftRemainsFailClosed(t *testing.T) {
 	}
 }
 
+// A run that ends while a new host address is being added does not report the cancelled update as
+// a protection failure: the watch ends quietly, as it does for a cancelled probe.
+func TestFilteredWatchEndingDuringGrowthIsNotAFailure(t *testing.T) {
+	f, d := filteredFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.hostAddresses = func() ([]netip.Prefix, error) {
+		cancel() // the workload exits in the middle of this tick
+		return []netip.Prefix{netip.MustParsePrefix("192.0.2.1/32"), netip.MustParsePrefix("192.0.2.2/32")}, nil
+	}
+	d.applyErr = context.Canceled
+	if err := f.watch(ctx, cancel); err != nil {
+		t.Fatalf("a run that ended mid-update reported %v", err)
+	}
+}
+
 // A new host address is added to the live kernel set and the record, and the run goes on.
 func TestFilteredNewHostAddressGrowsProtectionInPlace(t *testing.T) {
 	f, d := filteredFixture(t)
