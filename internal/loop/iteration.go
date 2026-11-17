@@ -183,10 +183,9 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 	if live {
 		liveWidth = func() int { return ui.TermWidth(os.Stderr) }
 		region := ui.NewRegion(os.Stderr, liveWidth)
-		c0, _, progressErr := tasks.QueueProgress(hosts)
-		if progressErr != nil {
-			return 1, "", nil, classification, nil, errors.Join(progressErr, windows.Close())
-		}
+		// A failed read starts the bar from zero counts and the progress tick reads again. Ending
+		// the attempt here handed callers no window set, and the loop crashed on it.
+		c0, _, _ := tasks.QueueProgress(hosts)
 		bar = newLoopBar(region, liveWidth, time.Now(), c0, activity)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel

@@ -206,6 +206,35 @@ func TestProgressTickReadsTheQueueOnlyAfterAStateFolderChanges(t *testing.T) {
 	}
 }
 
+// An attempt starts its bar from zero counts when the first queue read fails, and the next tick
+// reads again. The attempt once ended there with no completion windows, and its caller crashed.
+func TestProgressTickRecoversFromAFailedFirstRead(t *testing.T) {
+	root := t.TempDir()
+	todo := filepath.Join(root, stateTodo)
+	if err := os.WriteFile(todo, []byte("not a folder\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := tasks.QueueProgress([]string{root}); err == nil {
+		t.Skip("this queue read did not fail, so the fixture proves nothing")
+	}
+	start := time.Now()
+	progress := newProgressTick([]string{root}, start)
+	if progress.stamps != "" || progress.last != (tasks.TaskCounts{}) {
+		t.Fatalf("a failed read left a baseline: %+v", progress)
+	}
+	var output bytes.Buffer
+	width := loopWidth(100)
+	bar := newLoopBar(ui.NewRegion(&output, width), width, start, progress.last, "work")
+	if err := os.Remove(todo); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(todo, "next", "task.md"), "# Next\n")
+	progress.tick(start.Add(progressPoll), bar)
+	if progress.last.Todo != 1 {
+		t.Fatalf("the tick after a failed first read did not read the queue: %+v", progress.last)
+	}
+}
+
 func TestReviewActivityNamesStageAndSubjectsCompactly(t *testing.T) {
 	for _, stage := range []string{"between audit", "protected audit", "signoff", "verify"} {
 		if got := reviewActivity(stage, []string{"task-a"}); got != stage+": task-a" {
