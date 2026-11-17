@@ -183,7 +183,23 @@ func auditFindingsNone(findings string) bool {
 		return false
 	}
 	rest = strings.TrimSpace(rest)
-	return len(rest) >= 2 && rest[0] == '(' && rest[len(rest)-1] == ')'
+	if len(rest) < 2 || rest[0] != '(' {
+		return false
+	}
+	// One group, closed by the last character: "none (ok) but X is untested (see y)" is a finding.
+	depth := 0
+	for i, r := range rest {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i == len(rest)-1
+			}
+		}
+	}
+	return false
 }
 
 // capture replaces evidence for these audit subjects only when the terminal receipt agrees with
