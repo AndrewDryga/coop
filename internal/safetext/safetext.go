@@ -19,10 +19,13 @@ import (
 // other code points Unicode draws as nothing, such as the Hangul fillers, the grapheme joiner and
 // the unassigned rest of the tag block. Joiners and tag characters count inside emoji too, since
 // they hide just as well in a name. Variation selectors, which emoji and CJK ideographs need, count
-// only at the start or after an ASCII letter, where no emoji or ideograph puts one and they draw
-// as nothing.
+// only at the start or after an ASCII character other than a digit, '#' or '*' (the keycap emoji),
+// where no emoji or ideograph puts one and they draw as nothing.
 func Hidden(previous, r rune) bool {
 	return unicode.IsControl(r) ||
 		unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp, unicode.Other_Default_Ignorable_Code_Point) ||
-		unicode.Is(unicode.Variation_Selector, r) && (previous < 0 || previous < utf8.RuneSelf && unicode.IsLetter(previous))
+		unicode.Is(unicode.Variation_Selector, r) && (previous < 0 || previous < utf8.RuneSelf && !keycapBase(previous))
 }
+
+// keycapBase reports whether an ASCII rune can start a keycap emoji, the only emoji that do.
+func keycapBase(r rune) bool { return r >= '0' && r <= '9' || r == '#' || r == '*' }

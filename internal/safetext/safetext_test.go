@@ -48,6 +48,11 @@ func TestHidden(t *testing.T) {
 		{"variation selector after an ASCII letter", 'w', '\uFE0F', true},
 		{"variation selector after an emoji", '❤', '\uFE0F', false},
 		{"variation selector after a digit, for a keycap", '1', '\uFE0F', false},
+		{"variation selector after a hash, for a keycap", '#', '\uFE0F', false},
+		{"variation selector after an asterisk, for a keycap", '*', '\uFE0F', false},
+		{"variation selector after an ASCII hyphen", '-', '\uFE0F', true},
+		{"variation selector after an ASCII dot", '.', '\uFE0F', true},
+		{"variation selector after an ASCII slash", '/', '\uFE0F', true},
 		{"ideographic variation selector after a kanji", '葛', '\U000E0100', false},
 	} {
 		if got := Hidden(tc.previous, tc.r); got != tc.want {
