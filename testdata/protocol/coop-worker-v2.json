@@ -22,10 +22,10 @@
       "capacity": {
         "session_slots_free": 3,
         "session_slots_total": 4,
-        "turn_slots_free": 2,
+        "turn_slots_free": 3,
         "turn_slots_total": 4,
-        "workspace_slots_free": 1,
-        "workspace_slots_total": 2,
+        "workspace_slots_free": 3,
+        "workspace_slots_total": 4,
         "state": "eligible",
         "cooldown_until": null
       },
@@ -113,10 +113,7 @@
           "path": "/v1/sessions/coop-session-1/turns",
           "body": {
             "expected_revision": 2,
-            "prompt": "Continue the selected episode.",
-            "output_schema": {
-              "type": "object"
-            }
+            "prompt": "Continue the selected episode."
           }
         },
         "idempotency_key": "responder:work:turn:turn-2:g1"
