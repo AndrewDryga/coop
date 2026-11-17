@@ -3,6 +3,21 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
+## v13.1.0: per-project tools, Git folders and Docker Engine 28
+
+- **`COOP_NO_ASDF` is retired.** A `coop.conf` that still sets it stops every command except
+  `coop version`, and the error names the file and line. Delete the line.
+- **Offline runs need a tools image.** A repo with a `.tool-versions` and no `.agent/Dockerfile`
+  now runs on an image with its tools built in. An open-network run builds it when it is missing;
+  before an offline run, run `coop build` once.
+- **The `coop-asdf` and `coop-cache` volumes are no longer used.** Remove them with
+  `docker volume rm coop-asdf coop-cache`; on native Linux with IDs other than 1000, add your user
+  and group IDs to the names.
+- **A checkout made with `git init --separate-git-dir` is refused.** Move its Git folder back into
+  `.git`; the message gives the commands.
+- **Filtered runs with Compose services need Docker Engine 28 or later.** With an older Docker they
+  refuse to start services and say so. Upgrade Docker.
+
 ## v13.0.0: old host state is refused or read as unknown
 
 Coop no longer reads these records of builds up to v12.1.0. None is changed or deleted.
@@ -149,6 +164,11 @@ refuses `none` with a message that names `offline`.
 - Replace `COOP_EGRESS=none` with `COOP_EGRESS=offline` in your environment and `coop.conf`.
 - Controller JobSpec documents and the session API keep `none` for their offline mode.
 
+## v13.0.0: `coop tasks watch --json` names task states like its counts
+
+Each task's `state` is now `todo`, `in_progress`, `blocked` or `done` instead of its folder name,
+such as `10_in_progress`. Update scripts that matched the folder names.
+
 ## v12.0.0: network records are renamed
 
 co:op now names each project's network records by the project's folder.
@@ -187,6 +207,17 @@ co:op now keeps each project's fork records in `~/.local/state/coop/forks/<key>/
 - To go back to an older co:op, move the folder back first:
   `mv ~/.local/state/coop/forks/<key> <project>-forks/.coop`. `<key>` is the SHA-256 of the
   project's real path: `printf %s "$(cd <project> && pwd -P)" | shasum -a 256`.
+
+## v12.0.0: read-only and bare runs are removed
+
+`--readonly` and `--bare` are refused as unknown options, and every box is writable.
+
+- For a read-only second opinion, use `--peer <target>`.
+- For isolation, use a fork: `coop fork <name> <target>`.
+- `--bare` has no replacement. Claude Code's own `--bare` still works after `--`.
+- A session job that asks for `mode: "readonly"` or `"bare"` is refused. Send `mode: "normal"`,
+  with `repository_read_only: true` for a job that must not change its repository.
+- A session created in a removed mode can't run again. Close and discard it.
 
 ## v11.1.0: project image preparation
 
@@ -437,15 +468,16 @@ The same applies to a session that co:op quarantines later because its workspace
 
 co:op validates `coop.conf` on every command. An unknown key, a duplicate key, a malformed line or
 a retired key stops co:op before any work, and the error names the file and line. Replace the
-retired loop settings with their `.agent/loop.yaml` fields:
+retired loop settings with their `.agent/loop.yaml` fields, and delete the rest:
 
-| Retired `coop.conf` key | `.agent/loop.yaml` field |
+| Retired `coop.conf` key | Replace with |
 | --- | --- |
-| `COOP_LOOP_MODEL` | `work.agent` |
-| `COOP_REVIEW_MODEL` | `signoff.agent` |
-| `COOP_MAX_REVIEW_ROUNDS` | `signoff.rounds` |
-| `COOP_LOOP_CMD` | `work.command` |
-| `COOP_PREFLIGHT` | `preflight.enabled` |
+| `COOP_LOOP_MODEL` | `work.agent` in `.agent/loop.yaml` |
+| `COOP_REVIEW_MODEL` | `signoff.agent` in `.agent/loop.yaml` |
+| `COOP_MAX_REVIEW_ROUNDS` | `signoff.rounds` in `.agent/loop.yaml` |
+| `COOP_LOOP_CMD` | `work.command` in `.agent/loop.yaml` |
+| `COOP_PREFLIGHT` | `preflight.enabled` in `.agent/loop.yaml` |
+| `COOP_NO_ASDF` (retired in v13.1.0) | nothing: delete the line |
 
 Remove `COOP_AGENT_PACKAGES`, because images that co:op manages use locked client versions. If you
 need different tooling, review a custom image and select it explicitly.
