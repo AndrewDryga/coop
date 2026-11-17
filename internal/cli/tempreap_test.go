@@ -51,8 +51,11 @@ func TestTempReapIsDailyNotPerCommand(t *testing.T) {
 // and every orphan waited another 24 hours.
 func TestShortCommandLeavesTheDailySweepDue(t *testing.T) {
 	useEmptyMainConfig(t)
-	xdg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// The stamp is a per-machine record in the state folder (config.LocalHome); without a state
+	// folder of its own the test would look where no stamp can ever land.
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
 	t.Setenv("COOP_CONFIG_DIR", t.TempDir())
 	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv("COOP_NO_UPDATE_CHECK", "1")
@@ -64,7 +67,7 @@ func TestShortCommandLeavesTheDailySweepDue(t *testing.T) {
 			t.Errorf("coop credentials exit = %d, want 0", code)
 		}
 	})
-	if _, err := os.Stat(filepath.Join(xdg, "coop", "temp-reap")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(state, "coop", "temp-reap")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a short command marked the day's sweep done (stat err %v); it cannot finish one", err)
 	}
 }
