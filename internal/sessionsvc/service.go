@@ -1555,7 +1555,7 @@ func (s *Service) removeWorker(worker *sessionWorker) {
 
 func (s *Service) drainSession(ctx context.Context, sessionID string) {
 	for ctx.Err() == nil {
-		unlock, err := s.lockRuntimeCapacity(ctx, sessionID, func(bound session.Session) error {
+		unlock, err := s.lockRuntimeCapacity(ctx, sessionID, true, func(bound session.Session) error {
 			if bound.State == session.SessionClosed || bound.State == session.SessionDiscarded ||
 				bound.Activity != session.ActivityParked || bound.ActiveTurnID != "" || bound.QueuedTurnCount == 0 {
 				return &session.Error{Code: session.CodeTurnNotRunnable, Detail: "session has no runnable queued turn"}
@@ -2205,7 +2205,7 @@ func (s *Service) GetSession(ctx context.Context, id string) (session.Session, e
 func (s *Service) PrepareSession(ctx context.Context, id string, expectedRevision int64) (session.Session, error) {
 	var bound session.Session
 	var policy executionConfig
-	unlock, err := s.lockRuntimeCapacity(ctx, id, func(current session.Session) error {
+	unlock, err := s.lockRuntimeCapacity(ctx, id, false, func(current session.Session) error {
 		var err error
 		bound = current
 		policy, err = s.prepareSessionExecution(ctx, bound, expectedRevision)

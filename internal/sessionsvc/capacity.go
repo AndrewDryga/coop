@@ -118,7 +118,9 @@ func (s *Service) finishRuntimeSlot(bound session.Session, err error) {
 
 // Wait outside both the session lock and TurnTimeout. Reacquire/recheck before
 // leasing so cancellation, close, review and warm expiry remain able to progress.
-func (s *Service) lockRuntimeCapacity(ctx context.Context, id string, check func(session.Session) error) (func(), error) {
+// Only the session's own worker may also wake on its trigger: any other waiter would
+// consume the token, and the worker, finding none, would retire with a turn queued.
+func (s *Service) lockRuntimeCapacity(ctx context.Context, id string, worker bool, check func(session.Session) error) (func(), error) {
 	for ctx.Err() == nil {
 		unlock := s.lockSessionRuntime(id)
 		if check != nil {
@@ -154,8 +156,8 @@ func (s *Service) lockRuntimeCapacity(ctx context.Context, id string, check func
 		unlock()
 		s.mu.Lock()
 		var trigger <-chan struct{}
-		if worker := s.workers[id]; worker != nil {
-			trigger = worker.trigger
+		if current := s.workers[id]; worker && current != nil {
+			trigger = current.trigger
 		}
 		s.mu.Unlock()
 		select {

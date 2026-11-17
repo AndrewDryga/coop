@@ -181,7 +181,7 @@ func TestRuntimeCapacityWaitIsCancellableAndDoesNotHoldSessionLock(t *testing.T)
 	})
 	go func() {
 		defer close(done)
-		unlock, err := s.lockRuntimeCapacity(witness, "waiting", nil)
+		unlock, err := s.lockRuntimeCapacity(witness, "waiting", false, nil)
 		if unlock != nil {
 			unlock()
 		}
@@ -207,6 +207,37 @@ func TestRuntimeCapacityWaitIsCancellableAndDoesNotHoldSessionLock(t *testing.T)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("capacity wait ignored cancellation")
+	}
+}
+
+// A prepare waiting for capacity must not take the session worker's trigger: the worker, finding
+// no token, retires and leaves a just-submitted turn queued with no worker.
+func TestRuntimeCapacityPrepareWaitLeavesTheWorkerTrigger(t *testing.T) {
+	worker := &sessionWorker{sessionID: "waiting", trigger: make(chan struct{}, 1)}
+	s := &Service{runtimeLocks: make(map[string]*sessionOperationLock),
+		workers: map[string]*sessionWorker{"waiting": worker}}
+	for i := range sessionRuntimeSlots {
+		s.reserveRuntimeSlot(fmt.Sprint(i))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	witness := &capacityWaitContext{Context: ctx, waiting: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if unlock, _ := s.lockRuntimeCapacity(witness, "waiting", false, nil); unlock != nil {
+			unlock()
+		}
+	}()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-witness.waiting:
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter never reached capacity select")
+	}
+	s.triggerWorker(worker)
+	time.Sleep(100 * time.Millisecond)
+	if len(worker.trigger) != 1 {
+		t.Fatal("a prepare waiting for capacity consumed the worker's trigger")
 	}
 }
 
