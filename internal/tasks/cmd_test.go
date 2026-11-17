@@ -909,6 +909,9 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	if _, err := claimTaskOwnerRecord(root, task.ID, claimOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	if err := writeLeaseHolderRecord(root, task.ID, taskLeaseMetadata{Version: leaseMetadataVersion}); err != nil {
+		t.Fatal(err)
+	}
 
 	if code, err := tasksFolderRemove(root, []string{task.ID, "--yes"}); code != 0 || err != nil {
 		t.Fatalf("rm cancelled task = (%d, %v), want (0, nil)", code, err)
@@ -949,6 +952,9 @@ func TestTasksRemovePurgesStaleRunRecords(t *testing.T) {
 	}
 	if leaseAuthorityMetadataExists(root, task.ID) {
 		t.Fatal("removed task retained stale controller metadata")
+	}
+	if _, ok := readLeaseMetadataRecord(root, task.ID, ".holder.json"); ok {
+		t.Fatal("removed task retained its last-holder record")
 	}
 	if auditReopenRecordExists(root, task.ID) {
 		t.Fatal("removed task retained stale audit-reopen authority")

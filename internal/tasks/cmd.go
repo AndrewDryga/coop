@@ -2881,6 +2881,7 @@ func removeTaskFolderAndRecords(root string, task Item) (removed bool, err error
 		clearLeaseCompletionReceipt(authority),
 		removePendingReviewRecord(root, task.ID),
 		removeLeaseAuthorityMetadata(root, task.ID),
+		removeLeaseHolderRecord(root, task.ID),
 		removeAuditReopenRecord(root, task.ID),
 		removeCommittedBlock(root, task.ID),
 		removeTrustedDoneDeparture(root, task.ID),

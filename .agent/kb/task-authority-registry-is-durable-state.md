@@ -3,7 +3,7 @@ name: task-authority-registry-is-durable-state
 description: host-global task ownership and completion trust live in ~/.local/state/coop/task-leases; records are read plainly, and only completion-window locks are ever unlinked
 subsystem: tasks
 sources: [internal/tasks/lease.go, internal/tasks/loop_note.go, internal/tasks/completion.go, internal/tasks/audit.go, internal/tasks/committed_block.go, internal/tasks/owner.go, internal/tasks/assignment_registry.go, internal/tasks/main_test.go, internal/tasks/pending_review.go, internal/sessionsvc/http.go, internal/testutil/teststate/teststate.go]
-updated: 2026-11-06
+updated: 2026-11-17
 ---
 Everything that decides whether a task is *really* finished lives OUTSIDE the repo, in one
 host-global registry: the `<sha>.lock` files whose kernel flock makes one controller the single
@@ -24,7 +24,8 @@ assignment, and generation even if the folder later moves or a configured queue 
 The same registry is the sole iteration-lease store. Coop does not mirror its flock or heartbeat
 into a task's provider-writable `tmp/`; observation and recovery consult only the host records.
 Two more records there are display evidence for `coop tasks watch`, never authority: a released
-lease's `<sha>.holder.json` (who last held the task), and each queue's `<sha(root + "\x00")>.loop.json`,
+lease's `<sha>.holder.json` (who last held the task; `coop tasks rm` deletes it with the task's
+other records), and each queue's `<sha(root + "\x00")>.loop.json`,
 the note of the loop run working it (`NoteLoopRun`: a person stopped it, or it waits out a usage
 limit until a time). A run's note replaces the last run's when it starts, and the board believes it
 only for a task whose last holder is that run, so an old stop never explains a later crash.
@@ -66,6 +67,7 @@ collision followed by an unlink also fails the reopen, so it must retry first. T
 2026-10-05-task-lease-authority-keeps-every-lock-file-it-ev.
 
 ## Changelog
+- 2026-11-17 — `coop tasks rm` also deletes the task's `.holder.json` (audit find T2-18).
 - 2026-11-06 — only an answer given to `coop tasks unblock` spends `<sha>.committed-block.json`
   (task 2026-11-06-grant-re-close-authority-only-for-the-worker-s-o).
 - 2026-11-06 — added `<sha>.committed-block.json` (task

@@ -777,6 +777,24 @@ func writeLeaseHolderRecord(root, id string, meta taskLeaseMetadata) error {
 	return AtomicWriteTaskFile(registry, key+".holder.json", append(data, '\n'))
 }
 
+// removeLeaseHolderRecord drops a deleted task's last-holder record, so the registry does not keep
+// one file per task ever leased.
+func removeLeaseHolderRecord(root, id string) error {
+	key, err := LeaseAuthorityKey(root, id)
+	if err != nil {
+		return err
+	}
+	registry, err := OpenLeaseAuthorityRoot()
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	if err := registry.Remove(key + ".holder.json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // lastLeaseHolder is the metadata of a task's current lease, else of the last one released: who
 // last worked the task under a lease, and when.
 func lastLeaseHolder(root, id string) (taskLeaseMetadata, bool) {
