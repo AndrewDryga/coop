@@ -469,7 +469,7 @@ func tasksInQueue(repo, rel string, rest, flags []string, explicit bool) (int, e
 			// A mistyped command is refused as one, whether or not a queue exists yet.
 		case sub == "decisions" && !explicit:
 			if len(rest) == 1 {
-				fmt.Println("No questions waiting for your answer.")
+				ui.Note("No questions waiting for your answer.")
 				return 0, nil
 			}
 		default:
@@ -816,7 +816,7 @@ func tasksLintAll(repo string, rels []string) (int, error) {
 		}
 	}
 	if first {
-		ui.Note("no task queues found across %s", ui.Count(len(rels), "configured path"))
+		ui.Note("No task queues found across %s", ui.Count(len(rels), "configured path"))
 	}
 	return worst, nil
 }
@@ -870,7 +870,7 @@ func tasksDecisionsAll(repo string, rels []string, args []string) (int, error) {
 		// finish — so it is named here too, with the one command that finishes it.
 		p := ui.For(os.Stdout)
 		if len(refs) == 0 {
-			ui.OK("No questions are waiting for your answer")
+			ui.Note("No questions waiting for your answer.")
 			printAnsweredDecisions(p, answered, false)
 			return 0, nil
 		}
@@ -923,7 +923,7 @@ func tasksDecisionsRollup(repo string, rels []string, merges []readyMerge) (int,
 		}
 	}
 	if first {
-		ui.Note("no open decisions across %s", ui.Count(len(rels), "configured queue"))
+		ui.Note("No open decisions across %s", ui.Count(len(rels), "configured queue"))
 	}
 	printReadyMerges(p, merges, !first)
 	return 0, nil

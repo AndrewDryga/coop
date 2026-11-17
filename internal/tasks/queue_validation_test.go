@@ -99,7 +99,7 @@ func TestNoQueueYetAnswersPlainly(t *testing.T) {
 	if code, err := CmdTasks(Host{}, cfg, []string{"nosuch"}); code != 2 || !errors.As(err, &usage) || !strings.Contains(usage.Headline, "Unknown command") {
 		t.Errorf("tasks nosuch = (%d, %v), want an unknown command", code, err)
 	}
-	out := captureStdout(t, func() {
+	out := captureStderr(t, func() {
 		if code, err := CmdTasks(Host{}, cfg, []string{"decisions"}); code != 0 || err != nil {
 			t.Errorf("tasks decisions = (%d, %v), want no questions", code, err)
 		}
