@@ -2409,7 +2409,11 @@ func auditReopenGitBindings(repo, head, id string, record AuditReopenRecord, raw
 // can plant in front of a merged commit the raw walks still read, so Git's reading of the trailers
 // would miss that commit. A real shallow clone lacks the objects the raw walks need anyway.
 func auditShallowRefusal(repo, id string) error {
-	if forkspace.GitOut(repo, "rev-parse", "--is-shallow-repository") == "false" {
+	shallow, err := forkspace.GitOutErr(repo, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return fmt.Errorf("could not tell whether this repository is shallow, so Coop cannot trust its reading of task %s's commits: %w", bindingLabel(id), err)
+	}
+	if shallow == "false" {
 		return nil
 	}
 	return fmt.Errorf("this repository is shallow, so Git can miss a commit that binds task %s; "+

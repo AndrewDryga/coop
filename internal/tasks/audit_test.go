@@ -5956,6 +5956,15 @@ func TestInterruptedWorkFilesReportsRenameTargets(t *testing.T) {
 	}
 }
 
+// A git failure is not read as a shallow repository: the person would be sent to unshallow a
+// repository that is not shallow.
+func TestAuditShallowRefusalReportsAFailedRead(t *testing.T) {
+	err := auditShallowRefusal(t.TempDir(), "x")
+	if err == nil || strings.Contains(err.Error(), "--unshallow") || !strings.Contains(err.Error(), "could not tell") {
+		t.Fatalf("auditShallowRefusal(not a repository) = %v, want the failed read reported", err)
+	}
+}
+
 // A failed git log names git's own cause, not just its exit status.
 func TestTaskTrailerCommitsCarriesGitsDiagnostic(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

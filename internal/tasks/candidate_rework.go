@@ -137,8 +137,14 @@ func ReworkForkCandidate(repo string, identity forkspace.Identity, candidateID s
 		return errors.New("fork candidate has no current failed review")
 	}
 	workspace := forkspace.Workspace(repo, identity.Name)
-	head := forkspace.GitOut(workspace, "rev-parse", "HEAD")
-	tree := forkspace.GitOut(workspace, "rev-parse", "HEAD^{tree}")
+	head, err := forkspace.GitOutErr(workspace, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	tree, err := forkspace.GitOutErr(workspace, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return err
+	}
 	assignments, err := candidateAssignments(repo, identity)
 	if err != nil {
 		return err
@@ -221,7 +227,9 @@ func replayForkCandidateReworkLocked(repo string, manifest *forkCandidateManifes
 			continue
 		}
 		workspace := forkspace.Workspace(repo, manifest.Fork.Name)
-		if forkspace.GitOut(workspace, "rev-parse", "HEAD") != manifest.Rework.Head {
+		if head, err := forkspace.GitOutErr(workspace, "rev-parse", "HEAD"); err != nil {
+			return err
+		} else if head != manifest.Rework.Head {
 			return errors.New("fork changed before candidate rework was applied")
 		}
 		assignment := cohort[task.AssignmentID]
