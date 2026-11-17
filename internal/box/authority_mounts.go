@@ -44,8 +44,8 @@ type authorityMountAllowlist struct {
 
 // protectRunPrivateState keeps operator-supplied runtime binds from widening a run's credential
 // scope or exposing Coop's host control plane. Only sources the ordinary assembly already chose
-// are exact-allowed: selected provider profiles, the requested ACP transcript store, generated
-// files, and one remote-session output subtree.
+// are exact-allowed: selected native provider homes, generated files, and one remote-session
+// output subtree.
 func protectRunPrivateState(cfg *config.Config, spec RunSpec, allow authorityMountAllowlist) (authorityMountAllowlist, error) {
 	if allow.sources == nil {
 		allow.sources = map[string]bool{}

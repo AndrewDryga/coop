@@ -55,7 +55,7 @@ func nestedAgentCommand(spec RunSpec, name string) bool {
 }
 
 // mountedWritable is a host directory a box gets read-write beyond the repository: an account's
-// provider home, or a directory of the ACP session store. The mount plan and every guard on mount
+// native provider home. The mount plan and every guard on mount
 // sources (the authority allowlist, MCP isolation, the composition, network and filtered exposure
 // roots) build from mountedWritables, so a new kind of mount can't skip a guard.
 type mountedWritable struct {
@@ -134,10 +134,7 @@ func SignInNeedsHomes(cfg *config.Config, spec RunSpec) error {
 		homesFix)
 }
 
-// envKeysOutsideScope is the set of adapter token keys to strip for this concrete run. A provider
-// keeps its env token only when it is in scope and running the default account that token represents;
-// a named file-backed account must not be shadowed by the provider-wide token. Non-agent runtime
-// variables are never in this set, so they always pass through.
+// profileMarkerSnapshot reports, per agent, whether its selected account's auth marker is present.
 func profileMarkerSnapshot(cfg *config.Config) map[string]bool {
 	markers := make(map[string]bool, len(agents.Names()))
 	for _, name := range agents.Names() {
@@ -150,6 +147,10 @@ func profileMarkerSnapshot(cfg *config.Config) map[string]bool {
 	return markers
 }
 
+// envKeysOutsideScopeWithMarkers is the set of adapter token keys to strip for this concrete run. A
+// provider keeps its env token only when it is in scope and running the default account that token
+// represents; a named file-backed account must not be shadowed by the provider-wide token. Non-agent
+// runtime variables are never in this set, so they always pass through.
 func envKeysOutsideScopeWithMarkers(cfg *config.Config, scope []string, markers map[string]bool) map[string]bool {
 	in := map[string]bool{}
 	for _, a := range scope {

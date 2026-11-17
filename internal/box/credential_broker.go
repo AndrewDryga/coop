@@ -288,7 +288,7 @@ func credentialBrokerCandidateFor(cfg *config.Config, spec RunSpec, name, profil
 	return &credentialRoute{provider: name, account: profile, spec: broker, credential: credential, shadowMarker: shadowMarker}, nil
 }
 
-// effectiveCredentialEnv mirrors prepareBoxEnvFile's order for one account: project defaults,
+// effectiveCredentialEnv mirrors prepareBoxEnvFileWithMarkers's order for one account: project defaults,
 // then its Coop-owned host credential, then the default account's explicit user env.
 func effectiveCredentialEnv(cfg *config.Config, spec RunSpec, agent agents.Agent, name, profile string, markerPresent bool) (map[string]string, error) {
 	values := make(map[string]string, len(spec.projectEnv)+1)
