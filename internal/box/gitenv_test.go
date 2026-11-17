@@ -222,6 +222,42 @@ func TestGitConfigForBoxPreservesGlobalIgnoreBehavior(t *testing.T) {
 	git("check-ignore", "--quiet", "coop-generated.txt")
 }
 
+// With core.excludesfile unset, Git reads $XDG_CONFIG_HOME/git/ignore (else ~/.config/git/ignore);
+// the box gets those patterns too.
+func TestHostGlobalGitignoreFallsBackToGitsDefaultFile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "empty-global"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "empty-system"))
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	if got := hostGlobalGitignore(); got != "" {
+		t.Fatalf("no ignore file anywhere = %q, want none", got)
+	}
+	if err := os.MkdirAll(filepath.Join(xdg, "git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "git", "ignore"), []byte(".DS_Store\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := hostGlobalGitignore(); got != ".DS_Store\n" {
+		t.Fatalf("Git's default global ignore file = %q, want its patterns", got)
+	}
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "git", "ignore"), []byte("*.swp\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := hostGlobalGitignore(); got != "*.swp\n" {
+		t.Fatalf("~/.config/git/ignore = %q, want its patterns", got)
+	}
+}
+
 // A loop iteration's completion is REJECTED when its commit carries no parseable Coop-Task
 // trailer, so an agent that forgets one loses the whole iteration — and the trailer-less commit is
 // invisible to the informed-resume hint, leaving the retry on the blind path. The hook stamps the

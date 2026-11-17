@@ -144,9 +144,13 @@ func gitHookDir(parent string) (string, error) {
 }
 
 // hostGlobalGitignore returns the content of the user's global gitignore
-// (core.excludesfile, with ~ expanded), or "" if there is none.
+// (core.excludesfile, with ~ expanded, else Git's default $XDG_CONFIG_HOME/git/ignore
+// or ~/.config/git/ignore), or "" if there is none.
 func hostGlobalGitignore() string {
 	path := hostGitGlobal("--path", "core.excludesfile")
+	if path == "" {
+		path = defaultGlobalGitignore()
+	}
 	if path == "" {
 		return ""
 	}
@@ -155,4 +159,16 @@ func hostGlobalGitignore() string {
 		return ""
 	}
 	return string(data)
+}
+
+// defaultGlobalGitignore is where Git looks for global ignores when core.excludesfile is unset.
+func defaultGlobalGitignore() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "git", "ignore")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "git", "ignore")
 }
