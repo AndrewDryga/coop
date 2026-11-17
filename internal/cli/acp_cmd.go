@@ -154,7 +154,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 	// Reject leftover tokens rather than silently ignore them (loop/fork do the same) — the ACP
 	// adapter takes no extra args, so `coop acp claude foo`/`--nope` is a mistake worth surfacing.
 	if leftover := args[consumed:]; len(leftover) > 0 {
-		return 2, extraArgErr(leftover[0], "coop acp", "coop acp [<target|preset>] [--peer <target>...]", acpOptions)
+		return 2, extraArgErr(leftover[0], "coop acp", "coop acp [<target|preset>] [<options>]", acpOptions)
 	}
 	presetFromEnv := false
 	// A running ACP session can switch its credential/preset/provider via coop's selector; the

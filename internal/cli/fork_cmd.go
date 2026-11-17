@@ -1157,7 +1157,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	for i, arg := range rest {
 		if i > 0 || !isTargetHead(arg) {
-			return 2, extraArgErr(arg, "coop fork "+name+" acp", "coop fork "+name+" acp [<target>] [--peer <target>...] [--egress <mode>]", acpOptions)
+			return 2, extraArgErr(arg, "coop fork "+name+" acp", "coop fork "+name+" acp [<target>] [<options>]", acpOptions)
 		}
 	}
 	// The positional target names the fork's ACP session (coop fork <name> acp claude:opus@work),

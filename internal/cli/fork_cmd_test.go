@@ -856,7 +856,7 @@ func TestForkACPValidatesTargetArgumentsBeforeRun(t *testing.T) {
 	if code != 2 || err == nil || err.Error() != wantOption {
 		t.Errorf("fork acp --credential = (%d, %v), want (2, %q)", code, err, wantOption)
 	}
-	wantUsage := "Usage: coop fork myfork acp [<target>] [--peer <target>...] [--egress <mode>]"
+	wantUsage := "Usage: coop fork myfork acp [<target>] [<options>]"
 	for extra, args := range map[string][]string{
 		"codex:high": {"claude:opus", "codex:high"},
 		"junk":       {"claude:opus", "junk"},
