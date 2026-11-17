@@ -2,7 +2,7 @@
 name: in-box-task-channel
 description: a loop work box or an interactive agent box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
-sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/completion_record.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go]
+sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/completion_record.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go, internal/loop/iteration.go, internal/box/supervisor/main.go]
 updated: 2026-11-17
 ---
 
@@ -100,8 +100,8 @@ there is no `host.docker.internal`. So the listener runs where the box's kernel 
   (`ServeMux`) demultiplexes on the host and hands each connection to `taskmcp.Server.Serve`. It runs
   `net.createServer({allowHalfOpen:true})` so a client that half-closes its write side still receives
   its reply.
-- The helper lives in its OWN pid namespace, so coop-entry's descendant drain (`live_jobs()` in
-  `internal/box/image.go`) never counts it as agent background work — the reason a `docker exec`
+- The helper lives in its OWN pid namespace, so the box supervisor's descendant drain
+  (`procFS.drain` in `internal/box/supervisor/main.go`) never counts it as agent background work — the reason a `docker exec`
   helper INTO the box was rejected.
 
 Under `egress: filtered` the box's volume mount is validated by `filtered_mounts.go`. The
@@ -239,6 +239,7 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-17 — the descendant drain is the Go supervisor's procFS.drain, not image.go's removed live_jobs(); added loop/iteration.go and supervisor/main.go to sources (audit K2-4, K2-6; checked internal/box/supervisor/main.go).
 - 2026-11-17 — the tool count says nine (ten in a session) everywhere; it said eight in two places.
 - 2026-11-06 — a session a forced claim displaced gets the CLI's takeover message from every box task
   tool (`takenOver` in `boxClaimRefusal`) (task 2026-11-06-stop-a-displaced-process-from-blocking-or-releas).
