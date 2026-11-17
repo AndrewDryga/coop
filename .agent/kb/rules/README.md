@@ -80,10 +80,6 @@ updated: <YYYY-MM-DD>                # last edit
 ```
 
 ## Index
-- [usage-leads-with-limits](usage-leads-with-limits.md) — quota bars first, estimate last; account details hold coverage facts, no blanket footers
-- [usage-history-covers-requested-window](usage-history-covers-requested-window.md) — lifetime scan budgets must not omit recent token use; caches preserve request accounting
-
-- [replacements-remove-old-paths](replacements-remove-old-paths.md) — simplification removes obsolete configuration, adapters and callers in the same change
 
 **CLI grammar** — the words the CLI accepts
 - [list-verb-ls](list-verb-ls.md) — listing subcommands are `ls`, the only spelling (no `list` alias in v3)
@@ -97,6 +93,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [acp-connects-before-selection](acp-connects-before-selection.md) — coop acp and coop fork <name> acp connect without a target so the editor can expose its live selectors
 
 **CLI output** — what the terminal shows
+- [usage-leads-with-limits](usage-leads-with-limits.md) — quota bars first, estimate last; account details hold coverage facts, no blanket footers
 - [cli-text-is-plain-english](cli-text-is-plain-english.md) — plain CLI and website copy that preserves facts, commands and safety details
 - [installer-output-is-spaced-and-actionable](installer-output-is-spaced-and-actionable.md) — installer progress and shell instructions use readable blocks, with separate start/help examples
 - [selectors-need-a-real-choice](selectors-need-a-real-choice.md) — hide already-selected singleton dropdowns while retaining native state
@@ -167,6 +164,8 @@ updated: <YYYY-MM-DD>                # last edit
 - [secret-scan-literals-not-refs](secret-scan-literals-not-refs.md) — the scanner flags literal credentials and never references to them; precision is the product
 
 **Architecture**
+- [usage-history-covers-requested-window](usage-history-covers-requested-window.md) — lifetime scan budgets must not omit recent token use; caches preserve request accounting
+- [replacements-remove-old-paths](replacements-remove-old-paths.md) — simplification removes obsolete configuration, adapters and callers in the same change
 - [model-is-the-rotation-axis](model-is-the-rotation-axis.md) — every rotation and fallback surface uses the same target grammar; accounts are part of a target, never a second axis
 - [loop-failover-profiles](loop-failover-profiles.md) — loop, editor ACP, and remote sessions share target rotation but keep distinct continuation semantics
 - [agents-are-one-file](agents-are-one-file.md) — a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere
