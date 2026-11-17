@@ -230,7 +230,7 @@ func (r *trialRunner) attempt(ctx context.Context, t eval.Trial, workspace strin
 
 	// Bounded capture: a candidate can print forever, and a trial must not be able to exhaust the
 	// host's memory. Only the tail is kept — that is where a refusal or a final message is.
-	out, errOut := &tailBuffer{max: 64 << 10}, &tailBuffer{max: 64 << 10}
+	out, errOut := &tailBuffer{max: detailTail}, &tailBuffer{max: detailTail}
 	var stdout io.Writer = out
 	probe := adapter.PlainOutputProbe()
 	if probe != nil {

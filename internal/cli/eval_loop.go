@@ -102,7 +102,7 @@ func (r *trialRunner) runLoopTrial(ctx context.Context, t eval.Trial, workspace 
 	// the workspace, outside every box mount, so the agent under test cannot create or remove it.
 	started := filepath.Join(filepath.Dir(workspace), "loop-started")
 
-	out, errOut := &tailBuffer{max: 256 << 10}, &tailBuffer{max: 64 << 10}
+	out, errOut := &tailBuffer{max: detailTail}, &tailBuffer{max: detailTail}
 	group, err := startLoopTrialGroup(ctx)
 	if err != nil {
 		return attemptOutcome{}, err

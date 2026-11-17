@@ -110,7 +110,7 @@ func (a *app) gradeSnapshot(ctx context.Context, req gradeRequest, run boxRunner
 		run = func(spec box.RunSpec) (int, error) { return box.Run(offline, a.rt, spec) }
 	}
 
-	out, errOut := tailBuffer{max: 4 << 10}, tailBuffer{max: 4 << 10}
+	out, errOut := tailBuffer{max: detailTail}, tailBuffer{max: detailTail}
 	spec := box.RunSpec{
 		Ctx:        ctx,
 		Image:      req.Image,
@@ -179,10 +179,16 @@ func verifierCommand(dir string) ([]string, error) {
 	return nil, fmt.Errorf("verifier directory %q has no verify.sh or executable verify — the grader needs an entry point", dir)
 }
 
+// maxDetail bounds the readable tail gradeDetail keeps; detailTail is what an output stream needs
+// to hold for it: twice the tail, so trimmed trailing space still leaves a whole one.
+const (
+	maxDetail  = 2 << 10
+	detailTail = 2 * maxDetail
+)
+
 // gradeDetail keeps a bounded, readable tail of what the verifier said. The text is candidate- and
 // verifier-influenced, so it is truncated here and again when the record is written.
 func gradeDetail(stdout, stderr string) string {
-	const maxDetail = 2 << 10
 	parts := make([]string, 0, 2)
 	if s := strings.TrimSpace(stdout); s != "" {
 		parts = append(parts, s)
