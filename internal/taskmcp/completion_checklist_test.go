@@ -61,6 +61,21 @@ func TestCompleteRequiresChecklistAndAllowsSameSessionRepair(t *testing.T) {
 	}
 }
 
+// unrun_checks takes a JSON-encoded array as every other list argument does, and a plain string is
+// refused naming the array it should be.
+func TestCompletionAcceptsAnEncodedUnrunChecksArray(t *testing.T) {
+	root := queue(t, map[string]string{"t1": tasks.StateInProgress})
+	finishChecklist(t, root, "t1")
+	sess := newSession(t, newServer(t, root, "t1"))
+	if text := sess.mustRefuse("tasks_complete", map[string]any{"id": "t1", "unrun_checks": "make e2e"}); !strings.Contains(text, "an array of strings") {
+		t.Fatalf("a plain string refusal = %s; want it to name an array", text)
+	}
+	sess.mustCall("tasks_complete", map[string]any{"id": "t1", "unrun_checks": "[]"})
+	if _, err := os.Stat(filepath.Join(root, tasks.StateDone, "t1")); err != nil {
+		t.Fatalf("an encoded empty unrun_checks did not complete the task: %v", err)
+	}
+}
+
 // Workers ticked a required check they could not run, with the excuse appended to its text. Now
 // they must name every unrun check, and any named one refuses completion before anything moves.
 func TestCompletionRefusesUnrunRequiredChecks(t *testing.T) {

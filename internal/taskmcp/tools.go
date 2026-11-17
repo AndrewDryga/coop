@@ -325,7 +325,7 @@ func decodeArgs(raw json.RawMessage, v any) *toolResult {
 		}
 		field := target.Field(index)
 		shape := argumentShape(field.Type())
-		if field.Kind() == reflect.Slice {
+		if field.Kind() == reflect.Slice || field.Type() == reflect.TypeFor[requiredStrings]() {
 			var err error
 			value, err = arrayArgument(value)
 			if err != nil {
@@ -369,6 +369,9 @@ func arrayArgument(raw json.RawMessage) (json.RawMessage, error) {
 func argumentShape(typ reflect.Type) string {
 	if typ == reflect.TypeFor[optionalString]() {
 		return "a string"
+	}
+	if typ == reflect.TypeFor[requiredStrings]() {
+		typ = reflect.TypeFor[[]string]()
 	}
 	switch typ.Kind() {
 	case reflect.Slice:
