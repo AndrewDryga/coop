@@ -256,8 +256,13 @@ func TestSourceStagingRefusesChangedOrUnprovenFrozenObjects(t *testing.T) {
 				t.Fatal(err)
 			}
 			stager := &privateJobSourceStager{transport: grant, stateRoot: root, remoteForTest: remote}
-			if err := stager.Stage(ctx, "job:frozen-source", source); err == nil {
+			err := stager.Stage(ctx, "job:frozen-source", source)
+			if err == nil {
 				t.Fatal("published an unproven source")
+			}
+			unproven := !slices.Contains([]string{"unavailable", "cancelled", "expired"}, scenario)
+			if unproven && !errors.Is(err, ErrJobSourceIntegrity) {
+				t.Fatalf("an unproven source = %v, want it refused", err)
 			}
 			key, err := source.StagingKey()
 			if err != nil {
@@ -266,7 +271,116 @@ func TestSourceStagingRefusesChangedOrUnprovenFrozenObjects(t *testing.T) {
 			if _, err := os.Lstat(filepath.Join(root, "job-sources", key)); !os.IsNotExist(err) {
 				t.Fatalf("failed fetch published source authority: %v", err)
 			}
+			if !unproven {
+				return
+			}
+			// As the worker stages, both downloads in the background: the source is refused, not
+			// held while the repository's whole history downloads again at every delivery.
+			root = t.TempDir()
+			if err := os.Chmod(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			stager = &privateJobSourceStager{transport: grant, stateRoot: root, remoteForTest: remote,
+				backgroundFirstDownload: true, backgroundStaging: true}
+			executor := &Executor{jobSourceStager: stager}
+			deadline := time.Now().Add(20 * time.Second)
+			for {
+				pending, _, err := executor.stageJobSources(ctx, "job:frozen-source", []workerproto.JobSource{source})
+				if err != nil || len(pending) == 0 {
+					if !errors.Is(err, ErrRequestRejected) {
+						t.Fatalf("an unproven source staged in the background = %v, want it refused", err)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("an unproven source is still held as downloading")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			download := filepath.Dir(firstDownloadRepository(filepath.Join(root, "job-sources"), source.RepositoryIdentity()))
+			if _, err := os.Lstat(filepath.Join(download, "source.json")); err != nil {
+				t.Fatalf("a refused source threw away the first download: %v", err)
+			}
 		})
+	}
+}
+
+// A network error while a copy starts from the repository's first download is reported, and the
+// first download, hours of transfer on a large repository, stays for the next try.
+func TestAFailedFetchKeepsTheFirstDownload(t *testing.T) {
+	remote, source := backgroundStagingFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote,
+		backgroundFirstDownload: true, backgroundStaging: true}
+	if err := stageWithin(t, stager, source, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	// The copy is gone, as the worker's cleanup removes one, so the next starts from the download.
+	key, _ := source.StagingKey()
+	if err := os.RemoveAll(filepath.Join(root, "job-sources", key)); err != nil {
+		t.Fatal(err)
+	}
+	later := source
+	later.Binding.ResolvedAt = source.Binding.ResolvedAt.Add(time.Hour)
+	stager.remoteForTest = filepath.Join(t.TempDir(), "unreachable")
+	err := stageWithin(t, stager, later, 20*time.Second)
+	if err == nil || errors.Is(err, ErrJobSourceIntegrity) {
+		t.Fatalf("a fetch from an unreachable remote = %v, want its transfer error", err)
+	}
+	download := filepath.Dir(firstDownloadRepository(filepath.Join(root, "job-sources"), source.RepositoryIdentity()))
+	if _, err := os.Lstat(filepath.Join(download, "source.json")); err != nil {
+		t.Fatalf("a network error threw away the first download: %v", err)
+	}
+}
+
+// A first download that lost its default commit cannot be started from: it is downloaded again,
+// and the copy is staged from the new download.
+func TestADamagedFirstDownloadIsDownloadedAgain(t *testing.T) {
+	remote, source := backgroundStagingFixture(t)
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stager := &privateJobSourceStager{transport: &jobSourceGrantFixture{}, stateRoot: root, remoteForTest: remote,
+		backgroundFirstDownload: true, backgroundStaging: true}
+	if err := stageWithin(t, stager, source, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	key, _ := source.StagingKey()
+	if err := os.RemoveAll(filepath.Join(root, "job-sources", key)); err != nil {
+		t.Fatal(err)
+	}
+	download := firstDownloadRepository(filepath.Join(root, "job-sources"), source.RepositoryIdentity())
+	if err := runSourceGit(context.Background(), download, "", "file", "update-ref", "-d", "refs/remotes/origin/job-default"); err != nil {
+		t.Fatal(err)
+	}
+	later := source
+	later.Binding.ResolvedAt = source.Binding.ResolvedAt.Add(time.Hour)
+	if err := stageWithin(t, stager, later, 20*time.Second); err != nil {
+		t.Fatalf("staging from a damaged first download = %v", err)
+	}
+	if _, err := sourceGitValue(context.Background(), download, "", "file", "rev-parse", "refs/remotes/origin/job-default"); err != nil {
+		t.Fatalf("the damaged first download was not downloaded again: %v", err)
+	}
+}
+
+// stageWithin tries a held create again, as the connector does, until it is no longer still
+// fetching, and fails the test past the deadline.
+func stageWithin(t *testing.T, stager *privateJobSourceStager, source workerproto.JobSource, limit time.Duration) error {
+	t.Helper()
+	deadline := time.Now().Add(limit)
+	for {
+		err := stager.Stage(context.Background(), "job:frozen-source", source)
+		if !errors.Is(err, errJobSourceDownloading) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the source is still held as downloading")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

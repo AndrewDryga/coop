@@ -29,6 +29,10 @@ var ErrJobSourceIntegrity = errors.New("job source identity or working tree does
 // running in the background: the command is tried again on its next delivery.
 var errJobSourceDownloading = errors.New("a repository the job needs is still being fetched")
 
+// errStagedSeedDamaged reports an earlier copy a new one could not start from: its default
+// commit or its objects are gone.
+var errStagedSeedDamaged = errors.New("the earlier copy to start from is damaged")
+
 var errJobSourceStorage = errors.New("repository staging is waiting for disk space")
 
 // errJobSourceStagingStarted is errJobSourceDownloading for a copy this try began staging in the
@@ -331,12 +335,21 @@ func (s *privateJobSourceStager) stageCopy(ctx context.Context, jobRef string, s
 	}
 	repository := filepath.Join(temporary, "repository")
 	if err := fetchVerifiedSource(ctx, repository, remote, protocol, token, source, seed); err != nil {
-		if ctx.Err() != nil {
+		// A source that fails its checks is refused, whatever it started from: the checks run
+		// only after Git found the fetch complete.
+		if ctx.Err() != nil || errors.Is(err, ErrJobSourceIntegrity) {
+			return err
+		}
+		firstDownload := seed == firstDownloadRepository(parent, source.RepositoryIdentity())
+		// A first download is a whole history, hours on a large repository: it is downloaded
+		// again only when it is proven damaged. Any other failure, a network error say, is
+		// reported, and the next try starts from it again.
+		if firstDownload && !errors.Is(err, errStagedSeedDamaged) {
 			return err
 		}
 		// An earlier copy is only a head start: a damaged one never stops staging. A damaged
 		// first download is downloaded again, in the background like the first time.
-		if seed == firstDownloadRepository(parent, source.RepositoryIdentity()) {
+		if firstDownload {
 			if err := os.RemoveAll(filepath.Dir(seed)); err != nil {
 				return err
 			}
@@ -422,10 +435,14 @@ func (s *privateJobSourceStager) firstDownload(ctx context.Context, parent, remo
 			if download.err != nil {
 				return "", download.err
 			}
-			return repository, nil
 		default:
 			return "", errJobSourceDownloading
 		}
+	}
+	// A download that finished may have been removed since, as a damaged one is: it is ready
+	// only while it is there.
+	if _, err := os.Lstat(filepath.Join(final, "source.json")); err == nil {
+		return repository, nil
 	}
 	download := &firstDownload{done: make(chan struct{})}
 	s.downloads[final] = download
@@ -616,7 +633,10 @@ func fetchVerifiedSource(ctx context.Context, destination, remote, protocol, tok
 	}
 	if seed != "" {
 		if err := seedFromStagedCopy(ctx, destination, seed); err != nil {
-			return err
+			if ctx.Err() != nil {
+				return err
+			}
+			return fmt.Errorf("%w: %w", errStagedSeedDamaged, err)
 		}
 	}
 	binding := source.Binding
