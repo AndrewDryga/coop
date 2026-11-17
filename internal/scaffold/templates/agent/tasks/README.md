@@ -18,10 +18,11 @@ There's one more directory, off to the side of the lifecycle:
 The backlog is the **same folder format**, but it lives OUTSIDE the lifecycle: the loop, the
 Stop hook, `coop tasks`, and every counter ignore it, so an idea waits there with no nagging.
 Manage it with `coop backlog` — `add "<title>"` to capture, `promote <id>` to move it into
-`00_todo/` when it's ready (a folder move, not a rewrite), `rm <id>` to drop it. Not-yet-ready
-work belongs in the backlog, never in `00_todo/`. To set a todo task aside, run
-`coop tasks park <id> ["<reason>"]`: it moves to the backlog with its reason in `log.md`, and
-`promote` returns it to `00_todo/`.
+`00_todo/` when it's ready (a folder move, not a rewrite), `rm <id>` to drop it. Only the
+genuinely large belongs in the backlog — work one iteration couldn't finish, or that needs a spec
+or a decision before anyone can start; everything else goes in `00_todo/`, and so does a close call.
+To set a todo task aside, run `coop tasks park <id> ["<reason>"]`: it moves to the backlog with
+its reason in `log.md`, and `promote` returns it to `00_todo/`.
 
 A state change is a folder move — use the commands, not a manual `mv`:
 `coop tasks claim <id>` · `block <id>` · `unblock <id>` · `done <id>`.

@@ -10,7 +10,7 @@
 - **Wear the hats** before coding: PM (the right, smallest thing?), UX (obvious path; empty/error states handled?), Security (what's the abuse case?), Maintainer (clear in six months?).
 - **Done means verified, not done-once** — formatted, gated green, tested including the failure path. Never "should work": show the gate, or say what you couldn't check.
 - **Readable, no bloat.** Match the surrounding style; delete more than you add; no knobs nobody asked for; comments say *why*, not *what*.
-- **Boy-scout rule.** Fix a small, safe, on-topic mess as you pass through. A separate fix worth doing goes to the QUEUE if it's simple and ready (`coop tasks add`; in a box: `tasks_propose`, kind task), so the loop takes it soon, and to the BACKLOG only if it's big or needs a spec first (`coop backlog add`; in a box: `tasks_propose`, kind backlog) — never smuggle an unrelated change into the commit.
+- **Boy-scout rule.** Fix a small, safe, on-topic mess as you pass through. A separate fix worth doing goes to the QUEUE (`coop tasks add`; in a box: `tasks_propose`, kind task), so the loop takes it soon; the BACKLOG (`coop backlog add`; in a box: `tasks_propose`, kind backlog) takes only the genuinely large — work one iteration couldn't finish, or a spec-sized idea a human must scope first. Close call? Queue it. Never smuggle an unrelated change into the commit.
 
 ## Use the agent stack
 - **Set the objective.** For anything longer than a quick answer, set the runtime's persistent goal/tracker if it exists (`/goal` or equivalent), and keep it current. If your agent does not have that feature, use `.agent/tasks/` as the durable goal state. A goal is the stop condition, not a substitute for a plan.
@@ -48,11 +48,11 @@ If a step doesn't exist here
 
 ## The contract
 - A task is a **folder**, and its state is which directory it sits in under `.agent/tasks/`: `00_todo/` · `10_in_progress/` · `50_blocked/` · `99_done/` (the numeric prefix just sorts `ls` in lifecycle order; `coop tasks` prints the clean names). Moving the folder IS the state change: on the host use `coop tasks` (never a manual `mv`); inside a box — where `coop` isn't installed — use the box's `coop-tasks` tools (`tasks_claim`, `tasks_complete`, `tasks_block`, `tasks_release`, …), and move the folder yourself only in a box that has none. There is no status field and no fifth state.
-- **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. The queue is for READY work — including a simple task you discovered and can state in a line; only the NOT-yet-ready (needs a spec, a decision, or real scoping) goes in the backlog (`coop backlog add`; in a box: `tasks_propose`, kind backlog), never in `00_todo/`.
+- **Every folder in `00_todo/` is live.** The loop picks the next from `00_todo/` and resumes one already in `10_in_progress/`; `50_blocked/` is parked, `99_done/` is the archive. The queue is for READY work — including a simple task you discovered and can state in a line; only the genuinely large (work one iteration couldn't finish, or that needs a spec, a decision, or real scoping before anyone can start) goes in the backlog (`coop backlog add`; in a box: `tasks_propose`, kind backlog). When the call is close, it belongs in `00_todo/`.
 - Claim a task with `coop tasks claim <id>` (in a box: `tasks_claim`; moves it to `10_in_progress/`) BEFORE you start it.
 - `coop tasks done <id>` (in a box: `tasks_complete`; moves it to `99_done/`) only when relevant checks/review are green, the change is committed, and `state.md` has its final snapshot. Deferred broad proof stays explicit in the campaign ledger; closure must not claim it passed. The folder move is the final filesystem action; Coop atomically normalizes `Status` to `complete` and `Next action` to `none`, then removes `tmp/`. The queue is gitignored working state, not part of the commit. Never pass `--force`: it is the human's override for work they checked themselves; an open required check stays open, or the task is blocked.
 - Blocked? `coop tasks block <id>`, then fill in its `decision.md` (the question, why it is blocked, options, your recommendation); in a box, `tasks_block` takes those four and writes it. Never guess on a one-way door.
-- One implemented task = one commit. A task already satisfied by existing work, or an investigation closed as could-not-reproduce / won't-fix, records an explicit evidence-backed no-change outcome instead of a fake commit. A human decision is blocked, not made by the agent. Spot unrelated work? A simple, ready task → `coop tasks add` (in a box: `tasks_propose`, kind task), and the queue works it soon; a big or not-yet-ready one → `coop backlog add` (in a box: `tasks_propose`, kind backlog). Either way, stay on the task you're on.
+- One implemented task = one commit. A task already satisfied by existing work, or an investigation closed as could-not-reproduce / won't-fix, records an explicit evidence-backed no-change outcome instead of a fake commit. A human decision is blocked, not made by the agent. Spot unrelated work? → `coop tasks add` (in a box: `tasks_propose`, kind task), and the queue works it soon; only a genuinely large one → `coop backlog add` (in a box: `tasks_propose`, kind backlog). Either way, stay on the task you're on.
 - **Stay on the branch you're given.** Never create, switch, or delete a git branch unless explicitly asked — commit onto the current branch. (Coop checks you out on a branch already; a new one strands your work where the human isn't looking.)
 - **Tasks are self-contained.** A task's `task.md` gets read by a fresh agent after a compaction or in a new session — so it can't lean on prior chat, a past review, or memory not in the repo. Each states: the problem + context, acceptance criteria, an approach (or a `spec.md`), and its subtasks. If it can't stand on its own with just the BOOT files, it isn't ready for the queue.
 - **In `coop loop`, work one task per iteration, then stop.** The loop re-invokes a fresh agent until `00_todo/` and `10_in_progress/` are empty — finishing the queue is the *loop's* job across iterations, not one agent draining it in a single run. (Interactive `/sweep` is the exception: it drains the queue in one session. Never stop while `00_todo/` or `10_in_progress/` has a task during a /sweep)
@@ -78,14 +78,16 @@ churn.
   resumable scratch work (including temporary worktrees and patches) in `tmp/`; it follows todo,
   in-progress, and blocked moves, then Coop removes it when the task reaches done. Promote evidence
   worth retaining to `artifacts/` before completion; artifacts remain with the archived task.
-- backlog — the BIG or not-yet-ready: work that needs a spec, a decision, or real scoping before it
-  can be worked. A simple, ready task you discover goes straight to `00_todo/` (`coop tasks add`;
-  in a box: `tasks_propose`, kind task), NOT here — the backlog is not a dumping ground for small
-  stuff. Kept as task folders in the `tasks/xx_backlog/` drawer via `coop backlog add` (in a box:
-  `tasks_propose`, kind backlog). It lives OUTSIDE the lifecycle, so it's never auto-worked nor
-  scanned by the Stop hook; `coop backlog promote <id>` moves an item into `tasks/00_todo/` (a folder
-  move, not a rewrite) once it's ready and fleshed into a spec. Shipped or cancelled? `coop backlog rm <id>` — a shipped idea's record is its commits. The loop reads the
-  lifecycle states only; per-task reasoning lives in each task's own `log.md`.
+- backlog — the genuinely LARGE: work one iteration couldn't finish, or that needs a spec, a
+  decision, or real scoping before anyone can start (a big product idea, a design-heavy feature).
+  Everything else you discover goes straight to `00_todo/` (`coop tasks add`; in a box:
+  `tasks_propose`, kind task), NOT here — "it needs a design" is not a reason to park work you could
+  state in a line, and when the call is close it goes in the queue. Kept as task folders in the
+  `tasks/xx_backlog/` drawer via `coop backlog add` (in a box: `tasks_propose`, kind backlog). It lives
+  OUTSIDE the lifecycle, so it's never auto-worked nor scanned by the Stop hook; `coop backlog
+  promote <id>` moves an item into `tasks/00_todo/` (a folder move, not a rewrite) once it's ready and
+  fleshed into a spec. Shipped or cancelled? `coop backlog rm <id>` — a shipped idea's record is its
+  commits. The loop reads the lifecycle states only; per-task reasoning lives in each task's own `log.md`.
 - `kb/` — the committed knowledge tree: descriptive subsystem notes, with normative taste rules
   under `kb/rules/`.
 - `project.yaml` — the committed per-project config: a monorepo's `subprojects:` (each
