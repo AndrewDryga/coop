@@ -745,10 +745,12 @@ func ProcessEnvironment(layout procharness.Layout, path string, runtime RuntimeS
 // plugin DIRECTORY is linked (executables), never config.json (registry logins) or anything else
 // under ~/.docker; Coop's own build already exposes nothing but the resolved plugin binary. A host
 // with no plugin directory is left alone — its `net setup` fails the same way it would by hand.
-func LinkDockerPlugins(layout procharness.Layout) error {
-	hostHome, err := os.UserHomeDir()
-	if err != nil {
-		return err
+//
+// hostHome is the developer's real home, teststate.DeveloperHome(): by the time a live suite runs,
+// teststate.Isolate has already moved HOME into the test state folder, where no plugins are.
+func LinkDockerPlugins(layout procharness.Layout, hostHome string) error {
+	if hostHome == "" {
+		return errors.New("no host home to find Docker plugins in")
 	}
 	plugins := filepath.Join(hostHome, ".docker", "cli-plugins")
 	if info, err := os.Stat(plugins); err != nil || !info.IsDir() {

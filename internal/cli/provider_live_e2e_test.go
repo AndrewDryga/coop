@@ -264,7 +264,7 @@ func runProviderLiveCompatibility(
 	// Coop runs one — and stays on the open path it was written for otherwise.
 	if workflow == liveWorkflowNetwork || brokered {
 		childSpec.NetworkStateHome = hostStateHome()
-		if err := liveprovider.LinkDockerPlugins(layout); err != nil {
+		if err := liveprovider.LinkDockerPlugins(layout, teststate.DeveloperHome()); err != nil {
 			return fail(false, liveprovider.ReasonHarnessFailed, "runtime_plugins")
 		}
 	}

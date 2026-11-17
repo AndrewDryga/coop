@@ -17,6 +17,33 @@ import (
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 )
 
+// The plugins come from the developer's real home, not HOME: teststate.Isolate has moved HOME into
+// the test state folder by the time a live suite links them, and that folder has no plugins.
+func TestLinkDockerPluginsUsesTheHostHome(t *testing.T) {
+	host := t.TempDir()
+	plugins := filepath.Join(host, ".docker", "cli-plugins")
+	if err := os.MkdirAll(plugins, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", t.TempDir()) // the isolated home, as the live suites run with
+	layout := procharness.Layout{Home: t.TempDir()}
+	if err := LinkDockerPlugins(layout, host); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(filepath.Join(layout.Home, ".docker", "cli-plugins")); err != nil || target != plugins {
+		t.Fatalf("plugin link = %q, %v; want %q", target, err, plugins)
+	}
+
+	// A host with no plugin directory links nothing.
+	bare := procharness.Layout{Home: t.TempDir()}
+	if err := LinkDockerPlugins(bare, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(bare.Home, ".docker")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a host without plugins got a .docker folder: %v", err)
+	}
+}
+
 func TestParseTargets(t *testing.T) {
 	all, strict, err := ParseTargets("all")
 	if err != nil || !strict {

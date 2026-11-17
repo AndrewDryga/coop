@@ -204,7 +204,7 @@ func startLiveACP(t *testing.T, provider string, requiredProviders ...string) *l
 	if brokered {
 		// The supervisor qualifies its disposable state tree itself (a `net setup`), and that
 		// builds with the Docker Buildx plugin its isolated home would otherwise not find.
-		if err := liveprovider.LinkDockerPlugins(processLayout); err != nil {
+		if err := liveprovider.LinkDockerPlugins(processLayout, teststate.DeveloperHome()); err != nil {
 			failLiveACPSetup(t, "docker_plugins")
 		}
 	}
