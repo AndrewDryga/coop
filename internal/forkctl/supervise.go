@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
-	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -545,7 +544,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 			c.settleForkRuns(name, forkspace.Workspace(repo, name))
 		}
 		if hasGeneration && (needsWorkerReap || len(stale) > 0) {
-			if err := pauseForkTaskAssignments(c.cfg, repo, forkIdentity); err != nil {
+			if err := tasks.PauseForkAssignments(repo, forkIdentity); err != nil {
 				return 1, fmt.Errorf("fork %s stopped, but pausing its task assignment failed: %w", name, err)
 			}
 		}
@@ -682,7 +681,7 @@ func (c *Control) forkStop(args []string, continueHint bool) (int, error) {
 	}
 	_ = forkspace.RemoveWorkerContinue(repo, name)
 	if hasGeneration {
-		if err := pauseForkTaskAssignments(c.cfg, repo, forkIdentity); err != nil {
+		if err := tasks.PauseForkAssignments(repo, forkIdentity); err != nil {
 			return 1, fmt.Errorf("fork %s worker and box stopped, but pausing its task assignment failed: %w", name, err)
 		}
 	}
@@ -723,10 +722,6 @@ func (c *Control) settleForkRuns(name, workspace string) {
 		ui.Warning("Coop could not finish removing the network containers of fork "+name,
 			err.Error(), "Remove them with: coop net recover")
 	}
-}
-
-func pauseForkTaskAssignments(_ *config.Config, repo string, identity forkspace.Identity) error {
-	return tasks.PauseForkAssignments(repo, identity)
 }
 
 // waitForExit polls until the recorded worker is gone or timeout elapses; a reused PID is not the
