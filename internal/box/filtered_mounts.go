@@ -67,7 +67,11 @@ func limitedExtraArgs(configured, spec []string, isolated bool) ([]string, error
 			}
 			out = append(out, "-v", mount)
 		case "-e", "--env":
-			if err := checkEnvAssignment(value); err != nil {
+			kind := "a filtered box"
+			if isolated {
+				kind = "an isolated fork"
+			}
+			if err := checkEnvAssignment(value, kind); err != nil {
 				return nil, err
 			}
 			out = append(out, "-e", value)
@@ -85,11 +89,11 @@ func limitedExtraArgs(configured, spec []string, isolated bool) ([]string, error
 
 // checkEnvAssignment refuses the pass-through spelling (`-e KEY`), which imports
 // whatever the operator's shell happens to be holding into a box built to be
-// reproducible, and any value the argument list could not carry intact.
-func checkEnvAssignment(value string) error {
+// reproducible, and any value the argument list could not carry intact. kind names the box.
+func checkEnvAssignment(value, kind string) error {
 	key, _, ok := strings.Cut(value, "=")
 	if !ok {
-		return fmt.Errorf("-e %s needs a value: write -e %s=<value>, since a filtered box does not pass your shell's environment through", value, value)
+		return fmt.Errorf("-e %s needs a value: write -e %s=<value>, since %s does not pass your shell's environment through", value, value, kind)
 	}
 	if key == "" || strings.ContainsAny(value, "\x00\r\n") {
 		return errors.New("-e needs a plain KEY=VALUE assignment, on one line")
@@ -141,7 +145,7 @@ func bindMountShorthand(value string) (string, error) {
 		switch key {
 		case "type":
 			if field != "bind" {
-				return "", fmt.Errorf("a filtered box takes bind mounts only, so --mount type=%s is refused", field)
+				return "", fmt.Errorf("--mount type=%s is refused: only bind mounts are accepted here", field)
 			}
 		case "source":
 			source = field

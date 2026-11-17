@@ -599,6 +599,7 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	finalArgs := append(append([]string(nil), args...), "-f", finalPath)
 	createArgs := append(append([]string(nil), finalArgs...), "up", "--no-start", "--force-recreate")
 	createArgs = append(createArgs, selected...)
+	composeErr.Reset() // a failure here reports this run's output, not the seed run's
 	if err := runCompose(rt, io.Discard, &composeErr, "up --no-start", createArgs); err != nil {
 		cleanupFinal()
 		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())

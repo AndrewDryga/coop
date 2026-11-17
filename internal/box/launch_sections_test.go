@@ -1112,6 +1112,27 @@ func TestOnlyMountProtectionSaysWhatItLeavesOut(t *testing.T) {
 	}
 }
 
+// One accepted case exposure reads in the singular.
+func TestCaseExposureCountsInTheSingular(t *testing.T) {
+	got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).caseExposed([]string{".env"}, false) })
+	if !strings.Contains(got, "1 hidden file may be read") {
+		t.Fatalf("one case exposure said %q", got)
+	}
+}
+
+// An isolated fork's runtime extras are refused in its own name, not a filtered box's.
+func TestIsolatedForkExtrasNameTheFork(t *testing.T) {
+	if _, err := limitedExtraArgs(nil, []string{"-e", "FOO"}, true); err == nil || !strings.Contains(err.Error(), "an isolated fork does not pass") {
+		t.Fatalf("an isolated fork's pass-through -e = %v", err)
+	}
+	if _, err := limitedExtraArgs(nil, []string{"-e", "FOO"}, false); err == nil || !strings.Contains(err.Error(), "a filtered box does not pass") {
+		t.Fatalf("a filtered box's pass-through -e = %v", err)
+	}
+	if _, err := limitedExtraArgs(nil, []string{"--mount", "type=volume,source=x,target=/x"}, true); err == nil || strings.Contains(err.Error(), "filtered") {
+		t.Fatalf("an isolated fork's volume mount = %v", err)
+	}
+}
+
 // Compose prints its progress first and the reason last: a failed start shows the reason and the
 // exit status, not the first progress lines.
 func TestBoundedCauseKeepsTheReasonAndTheError(t *testing.T) {

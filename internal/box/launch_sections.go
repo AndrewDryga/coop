@@ -199,9 +199,9 @@ func (s *launchSections) caseExposed(paths []string, quiet bool) {
 	}
 	switch {
 	case s.on:
-		ui.Caution("Accepted case exposure: %d hidden files may be read under another letter case.", len(paths))
+		ui.Caution("Accepted case exposure: %s may be read under another letter case.", ui.Count(len(paths), "hidden file"))
 	case !quiet:
-		ui.Warn("Accepted case exposure: %d hidden files may be read under another letter case.", len(paths))
+		ui.Warn("Accepted case exposure: %s may be read under another letter case.", ui.Count(len(paths), "hidden file"))
 	}
 }
 

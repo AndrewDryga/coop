@@ -753,7 +753,7 @@ so they do not trigger this repair.
 | --- | --- | --- |
 | `coop build` (stable) | fixed to a specific image digest | rebuilding uses the same OS and runtime |
 | `coop update`, filtered project | co:op's pinned client base | the OS and runtime change only with a co:op release |
-| `coop update`, open or offline project (fresh) | uses the current `node:24-slim` image and rebuilds with `--pull --no-cache` | updates the OS packages and runtime to the newest available versions |
+| `coop update`, open or offline project (fresh) | uses the current `node:24-bookworm-slim` image and rebuilds with `--pull --no-cache` | updates the OS packages and runtime to the newest available versions |
 
 ### Agent clients
 
