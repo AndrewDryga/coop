@@ -199,20 +199,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 	renderUsage(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), time.Now(), names, rows, unlisted, details)
 	<-reportsDone
 	renderUsageReports(os.Stdout, ui.For(os.Stdout), ui.TermWidth(os.Stdout), reports, reportErr)
-	var footer []string
-	if details && len(retained.Turns) > 0 {
-		footer = append(footer, "Saved Coop turn totals have no price estimate and are excluded from provider-history totals.")
-		if unattributed > 0 {
-			footer = append(footer, fmt.Sprintf("%d saved turns across this installation cannot be matched to a credential.", unattributed))
-		}
-	}
-	if details && retained.Truncated {
-		footer = append(footer, "Only part of the saved Coop turn history was read (read limit reached).")
-	}
-	if details && retainedErr != nil && !errors.Is(retainedErr, os.ErrNotExist) {
-		footer = append(footer, "Saved Coop turn history could not be read.")
-	}
-	if len(footer) > 0 {
+	if footer := usageFooter(details, retained, unattributed, retainedErr); len(footer) > 0 {
 		fmt.Println()
 		fmt.Println(strings.Join(footer, "\n"))
 	}
@@ -1005,4 +992,25 @@ func usageResetLabel(reset, now time.Time) string {
 		left = fmt.Sprintf("%dh %dm", minutes/60, minutes%60)
 	}
 	return "resets in " + left + " (" + when + ")"
+}
+
+// usageFooter is what one account's view says below its rows about Coop's own saved turns: only
+// what this view could not show — turns it could not match, or history it could not read whole. The
+// row already says its saved turns are unpriced and not added, so no blanket note repeats it
+// (usage-leads-with-limits).
+func usageFooter(details bool, retained session.UsageSnapshot, unattributed int, retainedErr error) []string {
+	if !details {
+		return nil
+	}
+	var footer []string
+	if unattributed > 0 {
+		footer = append(footer, fmt.Sprintf("%d saved turns across this installation cannot be matched to a credential.", unattributed))
+	}
+	if retained.Truncated {
+		footer = append(footer, "Only part of the saved Coop turn history was read (read limit reached).")
+	}
+	if retainedErr != nil && !errors.Is(retainedErr, os.ErrNotExist) {
+		footer = append(footer, "Saved Coop turn history could not be read.")
+	}
+	return footer
 }

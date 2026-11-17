@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/nativeauth"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -482,5 +484,27 @@ func TestUsageSummaryKeepsBarsAndOnlyUsefulFacts(t *testing.T) {
 		if strings.Contains(out.String(), unwanted) {
 			t.Fatalf("account detail contains %q:\n%s", unwanted, out.String())
 		}
+	}
+}
+
+// One account's view ends with no blanket disclaimer (usage-leads-with-limits): its row already
+// says saved turns are unpriced and not added, so the footer names only what the view could not
+// show.
+func TestUsageFooterSaysOnlyWhatTheViewCouldNotShow(t *testing.T) {
+	saved := session.UsageSnapshot{Turns: make([]session.RetainedUsage, 2)}
+	if got := usageFooter(true, saved, 0, nil); len(got) != 0 {
+		t.Errorf("footer with every turn matched = %q, want none", got)
+	}
+	if got := usageFooter(false, session.UsageSnapshot{Turns: saved.Turns, Truncated: true}, 2, errors.New("x")); len(got) != 0 {
+		t.Errorf("the all-accounts view printed an account footer: %q", got)
+	}
+	got := usageFooter(true, session.UsageSnapshot{Turns: saved.Turns, Truncated: true}, 2, errors.New("locked"))
+	want := []string{
+		"2 saved turns across this installation cannot be matched to a credential.",
+		"Only part of the saved Coop turn history was read (read limit reached).",
+		"Saved Coop turn history could not be read.",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("footer = %q, want %q", got, want)
 	}
 }
