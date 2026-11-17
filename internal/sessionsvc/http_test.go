@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/AndrewDryga/coop/internal/config"
 	"log/slog"
@@ -1334,7 +1335,10 @@ func TestATurnSubmittedWithATargetRewindCarriesItOffTheWire(t *testing.T) {
 	}
 }
 
-type preparingHTTPRunner struct{ calls atomic.Int32 }
+type preparingHTTPRunner struct {
+	calls atomic.Int32
+	err   error
+}
 
 func (*preparingHTTPRunner) Run(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) {
 	return turn, nil
@@ -1342,7 +1346,7 @@ func (*preparingHTTPRunner) Run(_ context.Context, _ session.Session, turn sessi
 
 func (r *preparingHTTPRunner) PrepareSession(_ context.Context, _ session.Session, _ time.Duration) error {
 	r.calls.Add(1)
-	return nil
+	return r.err
 }
 
 func TestSessionHTTPPreparesAJobsWarmExecution(t *testing.T) {
@@ -1370,6 +1374,65 @@ func TestSessionHTTPPreparesAJobsWarmExecution(t *testing.T) {
 	)
 	if prepared.Code != http.StatusOK || runner.calls.Load() != 1 {
 		t.Fatalf("prepare status=%d calls=%d body=%s", prepared.Code, runner.calls.Load(), prepared.Body.String())
+	}
+}
+
+// Prepare records no operation, so before it named its failures every one of them reached the
+// caller as 500 "internal server error" and the cause was logged nowhere.
+func TestSessionHTTPPrepareNamesWhyWarmExecutionFailed(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		code   string
+		status int
+		detail string
+	}{
+		{acpFailure(sessionACPWarmFull, "warm session limit reached"), "warm_limit_reached", http.StatusServiceUnavailable, "warm session limit reached"},
+		{acpFailure(sessionACPRateLimited, "provider rate limit"), "rate_limited", http.StatusServiceUnavailable, "provider rate limit"},
+		{acpFailure(sessionACPTimeoutError, "turn deadline exceeded"), "acp_timeout", http.StatusServiceUnavailable, "turn deadline exceeded"},
+		{acpFailure(sessionACPCredentialError, "selected account needs host sign-in"), "credential_projection_error", http.StatusConflict, "selected account needs host sign-in"},
+		{acpFailure(sessionACPInvalidTarget, "session target provider is unavailable"), "invalid_session_target", http.StatusConflict, "session target provider is unavailable"},
+		{acpFailure(sessionACPProcessError, "ACP child exited with status 1"), "acp_process_error", http.StatusInternalServerError, "ACP child exited with status 1"},
+		{errors.Join(acpFailure(sessionACPProcessError, "ACP child failed"), acpFailure(sessionACPCleanupError, "/private/state/box")),
+			"session_cleanup_error", http.StatusServiceUnavailable, "session runtime cleanup is temporarily unavailable"},
+		{errors.New("/private/state leaked"), "internal_error", http.StatusInternalServerError, "internal operation failure"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			repo, git := gitrepo.New(t)
+			git("commit", "-q", "--allow-empty", "-m", "base")
+			var logs bytes.Buffer
+			runner := &preparingHTTPRunner{err: tc.err}
+			service := newSessionFixture(t, Config{
+				StateRoot: filepath.Join(t.TempDir(), "state"), Runner: runner,
+				Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
+			}, repo)
+			service.Job.Limits.WarmIdleTimeoutMS = int64((15 * time.Minute) / time.Millisecond)
+			defer service.Stop()
+			handler := NewHTTPHandler(service.Service)
+			createdResponse := sessionHTTPTestRequest(
+				t, handler, http.MethodPost, "/v1/sessions",
+				service.body(t, "warm-fail"), "warm-fail-create", "application/json",
+			)
+			var created sessionMutationSessionResponse
+			if err := json.Unmarshal(createdResponse.Body.Bytes(), &created); err != nil {
+				t.Fatal(err)
+			}
+			prepared := sessionHTTPTestRequest(
+				t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/prepare",
+				fmt.Sprintf(`{"expected_revision":%d}`, created.Session.Revision),
+				"warm-fail-prepare", "application/json",
+			)
+			var body sessionHTTPErrorResponse
+			if err := json.Unmarshal(prepared.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if prepared.Code != tc.status || body.Error.Code != tc.code || body.Error.Detail != tc.detail {
+				t.Fatalf("prepare = %d %+v, want %d %s %q", prepared.Code, body.Error, tc.status, tc.code, tc.detail)
+			}
+			if !strings.Contains(logs.String(), `"msg":"session prepare failed"`) ||
+				!strings.Contains(logs.String(), `"error_code":"`+tc.code+`"`) {
+				t.Fatalf("prepare failure was not logged with its cause:\n%s", logs.String())
+			}
+		})
 	}
 }
 

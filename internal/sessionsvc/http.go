@@ -1822,12 +1822,14 @@ func sessionHTTPError(err error) (string, int, string) {
 		session.CodeOperationFenced,
 		session.CodeRevisionConflict, session.CodeInvalidSessionState, session.CodeQueueFull,
 		session.CodeBudgetExhausted, session.CodeTurnNotRunnable, session.CodeNativeSessionConflict,
-		session.CodeDiscardPlanStale, session.CodeNetworkFingerprintMismatch:
+		session.CodeDiscardPlanStale, session.CodeNetworkFingerprintMismatch,
+		sessionACPCredentialError, sessionACPInvalidTarget, sessionACPInvalidTurn:
 		status = http.StatusConflict
-	case session.CodeInternal:
+	case session.CodeInternal, sessionACPProcessError, sessionACPProtocolError, sessionACPQuietError,
+		sessionACPCancelledError:
 		status = http.StatusInternalServerError
 	case session.CodeRepositoryUnavailable, session.CodeNetworkUnavailable, session.CodeStorageUnavailable,
-		sessionACPCleanupError:
+		sessionACPCleanupError, sessionACPWarmFull, sessionACPRateLimited, sessionACPTimeoutError:
 		status = http.StatusServiceUnavailable
 	}
 	var typed *session.Error

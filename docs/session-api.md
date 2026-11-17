@@ -745,7 +745,7 @@ state, prompts and credentials.
 | `POST` | `/v1/sessions` | `task`, `job`, `expected_job_digest`, and optional `controller_tools` |
 | `GET` | `/v1/sessions?limit=100` | `limit` is `1..1000` |
 | `GET` | `/v1/sessions/{session_id}` | none |
-| `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`. The job must turn on warm execution. Returns the session; prepare records no operation. |
+| `POST` | `/v1/sessions/{session_id}/prepare` | `expected_revision`. The job must turn on warm execution. Returns the session; prepare records no operation. A failure to start uses the code a failed turn would carry: retry `503` `warm_limit_reached` (all warm slots busy), `rate_limited` or `acp_timeout` later; fix the session for `409` `credential_projection_error` or `invalid_session_target`; `500` `acp_process_error` or `acp_protocol_error` means the agent process failed; `503` `session_cleanup_error` means a runtime is waiting for cleanup. |
 | `POST` | `/v1/sessions/{session_id}/workspace` | `expected_revision`, `task`. The session must be open, writable and unused. |
 
 A session stored in `readonly` or `bare` mode is quarantined at startup and never runs; a new turn

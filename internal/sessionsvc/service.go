@@ -2225,12 +2225,38 @@ func (s *Service) PrepareSession(ctx context.Context, id string, expectedRevisio
 	// Even a failed Prepare may have launched a child whose cleanup needs retry.
 	s.invalidateRuntimeCleanup(id)
 	if err := preparer.PrepareSession(prepareCtx, bound, policy.WarmIdleTimeout); err != nil {
-		if sessionRunnerCleanupFailed(err) {
+		cleanupFailed := sessionRunnerCleanupFailed(err)
+		if cleanupFailed {
 			s.runtimeCleanupFailed(id)
 		}
-		return session.Session{}, err
+		return session.Session{}, s.preparedSessionError(id, err, cleanupFailed)
 	}
 	return s.store.GetSession(ctx, id)
+}
+
+// preparedSessionError logs why a prepare failed and gives the caller the same code a failed turn
+// would carry, since prepare records no operation and the cause would otherwise be lost. A runtime
+// left behind outranks the failure that left it: the session cannot run until it is cleaned up.
+func (s *Service) preparedSessionError(id string, err error, cleanupFailed bool) error {
+	code, detail := session.CodeInternal, "warm execution could not start"
+	var failure *sessionACPFailure
+	switch {
+	case cleanupFailed:
+		code, detail = sessionACPCleanupError, "session runtime cleanup is temporarily unavailable"
+	case errors.As(err, &failure):
+		code, detail = failure.code, failure.detail
+	case session.CodeOf(err) != "":
+		code, detail = session.CodeOf(err), ""
+	case errors.Is(err, context.DeadlineExceeded):
+		code, detail = sessionACPTimeoutError, "warm execution deadline exceeded"
+	}
+	s.log.Error("session prepare failed",
+		"session_id", id, "error_code", code, "error_detail", s.operationalErrorDetail(err),
+	)
+	if detail == "" {
+		return err // already a typed session error
+	}
+	return &session.Error{Code: code, Detail: detail}
 }
 
 func (s *Service) prepareSessionExecution(ctx context.Context, bound session.Session, expectedRevision int64) (executionConfig, error) {

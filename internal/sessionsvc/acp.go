@@ -80,6 +80,8 @@ const (
 	sessionACPCleanupError    session.ErrorCode = "session_cleanup_error"
 	sessionACPInvalidTarget   session.ErrorCode = "invalid_session_target"
 	sessionACPInvalidTurn     session.ErrorCode = "invalid_leased_turn"
+	// sessionACPWarmFull refuses a prepare while every warm slot is taken; it frees as one idles out.
+	sessionACPWarmFull session.ErrorCode = "warm_limit_reached"
 	// sessionACPRateLimited survives to the client only when the whole ladder is cooling: a
 	// rung that still has a free sibling is rotated onto it instead, inside the turn.
 	sessionACPRateLimited session.ErrorCode = "rate_limited"
@@ -1363,7 +1365,7 @@ func (r *sessionTurnRunner) PrepareSession(ctx context.Context, bound session.Se
 		}
 	}
 	if full {
-		return acpFailure(sessionACPProcessError, "warm session limit reached")
+		return acpFailure(sessionACPWarmFull, "warm session limit reached")
 	}
 	target, err := agents.ParseTarget(bound.Target)
 	if err != nil || len(target.Accounts) > 1 {
