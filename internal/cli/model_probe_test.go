@@ -108,7 +108,7 @@ func TestModelProbeFailuresAreSafeAndUseful(t *testing.T) {
 		{"run coop build --egress filtered " + secret, "The filtered project image needs rebuilding: coop build --egress filtered"},
 		{"run coop net setup " + secret, "Filtered networking needs host setup: coop net setup"},
 		{"no space left on device " + secret, "The container runtime has no free storage."},
-		{"canonical credential file must be owner-private with one link " + secret, "Credential storage failed a safety check; preserve it for host recovery."},
+		{"canonical credential directory must be owner-private " + secret, "Credential storage failed a safety check; preserve it for host recovery."},
 		{"native account needs host sign-in or renewal " + secret, "Sign in again: coop login claude@work"},
 		{"Sign in again: coop login claude@work " + secret, "Sign in again: coop login claude@work"},
 		{secret + "\x1b[31m", "The model probe closed before answering."},
