@@ -255,10 +255,17 @@ func (l *networkLog) summary() {
 		return
 	}
 	l.closed = true
-	headline := fmt.Sprintf("Traffic to %s was blocked across %s",
-		ui.Count(len(l.refused), "remote address", "remote addresses"), ui.Count(l.runs, "network run"))
-	if l.alerts > 0 {
-		headline += ", with " + ui.Count(l.alerts, "alert")
+	// Alerts (a large upload, many new connections) need no refusal: a run with alerts alone does
+	// not claim it blocked anything.
+	var headline string
+	if len(l.refused) == 0 {
+		headline = fmt.Sprintf("The network raised %s across %s", ui.Count(l.alerts, "alert"), ui.Count(l.runs, "network run"))
+	} else {
+		headline = fmt.Sprintf("Traffic to %s was blocked across %s",
+			ui.Count(len(l.refused), "remote address", "remote addresses"), ui.Count(l.runs, "network run"))
+		if l.alerts > 0 {
+			headline += ", with " + ui.Count(l.alerts, "alert")
+		}
 	}
 	ui.Alert(headline, strings.Join(topRefused(l.refused, l.order, maxLoopDenials), "\n"),
 		[2]string{"Run details:", "coop net runs"})

@@ -181,6 +181,18 @@ func TestNetworkLogSummaryRanksAndPointsAtTheReceipts(t *testing.T) {
 	}
 }
 
+// An alert needs no refusal (a large upload, many new connections), so a run with alerts alone
+// says so instead of "Traffic to 0 remote addresses was blocked".
+func TestNetworkLogSummaryWithAlertsOnly(t *testing.T) {
+	log := newNetworkLog()
+	log.record(box.NetworkReport{RunID: "run-1", Alerts: []string{"large_upload"}})
+	log.finishIteration()
+	out := captureStderr(t, log.summary)
+	if !strings.Contains(out, "The network raised 1 alert across 1 network run") || strings.Contains(out, "0 remote addresses") {
+		t.Errorf("alerts-only summary = %q", out)
+	}
+}
+
 // A long line of distinct denied names is exactly what a hostile agent can
 // produce, so the iteration line names a few and counts the rest.
 func TestNetworkIterationLineStaysBounded(t *testing.T) {
