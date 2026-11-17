@@ -67,7 +67,8 @@ func (s *Service) reconcileInterruptedOperations(ctx context.Context, startup bo
 				_, err := s.resumeReview(ctx, op)
 				unlock()
 				if err != nil {
-					return err
+					// One operation's outcome must not stop startup or the rest of this pass.
+					s.log.Warn("interrupted review was not resumed", "operation_id", op.ID, "error", err)
 				}
 				continue
 			}
@@ -76,7 +77,8 @@ func (s *Service) reconcileInterruptedOperations(ctx context.Context, startup bo
 			handled, err := s.reconcileCancelOperation(ctx, op)
 			if err != nil {
 				unlock()
-				return err
+				s.log.Warn("interrupted cancellation was not reconciled", "operation_id", op.ID, "error", err)
+				continue
 			}
 			if handled {
 				unlock()

@@ -97,6 +97,58 @@ func TestRetainedReviewSurvivesLostCompletionWithoutRebuildingWorkspace(t *testi
 	}
 }
 
+// A retained review that cannot resume right now is one operation's problem. It must not fail
+// startup reconciliation or skip the operations after it.
+func TestReconcileContinuesPastAReviewThatCannotResume(t *testing.T) {
+	repo, _ := gitrepo.NewCommitted(t)
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "resume-blocked")
+	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "work.txt"), "work\n")
+	sessionWorkspaceGit(t, sess.Workspace, "add", ".")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "model work")
+	db, err := sql.Open("sqlite", filepath.Join(service.Store().Root(), "session.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TRIGGER interrupt_review_completion BEFORE UPDATE ON operations
+		WHEN NEW.method = 'RunReview' AND NEW.state = 'succeeded'
+		BEGIN SELECT RAISE(ABORT, 'injected completion loss'); END`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := service.RunReview(ctx, "blocked-review", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision}); err == nil {
+		t.Fatal("completion interruption was not exercised")
+	}
+	if _, err := db.Exec("DROP TRIGGER interrupt_review_completion"); err != nil {
+		t.Fatal(err)
+	}
+	// A reserved operation sorted after the review must still be reconciled in the same pass.
+	later, _, err := service.Store().ReserveOperation(ctx, "CloseSession", "later-close",
+		session.CloseSessionRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, locked := service.tryLockSessionRuntime(sess.ID)
+	if !locked {
+		t.Fatal("could not hold the session runtime")
+	}
+	err = service.reconcileInterruptedOperations(ctx, true)
+	unlock()
+	if err != nil {
+		t.Fatalf("one unresumable review stopped reconciliation: %v", err)
+	}
+	if op, err := service.Store().GetOperation(ctx, "blocked-review"); err != nil || op.State != session.OperationRunning {
+		t.Fatalf("blocked review = %+v, %v; want it left for the next pass", op, err)
+	}
+	if op, err := service.Store().GetOperationByID(ctx, later.ID); err != nil || op.State != session.OperationFailed {
+		t.Fatalf("later operation was skipped: %+v, %v", op, err)
+	}
+}
+
 func TestRetainedReviewOwnsLFSPayloadWithoutWorkingFiles(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	writeSessionLFSSource(t, repo, []byte("original\n"))
