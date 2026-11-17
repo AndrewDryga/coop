@@ -144,8 +144,10 @@ func (e *Evidence) Why(runID string, query PolicyQuery, exportDestinations bool)
 	if err != nil {
 		return PolicyExplanation{}, err
 	}
-	decision := policy.Domain(name, query.Port)
-	if name == "" {
+	var decision egress.Decision
+	if name != "" {
+		decision = policy.Domain(name, query.Port)
+	} else {
 		// Echo-request is the one qualified ICMP message, so the hypothetical
 		// uses exactly it rather than inventing a type the grammar would refuse.
 		kind := 0

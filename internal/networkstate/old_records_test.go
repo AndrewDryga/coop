@@ -174,7 +174,7 @@ func TestOldVersionUnderThePlainIDIsRefused(t *testing.T) {
 	if _, err := s.Forget(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
-	if found, err := s.readWithdrawal(id, withdrawalVersion); err != nil || !found {
+	if found, err := s.withdrawn(id); err != nil || !found {
 		t.Fatalf("withdrawal under the plain id after Forget = %v, %v", found, err)
 	}
 

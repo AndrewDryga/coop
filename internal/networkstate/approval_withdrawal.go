@@ -38,10 +38,6 @@ type Withdrawal struct {
 // An unreadable or malformed marker is an ERROR, never a quiet false: a barrier
 // coop cannot read is not a barrier it may ignore.
 func (s *Store) withdrawn(id string) (bool, error) {
-	return s.readWithdrawal(id, withdrawalVersion)
-}
-
-func (s *Store) readWithdrawal(id string, version int) (bool, error) {
 	data, err := s.read(withdrawalRecord(id))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -53,7 +49,7 @@ func (s *Store) readWithdrawal(id string, version int) (bool, error) {
 	if err := json.Unmarshal(data, &record); err != nil {
 		return false, err
 	}
-	if record.Version != version || record.ProjectID != id {
+	if record.Version != withdrawalVersion || record.ProjectID != id {
 		return false, errors.New("network withdrawal identity mismatch")
 	}
 	return true, nil
@@ -80,12 +76,6 @@ func (s *Store) recordWithdrawal(id string) error {
 	}
 	return s.publish(withdrawalRecord(id), data, true)
 }
-
-// clearWithdrawal removes the barrier. Only Approve calls it, inside the same lock that publishes
-// the approval a human just confirmed.
-func (s *Store) clearWithdrawal(id string) error { return s.removeWithdrawal(id) }
-
-func (s *Store) removeWithdrawal(id string) error { return s.removeRecord(withdrawalRecord(id)) }
 
 // withdrawalBarrier is the pending review a withdrawal leaves behind. It
 // applies only where access could be REGAINED: an offline run has nothing to

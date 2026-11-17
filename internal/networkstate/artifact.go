@@ -100,10 +100,8 @@ func (s *Store) PrepareArtifacts(ctx context.Context, id string, revision networ
 			if record.Artifact.Digest != digest || record.Artifact.Size != len(launch) {
 				return errors.New("network launch configuration cannot be rebound")
 			}
-			if _, err := s.readArtifactLaunch(record.Artifact); err != nil {
-				return err
-			}
-			return s.writeExecution(&record, false)
+			_, err := s.readArtifactLaunch(record.Artifact)
+			return err
 		}
 		if err := s.root.Mkdir(record.Artifact.Name, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 			return err

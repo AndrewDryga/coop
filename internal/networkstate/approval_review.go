@@ -205,7 +205,7 @@ func (s *Store) Approve(ctx context.Context, project string, mode egress.Mode, r
 		// An explicit fresh approval is the ONE thing that lifts a withdrawal —
 		// including an approval of an unchanged or empty request, which is how a
 		// project with nothing left in its YAML gets moving again.
-		if err := s.clearWithdrawal(current.After.ProjectID); err != nil {
+		if err := s.removeRecord(withdrawalRecord(current.After.ProjectID)); err != nil {
 			return fmt.Errorf("clear network withdrawal: %w", err)
 		}
 		return s.intactAuthority()

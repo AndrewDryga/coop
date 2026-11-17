@@ -184,7 +184,7 @@ func (s *Store) createExecution(ctx context.Context, spec ExecutionSpec, smoke *
 	} else {
 		candidate = smoke.candidate
 	}
-	if spec.Runtime != "docker" || spec.DaemonID != candidate.Runtime.DaemonID || spec.Endpoint != candidate.Runtime.Endpoint ||
+	if spec.DaemonID != candidate.Runtime.DaemonID || spec.Endpoint != candidate.Runtime.Endpoint ||
 		spec.GatewayImage != candidate.GatewayImage || spec.ClientImage != candidate.ClientImage ||
 		// The preflight qualifies the client image itself, so it may never run a
 		// project's layers on top of one.
