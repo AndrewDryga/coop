@@ -308,6 +308,36 @@ func cachedGitView(gitDir, commonDir string) (*gitView, error) {
 	return view, nil
 }
 
+// removeGitView drops this process's and the disk's view of gitDir. A view is named by its git
+// dir's path alone, so one left behind would hand its rebase state and HEAD to the next repository
+// made at that path. Nothing under the view root is followed.
+func removeGitView(gitDir string) error {
+	gitViewsMu.Lock()
+	defer gitViewsMu.Unlock()
+	delete(gitViews, gitDir)
+	path := gitViewsRoot
+	if path == "" {
+		var err error
+		if path, err = GitViewRoot(); err != nil {
+			return err
+		}
+	}
+	root, err := os.OpenRoot(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	sum := sha256.Sum256([]byte(gitDir))
+	name := hex.EncodeToString(sum[:8])
+	if info, err := root.Lstat(name); err != nil || !info.IsDir() {
+		return nil
+	}
+	return root.RemoveAll(name)
+}
+
 // RepositoryRoot is the folder holding the nearest `.git` at or above dir, by the rules gitDirsOf
 // follows, so the folder Coop takes for a project and the git dir its views read never disagree.
 // ok is false when no folder up to the filesystem root holds one.

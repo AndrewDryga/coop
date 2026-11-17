@@ -261,6 +261,11 @@ func Destroy(repo, name string) error {
 	if !isolated {
 		_ = GitRefCommand(context.Background(), repo, "branch", "-q", "-D", "review/"+name).Run() // ordinary forks own this parent ref; isolated forks do not
 	}
+	// A new fork of this name gets the same git dir path, and so the same git view.
+	viewGitDir := ""
+	if real, err := filepath.EvalSymlinks(Workspace(repo, name)); err == nil {
+		viewGitDir = filepath.Join(real, ".git")
+	}
 	// Through the forks folder's own handle: a box that replaced the folder with a link must not
 	// make this remove a folder of the same name somewhere else.
 	forks, err := openForkHome(repo)
@@ -279,5 +284,9 @@ func Destroy(repo, name string) error {
 	if entries, _ := readFolder(home); len(entries) == 0 {
 		_ = os.Remove(home)
 	}
-	return RemoveLeftoverRecordsLocked(repo, name, identity)
+	var viewErr error
+	if viewGitDir != "" {
+		viewErr = removeGitView(viewGitDir)
+	}
+	return errors.Join(viewErr, RemoveLeftoverRecordsLocked(repo, name, identity))
 }

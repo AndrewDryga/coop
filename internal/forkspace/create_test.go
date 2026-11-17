@@ -358,3 +358,40 @@ func TestExcludeRejectsGitEntrySymlinkedToDevice(t *testing.T) {
 		t.Fatal("device-backed .git symlink was accepted")
 	}
 }
+
+// A view is named by its git dir's path, which a new fork of the same name reuses: destroying a
+// fork drops its view, so the new fork inherits no rebase the old one left there.
+func TestDestroyDropsTheForkGitView(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	t.Cleanup(CloseGitViews)
+	repo := committedSetupRepo(t)
+	ws, err := Setup(repo, "again")
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, _, err := openGitView(t.Context(), ws, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(view.dir, "rebase-merge"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Destroy(repo, "again"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(view.dir); !os.IsNotExist(err) {
+		t.Fatalf("the destroyed fork's view is still there: %v", err)
+	}
+	if ws, err = Setup(repo, "again"); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := openGitView(t.Context(), ws, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.operationInFlight() {
+		t.Fatal("the new fork inherited the old fork's rebase")
+	}
+}
