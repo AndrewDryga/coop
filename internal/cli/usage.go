@@ -132,13 +132,18 @@ func (a *app) cmdUsage(args []string) (int, error) {
 		timer := time.AfterFunc(time.Second, func() { ui.Note("Reading usage history on this computer…") })
 		slowNote = func() { timer.Stop() }
 	}
-	var wg sync.WaitGroup
+	// The note is about reading history, so it stops when the last history is read: a slow quota
+	// lookup after that is waiting on the network, not on this computer.
+	var wg, histories sync.WaitGroup
 	workers := make(chan struct{}, 4)
 	for i := range rows {
 		row := &rows[i]
 		wg.Add(1)
+		histories.Add(1)
 		go func() {
 			defer wg.Done()
+			historyRead := sync.OnceFunc(histories.Done)
+			defer historyRead()
 			select {
 			case workers <- struct{}{}:
 				defer func() { <-workers }()
@@ -153,6 +158,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 				row.history.Available = row.history.Available || history.Available
 				row.history.Partial = row.history.Partial || history.Partial || unlisted.partial(row.provider)
 			}
+			historyRead()
 			if row.shared || target.Account() != "" && row.account != target.Account() {
 				return
 			}
@@ -180,6 +186,10 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			}
 		}()
 	}
+	go func() {
+		histories.Wait()
+		slowNote()
+	}()
 	wg.Wait()
 	slowNote()
 	// Only an uninterrupted check of every provider whose root listing reported no failure can tell
