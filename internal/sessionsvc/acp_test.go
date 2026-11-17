@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -4116,5 +4117,26 @@ func TestSessionACPStopKillsResidualGroupAfterLeaderExits(t *testing.T) {
 	}
 	if err := process.stop(); err != nil {
 		t.Fatalf("second stop: %v", err)
+	}
+}
+
+func TestReadSessionACPLineReportsAFrameCutOffByExitAsEOF(t *testing.T) {
+	reader := bufio.NewReaderSize(strings.NewReader("{\"a\":1}\r\n{\"trunc"), 16)
+	line, err := readSessionACPLine(reader)
+	if err != nil || string(line) != `{"a":1}` {
+		t.Fatalf("first frame = %q, %v", line, err)
+	}
+	// A child killed mid-frame must surface as a closed child, whose failure carries the
+	// exit status, never as a malformed frame.
+	if line, err := readSessionACPLine(reader); !errors.Is(err, io.EOF) || line != nil {
+		t.Fatalf("cut-off frame = %q, %v; want EOF", line, err)
+	}
+}
+
+func TestReadSessionACPLineJoinsFramesLongerThanItsBuffer(t *testing.T) {
+	long := strings.Repeat("x", 40)
+	reader := bufio.NewReaderSize(strings.NewReader(long+"\n"), 16)
+	if line, err := readSessionACPLine(reader); err != nil || string(line) != long {
+		t.Fatalf("long frame = %q, %v", line, err)
 	}
 }

@@ -3290,22 +3290,24 @@ func readSessionACPFrames(reader io.Reader, stop <-chan struct{}, frames chan<- 
 func readSessionACPLine(reader *bufio.Reader) ([]byte, error) {
 	var line []byte
 	for {
-		part, prefix, err := reader.ReadLine()
-		if len(part) > 0 {
-			line = append(line, part...)
-			if len(line) > sessionACPFrameLimit {
-				return nil, acpFailure(sessionACPProtocolError, "ACP frame exceeded its bound")
-			}
+		// ReadLine hands back a final unterminated fragment as if it were a whole line.
+		part, err := reader.ReadSlice('\n')
+		line = append(line, part...)
+		if err == nil {
+			line = bytes.TrimSuffix(line[:len(line)-1], []byte{'\r'})
+		}
+		if len(line) > sessionACPFrameLimit {
+			return nil, acpFailure(sessionACPProtocolError, "ACP frame exceeded its bound")
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
 		}
 		if err != nil {
-			if errors.Is(err, io.EOF) && len(line) > 0 {
-				return nil, acpFailure(sessionACPProtocolError, "ACP frame was not newline terminated")
-			}
-			return line, err
+			// A child that died mid-frame closed its output: drop the fragment so the
+			// caller reports the exit instead of a malformed frame.
+			return nil, err
 		}
-		if !prefix {
-			return line, nil
-		}
+		return line, nil
 	}
 }
 
