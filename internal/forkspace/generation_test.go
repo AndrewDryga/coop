@@ -292,7 +292,7 @@ func TestForkGenerationRecoversAnchorPublishedBeforeRecord(t *testing.T) {
 	}
 	generation := Generation("fedcba9876543210fedcba9876543210")
 	record := generationRecord{Version: forkGenerationVersion, Name: "recover", Generation: generation,
-		WorkspaceAnchor: forkGenerationAnchorName("recover", generation), CreatedAt: time.Now().UTC()}
+		WorkspaceAnchor: forkGenerationAnchorName(generation), CreatedAt: time.Now().UTC()}
 	root, err := fsidentity.Create(forkGenerationBinding(repo, record, state))
 	if err != nil {
 		_ = state.Close()

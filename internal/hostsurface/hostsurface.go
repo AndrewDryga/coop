@@ -94,7 +94,7 @@ func classify(status, relPath string, includeCI bool) (reason string, automatic 
 		return "Runs when you use make.", false
 	case base == "justfile" || base == "taskfile.yml" || base == "taskfile.yaml":
 		return "Runs when you use just or task.", false
-	case base == ".mcp.json" || strings.HasSuffix(base, ".mcp.json") || base == "mcp.json":
+	case strings.HasSuffix(base, ".mcp.json") || base == "mcp.json":
 		return "Starts MCP server commands in your host agent session.", true
 	case hasSegment(p, ".claude"):
 		if base == "settings.json" || base == "settings.local.json" || hasSegment(p, "hooks") {

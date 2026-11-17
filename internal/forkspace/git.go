@@ -23,7 +23,7 @@ import (
 // TrustedSignArgs).
 //
 // A value coop reads then EXECUTES (or reads a host file from) — your editor, signing program,
-// global excludesfile — must not come from the agent-writable repo at all: those use gitGlobalOut
+// global excludesfile — must not come from the agent-writable repo at all: those use GlobalGitConfig
 // to read your trusted global config, never these helpers.
 //
 // The residual GitHardening alone can't blank (driver names are arbitrary: an in-tree
@@ -236,7 +236,7 @@ func gitOutputContext(ctx context.Context, dir string, args ...string) (string, 
 }
 
 // gitConfigContext reads one key of the repository's OWN config, on the real git dir: the value
-// is data coop reads, never something it executes (those come from gitGlobalOut), and the view
+// is data coop reads, never something it executes (those come from GlobalGitConfig), and the view
 // only carries the allowlisted operational subset.
 func gitConfigContext(ctx context.Context, dir, key string) (string, bool, error) {
 	raw, err := GitRefCommand(ctx, dir, "config", "--get", key).Output()
@@ -251,13 +251,6 @@ func gitConfigContext(ctx context.Context, dir, key string) (string, bool, error
 	return "", false, err
 }
 
-// gitGlobalOut reads from the host user's GLOBAL git config (`git config --global …`) — the
-// trusted scope an agent can't write — for any value coop reads then EXECUTES or reads a host file
-// from. The repo's own .git/config is agent-writable, so reading these from it would let a poisoned
-// repo redirect coop to run or exfiltrate whatever it names. Returns "" when unset or git is
-// unavailable.
-func gitGlobalOut(args ...string) string { return GlobalGitConfig(args...) }
-
 // ResignReflogMessage is the reflog message of Coop's host re-signing update, which replaces
 // commits with signed copies of the same trees; a review reads it back to map the old ids.
 const ResignReflogMessage = "coop: re-sign commits"
@@ -267,7 +260,7 @@ const ResignReflogMessage = "coop: re-sign commits"
 func WantsSigning() bool {
 	// Read from your GLOBAL config, never the agent-writable repo: a poisoned repo could otherwise
 	// force signing on so its planted gpg.program runs — and your signing preference is global anyway.
-	return gitGlobalOut("--bool", "--get", "commit.gpgsign") == "true"
+	return GlobalGitConfig("--bool", "--get", "commit.gpgsign") == "true"
 }
 
 // TrustedSignArgs returns the -c flags to sign the rebased commits with the host's key, every
@@ -283,7 +276,7 @@ func TrustedSignArgs() []string {
 		"-c", "user.signingkey=",
 		"-c", "gpg.ssh.defaultKeyCommand=",
 	}
-	format := gitGlobalOut("--get", "gpg.format")
+	format := GlobalGitConfig("--get", "gpg.format")
 	progKey, def := "gpg.program", "gpg"
 	switch format {
 	case "ssh":
@@ -294,15 +287,15 @@ func TrustedSignArgs() []string {
 	if format != "" {
 		args = append(args, "-c", "gpg.format="+format)
 	}
-	prog := gitGlobalOut("--get", progKey)
+	prog := GlobalGitConfig("--get", progKey)
 	if prog == "" {
 		prog = def // git's built-in default — set explicitly so the hardening's "=false" loses
 	}
 	args = append(args, "-c", progKey+"="+prog)
-	if key := gitGlobalOut("--get", "user.signingkey"); key != "" {
+	if key := GlobalGitConfig("--get", "user.signingkey"); key != "" {
 		args = append(args, "-c", "user.signingkey="+key)
 	} else if format == "ssh" {
-		if command := gitGlobalOut("--get", "gpg.ssh.defaultKeyCommand"); command != "" {
+		if command := GlobalGitConfig("--get", "gpg.ssh.defaultKeyCommand"); command != "" {
 			args = append(args, "-c", "gpg.ssh.defaultKeyCommand="+command)
 		}
 	}

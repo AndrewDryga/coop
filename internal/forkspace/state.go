@@ -273,21 +273,9 @@ func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			break
-		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
-			_ = f.Close()
-			return nil, err
-		}
-		select {
-		case <-ctx.Done():
-			_ = f.Close()
-			return nil, ctx.Err()
-		case <-time.After(25 * time.Millisecond):
-		}
+	if err := flockWaiting(ctx, f, syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, err
 	}
 	return func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

@@ -291,14 +291,6 @@ func decodeExecutionRecord(data []byte) (ExecutionRecord, error) {
 	return record, nil
 }
 
-func ensureExecutionDir(repo string) error {
-	root, err := OpenStateRoot(repo, executionFolder, true)
-	if err != nil {
-		return err
-	}
-	return root.Close()
-}
-
 func ensureServiceLockDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -451,7 +443,7 @@ func ServiceLaunchLockPath(repo string) (string, error) {
 }
 
 func launchLockPath(repo, name string) (string, error) {
-	registry, err := oldExecutionDir(repo)
+	registryRoot, err := executionRegistryRoot()
 	if err != nil {
 		return "", err
 	}
@@ -467,7 +459,7 @@ func launchLockPath(repo, name string) (string, error) {
 		return "", errors.New("service launch repository has no filesystem identity")
 	}
 	key := fmt.Sprintf("%x-%x", uint64(stat.Dev), uint64(stat.Ino))
-	return filepath.Join(filepath.Dir(registry), "service-locks", key+name), nil
+	return filepath.Join(registryRoot, "service-locks", key+name), nil
 }
 
 // launchHolderFolder has one empty file for each execution whose box holds the service launch lock now,
@@ -592,9 +584,6 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 	// Every record goes to the project's own registry, in Coop's private fork records, which it
 	// can always make.
 	registry := executionDir(repo)
-	if err := ensureExecutionDir(repo); err != nil {
-		return ExecutionRecord{}, err
-	}
 	id := newExecutionID()
 	token := ProcStartToken(os.Getpid())
 	record := ExecutionRecord{
@@ -694,9 +683,6 @@ func Executions(repo string) ([]ExecutionObservation, []error) {
 	problems = append(problems, oldExecutionRecords(repo)...)
 	for i := range observations {
 		observations[i].WaitingForServices = observations[i].Running && executionNoted(repo, launchWaiterFolder, observations[i].Record.ID)
-	}
-	if len(observations) > executionRecordCount {
-		problems = append(problems, fmt.Errorf("project execution registries exceed %d total records", executionRecordCount))
 	}
 	sort.Slice(observations, func(i, j int) bool {
 		if observations[i].Record.StartedAt.Equal(observations[j].Record.StartedAt) {

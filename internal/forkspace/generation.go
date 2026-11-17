@@ -78,7 +78,7 @@ func NewGeneration() Generation { return Generation(randid.Hex(16)) }
 
 func ValidGeneration(g Generation) bool { return forkGenerationRE.MatchString(string(g)) }
 
-func forkGenerationAnchorName(_ string, generation Generation) string {
+func forkGenerationAnchorName(generation Generation) string {
 	// The random generation is already unique within this repository. Keeping the human fork name
 	// out of the private filename means any name that fits its .generation.json record at NAME_MAX
 	// fits here too; the authenticated marker body still binds both name and generation.
@@ -95,7 +95,7 @@ func generationAnchorName(record generationRecord) string {
 		// mode/base too, so missing-record recovery cannot authorize a rewritten contract.
 		return "generation-" + string(record.Generation) + "-isolated-" + record.CreationBase + ".anchor"
 	}
-	return forkGenerationAnchorName(record.Name, record.Generation)
+	return forkGenerationAnchorName(record.Generation)
 }
 
 // sameDisk reports whether two existing folders are on one filesystem; tests replace it.
@@ -481,7 +481,6 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 	generation := NewGeneration()
 	record = generationRecord{
 		Version: forkGenerationVersion, Name: name, Generation: generation, CreatedAt: time.Now().UTC(),
-		WorkspaceAnchor: forkGenerationAnchorName(name, generation),
 	}
 	if isolated {
 		record.Version, record.Isolated = forkGenerationIsolatedVersion, true
@@ -507,13 +506,9 @@ func ensureGenerationLocked(repo, name string, isolated bool) (Identity, error) 
 		_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
 		return Identity{}, err
 	}
-	published, err := writeGenerationAtomicResult(repo, name, append(data, '\n'))
-	if err != nil {
-		// A rename followed by a failed directory sync is uncertain to this process but already
-		// visible to a retry. Keep the matching anchor so that published record remains recoverable.
-		if !published {
-			_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
-		}
+	if err := writeGenerationAtomic(repo, name, append(data, '\n')); err != nil {
+		// The record was never published, so nothing references the anchor.
+		_ = fsidentity.Retire(forkGenerationBinding(repo, record, state))
 		return Identity{}, err
 	}
 	return Identity{Name: name, Generation: generation}, nil
@@ -535,7 +530,7 @@ func recoverUnrecordedGeneration(repo, name string, state *os.Root) (Identity, b
 	}
 	generation := Generation(lines[2])
 	record := generationRecord{Version: forkGenerationVersion, Name: name, Generation: generation,
-		WorkspaceAnchor: forkGenerationAnchorName(name, generation), CreatedAt: time.Now().UTC()}
+		CreatedAt: time.Now().UTC()}
 	if lines[0] == "coop-fork-generation-v4-isolated" {
 		record.Version, record.Isolated = forkGenerationIsolatedVersion, true
 		record.CreationBase = lines[3]
@@ -558,26 +553,17 @@ func recoverUnrecordedGeneration(repo, name string, state *os.Root) (Identity, b
 	return Identity{Name: name, Generation: generation}, true, nil
 }
 
+// writeGenerationAtomic publishes one fully synced record by a single no-replace rename; an error
+// means the record was not published.
 func writeGenerationAtomic(repo, name string, data []byte) error {
-	_, err := publishGenerationAtomic(repo, name, data)
-	return err
-}
-
-func writeGenerationAtomicResult(repo, name string, data []byte) (bool, error) {
-	return publishGenerationAtomic(repo, name, data)
-}
-
-// publishGenerationAtomic reports whether the final rename happened. An error after publication
-// must not make a caller retire authority that the visible record still references.
-func publishGenerationAtomic(repo, name string, data []byte) (bool, error) {
 	state, err := OpenStateRoot(repo, "", true)
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer state.Close()
 	f, tmp, err := CreateTempIn(state, "."+name+".generation-")
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer func() {
 		if tmp != "" {
@@ -586,25 +572,25 @@ func publishGenerationAtomic(repo, name string, data []byte) (bool, error) {
 	}()
 	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
-		return false, err
+		return err
 	}
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
-		return false, err
+		return err
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
-		return false, err
+		return err
 	}
 	if err := f.Close(); err != nil {
-		return false, err
+		return err
 	}
 	// Creation refuses an existing authority path: one fully-synced inode, published with a single rename.
 	if err := PublishNoReplace(state, tmp, filepath.Base(GenerationPath(repo, name))); err != nil {
-		return false, err
+		return err
 	}
 	tmp = ""
-	return true, nil
+	return nil
 }
 
 // RemoveGenerationIfMatchesLocked fences fresh/rm cleanup. A stale command may never erase the
@@ -616,7 +602,7 @@ func RemoveGenerationIfMatchesLocked(repo string, expected Identity) error {
 	if errors.Is(err, os.ErrNotExist) {
 		if err := retireGenerationAnchor(repo, generationRecord{Version: forkGenerationVersion,
 			Name: expected.Name, Generation: expected.Generation,
-			WorkspaceAnchor: forkGenerationAnchorName(expected.Name, expected.Generation), CreatedAt: time.Unix(1, 0)}); err != nil {
+			WorkspaceAnchor: forkGenerationAnchorName(expected.Generation), CreatedAt: time.Unix(1, 0)}); err != nil {
 			return err
 		}
 		return nil
@@ -627,10 +613,8 @@ func RemoveGenerationIfMatchesLocked(repo string, expected Identity) error {
 	if record.Name != expected.Name || record.Generation != expected.Generation {
 		return errors.New("fork generation changed before removal")
 	}
-	if record.Version == forkGenerationVersion || record.Version == forkGenerationIsolatedVersion {
-		if err := retireGenerationAnchor(repo, record); err != nil {
-			return err
-		}
+	if err := retireGenerationAnchor(repo, record); err != nil {
+		return err
 	}
 	if state, err := OpenStateRoot(repo, "", false); err == nil {
 		removeErr := state.Remove(filepath.Base(GenerationPath(repo, expected.Name)))
