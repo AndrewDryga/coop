@@ -801,6 +801,21 @@ func (d *streamDecoder) rateLimit(rl *rateLimitInfo) {
 // result renders the iteration's closing summary, or its error.
 func (d *streamDecoder) result(ev *streamEvent) {
 	d.noteTerminal()
+	// The tally is kept for a failed attempt too: its tokens were spent, and outcome() reads
+	// failed before last, so keeping it does not turn a failure into a success.
+	res := &iterResult{Turns: ev.NumTurns, DurationMS: ev.DurationMS, SessionID: d.sessionID, BlindWaitSeconds: d.blindWaitSeconds}
+	res.ReportedDurationMS = intPtr(ev.DurationMS)
+	if ev.TotalCostUSD != nil {
+		res.CostUSD, res.ReportedCostUSD = *ev.TotalCostUSD, ev.TotalCostUSD
+	}
+	if ev.Usage != nil {
+		res.InTok, res.OutTok = ev.Usage.inputTotal(), ev.Usage.OutputTokens
+		res.FreshInTok = intPtr(ev.Usage.InputTokens)
+		res.CacheWriteTok = intPtr(ev.Usage.CacheCreationInputTokens)
+		res.CacheReadTok = intPtr(ev.Usage.CacheReadInputTokens)
+		res.ReportedOutTok = intPtr(ev.Usage.OutputTokens)
+	}
+	d.last = res
 	if ev.IsError {
 		d.failed = true
 		msg := strings.TrimSpace(ev.Result)
@@ -815,22 +830,13 @@ func (d *streamDecoder) result(ev *streamEvent) {
 		return
 	}
 	dur := (time.Duration(ev.DurationMS) * time.Millisecond).Round(time.Second)
-	res := &iterResult{Turns: ev.NumTurns, DurationMS: ev.DurationMS, SessionID: d.sessionID, BlindWaitSeconds: d.blindWaitSeconds}
-	res.ReportedDurationMS = intPtr(ev.DurationMS)
 	line := fmt.Sprintf("· %d turns · %s", ev.NumTurns, dur)
 	if ev.TotalCostUSD != nil {
-		res.CostUSD, res.ReportedCostUSD = *ev.TotalCostUSD, ev.TotalCostUSD
 		line += fmt.Sprintf(" · $%.2f", *ev.TotalCostUSD)
 	}
 	if ev.Usage != nil {
-		res.InTok, res.OutTok = ev.Usage.inputTotal(), ev.Usage.OutputTokens
-		res.FreshInTok = intPtr(ev.Usage.InputTokens)
-		res.CacheWriteTok = intPtr(ev.Usage.CacheCreationInputTokens)
-		res.CacheReadTok = intPtr(ev.Usage.CacheReadInputTokens)
-		res.ReportedOutTok = intPtr(ev.Usage.OutputTokens)
 		line += " · " + tokenUsageBreakdown(res)
 	}
-	d.last = res
 	d.emit(d.palette.Dim(cleanDiagnosticLine(line)))
 	// The final message, in case it carries a limit notice. Claude sends the last assistant text
 	// again as the result, and the tail already holds it.

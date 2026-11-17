@@ -375,6 +375,15 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 		}
 	}
 
+	// A failed attempt still spent tokens: its result keeps the reported cost and usage for
+	// telemetry, and the outcome stays failed.
+	var failedOut, failedTail bytes.Buffer
+	failed := newStreamDecoder(&failedOut, &failedTail, "", "", "")
+	_, _ = failed.Write([]byte(`{"type":"result","subtype":"error","is_error":true,"result":"API Error: 500","num_turns":4,"total_cost_usd":0.42,"usage":{"input_tokens":100,"output_tokens":50}}` + "\n"))
+	if last := failed.lastIterResult(); failed.streamOutcome() != streamFailed || last == nil || last.CostUSD != 0.42 || last.OutTok != 50 {
+		t.Errorf("failed result = %v / %+v, want streamFailed with its cost and tokens", failed.streamOutcome(), last)
+	}
+
 	// Informational statuses every run emits must not trip the detector.
 	for _, st := range []string{"allowed", "warning", "queued"} {
 		var o, tl bytes.Buffer
