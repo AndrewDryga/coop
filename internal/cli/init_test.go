@@ -771,6 +771,11 @@ func TestInitEscapesNamesABoxChose(t *testing.T) {
 			write(t, repo, name+"/compose.yml", "services: [\n")
 			write(t, repo, ".agent/project.yaml", "box:\n  compose: "+yamlName+"/compose.yml\"\n")
 		}, "Fix " + shown + "/compose.yml, then run coop init --services again."},
+		// A valid file coop's edit cannot follow is coop's limit: no "Fix" for a file that is fine.
+		{"a box.compose it cannot place a service in", []string{"--services", "postgres"}, func(t *testing.T, repo string) {
+			write(t, repo, name+"/compose.yml", "services:\n    web:\n        image: nginx:alpine\n")
+			write(t, repo, ".agent/project.yaml", "box:\n  compose: "+yamlName+"/compose.yml\"\n")
+		}, "Add the services to " + shown + "/compose.yml by hand."},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			repo := initializedProject(t)

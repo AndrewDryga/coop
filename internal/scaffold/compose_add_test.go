@@ -137,6 +137,45 @@ func TestAddComposeServicesPreservesConfiguration(t *testing.T) {
 	}
 }
 
+// A volume the project already declares belongs to it, like a service name: a second pgdata key is
+// a file Docker Compose refuses, and two databases on one volume would mix their data.
+func TestAddComposeServicesRefusesATakenVolumeName(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, "compose.yml")
+	body := "services:\n  pg:\n    image: postgres:16\n    volumes: [\"pgdata:/var/lib/postgresql/data\"]\nvolumes:\n  pgdata:\n"
+	writeComposeFixture(t, path, body)
+	out, err := AddComposeServices(repo, "compose.yml", []string{"postgres"})
+	var collision *ComposeCollision
+	if !errors.As(err, &collision) || !collision.Volume || collision.Name != "pgdata" || len(out.Added) != 0 {
+		t.Fatalf("a taken volume name = %+v, %v; want a volume collision on pgdata", out, err)
+	}
+	if got := readComposeFixture(t, path); got != body {
+		t.Fatalf("refused addition changed the file:\n%s", got)
+	}
+}
+
+// A valid file whose layout the text edit cannot follow is refused as coop's own limit, not as a
+// YAML error in the person's file with a line number from text coop built.
+func TestAddComposeServicesRefusesALayoutItCannotPlace(t *testing.T) {
+	for name, body := range map[string]string{
+		"four-space services":             "services:\n    web:\n        image: nginx:alpine\n",
+		"a comment on the services: line": "services: # app\n  web:\n    image: nginx:alpine\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			path := filepath.Join(repo, "compose.yml")
+			writeComposeFixture(t, path, body)
+			out, err := AddComposeServices(repo, "compose.yml", []string{"postgres"})
+			if !errors.As(err, new(*ComposePlacementError)) || len(out.Added) != 0 {
+				t.Fatalf("an edit that cannot be placed = %+v, %v; want a placement refusal", out, err)
+			}
+			if got := readComposeFixture(t, path); got != body {
+				t.Fatalf("refused addition changed the file:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestAddComposeServicesPublicationFailures(t *testing.T) {
 	for _, present := range []bool{false, true} {
 		t.Run(map[bool]string{false: "partial create", true: "partial replacement"}[present], func(t *testing.T) {

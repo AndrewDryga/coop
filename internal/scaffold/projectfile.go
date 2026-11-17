@@ -205,8 +205,9 @@ func subprojectEntries(names []string) ([]string, error) {
 //
 // The edit is surgical text, not a YAML re-marshal: project.yaml is a commented template that
 // documents every key, and round-tripping it through a YAML encoder would strip all of that.
-// Missing file, or a subprojects: block coop can't confidently locate → returns nothing and
-// changes nothing, so the caller's advisory stays the fallback.
+// Missing file, a subprojects: block coop can't confidently locate, or an edit that would not read
+// back as the old members plus the new → returns nothing and changes nothing, so the caller's
+// advisory stays the fallback.
 func RegisterSubprojects(repo string, detected []string) ([]string, error) {
 	return registerSubprojects(repo, detected, writeAndSync)
 }
@@ -247,8 +248,18 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 
 	// Case 1: a real `subprojects:` block — append after its last item, keeping the list sorted.
 	if at := indexOfLine(lines, "subprojects:"); at >= 0 {
+		// New items take the list's own indent ("- api", "    - api"), read off its first item.
+		prefix := "  - "
+		if at+1 < len(lines) {
+			if item := strings.TrimLeft(lines[at+1], " "); strings.HasPrefix(item, "- ") {
+				prefix = lines[at+1][:len(lines[at+1])-len(item)] + "- "
+			}
+		}
+		for i, entry := range entries {
+			entries[i] = prefix + strings.TrimPrefix(entry, "  - ")
+		}
 		end := at + 1
-		for end < len(lines) && strings.HasPrefix(lines[end], "  - ") {
+		for end < len(lines) && strings.HasPrefix(lines[end], prefix) {
 			end++
 		}
 		merged := append(append([]string{}, lines[at+1:end]...), entries...)
@@ -263,6 +274,14 @@ func registerSubprojects(repo string, detected []string, write scaffoldFileWrite
 		return nil, nil // hand-restructured file — leave it alone and let the caller advise
 	}
 	next := []byte(strings.Join(lines, "\n") + "\n")
+	// A text edit is a guess about the file's layout. Write it only when the result reads back as
+	// exactly the old members plus the missing ones; anything else would corrupt project.yaml for
+	// every command, so leave the file alone and let the caller advise.
+	after, err := project.Parse(next)
+	if err != nil || !slices.Equal(slices.Sorted(slices.Values(after.Subprojects)),
+		slices.Sorted(slices.Values(append(slices.Clone(pj.Subprojects), missing...)))) {
+		return nil, nil
+	}
 	if err := replaceProjectFile(before, project.File, next, write); err != nil {
 		return nil, err
 	}

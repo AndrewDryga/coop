@@ -26,15 +26,29 @@ type ComposeAddition struct {
 	Existing []string // catalog names already configured, in catalog order
 }
 
-// ComposeCollision is a service name the catalog wants that the project already uses for
-// something else. Coop will not rename or replace it: the name is the project's.
+// ComposeCollision is a service or volume name the catalog wants that the project already uses
+// for something else. Coop will not rename or replace it: the name is the project's, and a second
+// database sharing an existing volume would mix two services' data.
 type ComposeCollision struct {
 	Catalog string // the catalog service that could not be added
-	Name    string // the Compose service name already taken
+	Name    string // the Compose service or volume name already taken
+	Volume  bool   // Name is a volume, not a service
 }
 
 func (e *ComposeCollision) Error() string {
+	if e.Volume {
+		return fmt.Sprintf("the volume name %s is already declared in this file", e.Name)
+	}
 	return fmt.Sprintf("the name %s is already used by a different service", e.Name)
+}
+
+// ComposePlacementError is a Compose file that reads fine but whose layout coop's text edit cannot
+// follow — services indented by other than two spaces, a comment on the services: line. Nothing
+// was written, and the file itself needs no fix.
+type ComposePlacementError struct{}
+
+func (*ComposePlacementError) Error() string {
+	return "coop could not place the new service in this file's layout"
 }
 
 // ComposeParseError is a Compose file coop could not read. The line is the parser's, so the fix
@@ -107,6 +121,13 @@ func addComposeServices(repo, rel string, services []string, write scaffoldFileW
 	if err != nil {
 		return out, err
 	}
+	var declared struct {
+		Volumes map[string]any `yaml:"volumes"`
+	}
+	if err := yaml.Unmarshal(data, &declared); err != nil {
+		line, problem := yamlProblem(err)
+		return out, &ComposeParseError{Line: line, Problem: problem}
+	}
 	text := string(data)
 	for _, name := range ComposeServices {
 		if !slices.Contains(services, name) {
@@ -122,16 +143,33 @@ func addComposeServices(repo, rel string, services []string, write scaffoldFileW
 		case taken:
 			return ComposeAddition{}, &ComposeCollision{Catalog: name, Name: unit.service}
 		}
+		if _, used := declared.Volumes[unit.volume]; unit.volume != "" && used {
+			return ComposeAddition{}, &ComposeCollision{Catalog: name, Name: unit.volume, Volume: true}
+		}
 		text = spliceService(text, unit)
 		out.Added = append(out.Added, name)
 	}
 	if len(out.Added) == 0 {
 		return out, nil
 	}
-	// Re-read what the edit produced before it reaches disk: an unparseable Compose file would
-	// break `coop up` for a project that was working a moment ago.
-	if _, err := composeServiceImages([]byte(text)); err != nil {
-		return ComposeAddition{}, err
+	// Re-read what the edit produced before it reaches disk: a Compose file Docker Compose refuses
+	// would break `coop up` for a project that was working a moment ago. The generic decode reads
+	// every mapping, so a duplicate key anywhere fails; the edit must also keep every service and
+	// add the new ones. The original read fine, so a failure here is coop's placement, not the file.
+	var whole map[string]any
+	after, err := composeServiceImages([]byte(text))
+	if err != nil || yaml.Unmarshal([]byte(text), &whole) != nil {
+		return ComposeAddition{}, &ComposePlacementError{}
+	}
+	for service, image := range existing {
+		if got, kept := after[service]; !kept || got != image {
+			return ComposeAddition{}, &ComposePlacementError{}
+		}
+	}
+	for _, name := range out.Added {
+		if unit := composeCatalog[name]; after[unit.service] == "" {
+			return ComposeAddition{}, &ComposePlacementError{}
+		}
 	}
 	if err := replaceProjectFile(before, rel, []byte(text), write); err != nil {
 		return ComposeAddition{}, err

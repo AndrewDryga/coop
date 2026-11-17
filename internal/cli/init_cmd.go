@@ -502,6 +502,11 @@ func (a *app) addServices(repo string, services []string, chooser bool) (int, er
 		if refused := initUnreadableCoopignore(err, "coop init --services", "No services were changed."); refused != nil {
 			return 1, refused
 		}
+		if errors.As(err, new(*scaffold.ComposePlacementError)) {
+			// The file reads fine; only coop's edit of it did not, so there is nothing to fix in it.
+			return 1, initFailed("Could not add services to "+shown, sentence(err.Error()),
+				fmt.Sprintf("Add the services to %s by hand.", shown), "No services were changed.")
+		}
 		fix := fmt.Sprintf("Fix %s, then run coop init --services again.", shown)
 		if errors.As(err, new(scaffold.HiddenFile)) {
 			// The box can write box.compose, so the path, not the hidden file, is what to fix.

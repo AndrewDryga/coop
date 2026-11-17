@@ -207,6 +207,63 @@ func TestRegisterSubprojectsEditsInPlace(t *testing.T) {
 		}
 	})
 
+	// A list written at another indent is still a list: the new item joins it at the same indent,
+	// and the file reads back as the old members plus the new. Two-space items inserted under a
+	// column-0 list made YAML refuse the file; under a four-space list they folded the old items
+	// into one bogus member name.
+	for name, list := range map[string]string{"column-0 list": "- ", "four-space list": "    - "} {
+		t.Run("joins a "+name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			custom := "# members\nsubprojects:\n" + list + "infra\n" + list + "web\n\n# gate: make check\n"
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(custom), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			added, err := RegisterSubprojects(repo, []string{"web", "api", "infra"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(added, []string{"api"}) {
+				t.Errorf("added = %v, want [api]", added)
+			}
+			out := readProjectYAML(t, repo)
+			if want := "subprojects:\n" + list + "api\n" + list + "infra\n" + list + "web\n"; !strings.Contains(out, want) {
+				t.Errorf("want the new member at the list's own indent:\n%s", out)
+			}
+			pj, err := project.Parse([]byte(out))
+			if err != nil {
+				t.Fatalf("project.yaml no longer loads: %v\n%s", err, out)
+			}
+			if !slices.Equal(slices.Sorted(slices.Values(pj.Subprojects)), []string{"api", "infra", "web"}) {
+				t.Errorf("subprojects read back %q, want [api infra web]", pj.Subprojects)
+			}
+		})
+	}
+
+	t.Run("leaves a file alone when the edit would not read back", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// The list's items are block scalars spanning lines: a line edit cannot place a new one.
+		custom := "subprojects:\n  - >-\n    infra\n"
+		if err := os.WriteFile(filepath.Join(repo, ".agent", "project.yaml"), []byte(custom), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		added, err := RegisterSubprojects(repo, []string{"infra", "web"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(added) != 0 {
+			t.Errorf("added %v to a list it could not edit", added)
+		}
+		if out := readProjectYAML(t, repo); out != custom {
+			t.Errorf("file was rewritten:\n%s", out)
+		}
+	})
+
 	t.Run("leaves a hand-restructured file alone", func(t *testing.T) {
 		repo := t.TempDir()
 		os.MkdirAll(filepath.Join(repo, ".agent"), 0o755)
