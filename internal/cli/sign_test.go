@@ -685,6 +685,33 @@ func TestSignUnpushedNeverRewritesPushedCommits(t *testing.T) {
 	}
 }
 
+// A session in a fork leaves its commits unsigned, because merging the fork signs them. The same
+// session in an ordinary repository signs what it committed.
+func TestSignOnBoxExitLeavesAForkToItsMerge(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("config", "--global", "commit.gpgsign", "true") // you sign by default; the repo's own commits stay unsigned
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	preHead := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "box commit")
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	a := &app{cfg: &config.Config{ConfigDir: t.TempDir()}}
+
+	if out := captureStderr(t, func() { a.signOnBoxExit(repo, preHead, true) }); out != "" {
+		t.Errorf("a fork session's exit printed %q, want nothing", out)
+	}
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != head || hasSignature(repo, "HEAD") {
+		t.Fatalf("a fork session's exit rewrote %s into %s (signed: %v); the merge signs a fork's commits", head, got, hasSignature(repo, "HEAD"))
+	}
+
+	captureStderr(t, func() { a.signOnBoxExit(repo, preHead, false) })
+	if !hasSignature(repo, "HEAD") {
+		t.Fatal("a session in an ordinary repository left its commit unsigned")
+	}
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD~1"); got != preHead {
+		t.Errorf("signing the session's commit moved its base from %s to %s", preHead, got)
+	}
+}
+
 // A box-exit warning carries the signer's own cause. Only the signing rebase failing adds the advice
 // to fix the Git signing setup: a refusal, structured or plain, has nothing to do with that setup.
 func TestSignOnBoxExitWarningFitsTheCause(t *testing.T) {

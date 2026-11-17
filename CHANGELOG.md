@@ -8,6 +8,9 @@
   have enough free disk above its storage reserve, it now answers a checkpoint or a new restore
   with `503 storage_unavailable` and records the operation as failed. It used to drop the
   connection and leave the operation reserved.
+- **A session inside a fork leaves signing to the merge.** `coop claude`, `coop codex` and
+  `coop run` started inside a fork's folder re-signed the fork's new commits on exit. They no
+  longer do, because a fork's commits are signed when you merge it.
 
 ## 13.2.1
 
