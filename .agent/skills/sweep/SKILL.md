@@ -28,9 +28,10 @@ Build *to* them, then *check the diff against them*.
 - Set the runtime's persistent goal/tracker when it exists: do not stop until every scoped task is
   committed and archived or properly blocked, and both `00_todo/` and `10_in_progress/` are empty.
 - Read `AGENTS.md` in full (the gate **and** the contract), `.agent/tasks/README.md`,
-  and every `.agent/kb/rules/*.md` (the taste KB). In a box that offers the `coop-tasks` tools, call
-  `tasks_list`; if `coop` is on PATH, run `coop tasks`; otherwise inspect the queue state directories
-  directly to announce the open `00_todo/` count.
+  and the `.agent/kb/rules/README.md` index (open a rule card only when a task touches its scope).
+  In a box that offers the `coop-tasks` tools, call `tasks_list`; if `coop` is on PATH, run
+  `coop tasks`; otherwise inspect the queue state directories directly
+  to announce the open `00_todo/` count.
 
 ## 2. The loop — claim the next task, repeat until 00_todo/ and 10_in_progress/ are empty
 1. **Claim** — in a box with the `coop-tasks` tools, call `tasks_claim`; if `coop` is on PATH, run
