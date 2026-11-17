@@ -45,7 +45,7 @@ const firstDownloadTimeout = 6 * time.Hour
 
 // stagingInForeground is how long, in all, a create waits for the copies it began staging in the
 // background (backgroundStaging) before it is held and tried again (firstDownloadWaits). The
-// worker runs one command at a time: on a tenant install a create staging three moved
+// worker runs one mutation at a time: on a tenant install a create staging three moved
 // repositories held it for 18 minutes, and every routing turn sent meanwhile waited; with each
 // repository's grant and wait still in the foreground, one staging 17 held routing for 70 s
 // (2026-10-14).
@@ -102,7 +102,7 @@ type privateJobSourceStager struct {
 	gitForTest              func(context.Context, string, string, string, ...string) (string, error)
 	// A repository's first download, its whole history, runs in the background when set, as
 	// NewJobSourceStager sets it: a large one takes far longer than any command may hold the
-	// worker, which runs one command at a time. Later copies start from it and fetch only
+	// worker, which runs one mutation at a time. Later copies start from it and fetch only
 	// what is new. Unset, as tests build a stager, staging waits for it.
 	backgroundFirstDownload bool
 	downloadsMu             sync.Mutex
