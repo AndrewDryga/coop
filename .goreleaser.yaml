@@ -1,5 +1,5 @@
 # GoReleaser — cross-platform release binaries published to GitHub Releases on a
-# tag push. Validate locally with:  goreleaser release --snapshot --clean
+# tag push. Validate locally with:  make snapshot  (it skips the keyless signing step)
 version: 2
 
 project_name: coop
