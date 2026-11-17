@@ -855,7 +855,6 @@ func rollbackTrustedTaskMoves(states []trustedTaskMoveState) error {
 	var errs []error
 	for i := len(states) - 1; i >= 0; i-- {
 		state := &states[i]
-		restored[i] = true
 		dir := filepath.Join(state.move.Root, state.move.NewState, state.current.ID)
 		if !state.moved {
 			dir = state.current.Dir
@@ -2134,7 +2133,7 @@ func auditReviewedHead(record AuditReopenRecord) string {
 	return record.BaselineHead
 }
 
-func auditReviewedSubject(repo, id string, record AuditReopenRecord) (rawAuditCommit, error) {
+func auditReviewedSubject(repo string, record AuditReopenRecord) (rawAuditCommit, error) {
 	reviewed, err := auditReviewedHistory(repo, record)
 	if err != nil {
 		return rawAuditCommit{}, err
@@ -2164,8 +2163,8 @@ func auditReviewedHistory(repo string, record AuditReopenRecord) ([]rawAuditComm
 	return rawHistory, nil
 }
 
-func auditReviewedSubjectParent(repo, id string, record AuditReopenRecord) (string, error) {
-	subject, err := auditReviewedSubject(repo, id, record)
+func auditReviewedSubjectParent(repo string, record AuditReopenRecord) (string, error) {
+	subject, err := auditReviewedSubject(repo, record)
 	if err != nil {
 		return "", err
 	}
@@ -2539,7 +2538,7 @@ func auditReopenCompletionValid(repo, base, head, id string, record AuditReopenR
 	if err != nil {
 		return false
 	}
-	reviewedParent, err := auditReviewedSubjectParent(repo, id, record)
+	reviewedParent, err := auditReviewedSubjectParent(repo, record)
 	if err != nil {
 		return false
 	}
@@ -2664,7 +2663,7 @@ func rebaseBlockedAuditReopen(repo, head, id string, record AuditReopenRecord) (
 			"HEAD no longer contains %s: the task's commit or the commits the review recorded after it were rewritten, "+
 				"and a record moved past other work accepts no rewrite", where)
 	}
-	reviewedParent, err := auditReviewedSubjectParent(repo, id, reviewed)
+	reviewedParent, err := auditReviewedSubjectParent(repo, reviewed)
 	if err != nil {
 		return AuditReopenRecord{}, fmt.Errorf("resolve blocked audit subject parent for task %s: %w", id, err)
 	}

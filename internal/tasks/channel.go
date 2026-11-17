@@ -401,7 +401,7 @@ func CheckDecision(d Decision) error {
 // WriteDecision writes a task's decision.md in the shape `coop tasks block` seeds, filled in, with
 // the Resolution line left for the human. An existing decision.md is replaced: a blocked task
 // carries exactly one open question, and `coop tasks unblock` reads the first Resolution it finds.
-func WriteDecision(taskDir, id, title string, d Decision) error {
+func WriteDecision(taskDir, id string, d Decision) error {
 	if err := CheckDecision(d); err != nil {
 		return err
 	}
@@ -453,7 +453,7 @@ func ReplaceDecision(taskDir, id, title string, d Decision) (earlierAnswer strin
 			}
 		}
 	}
-	return earlierAnswer, WriteDecision(taskDir, id, title, d)
+	return earlierAnswer, WriteDecision(taskDir, id, d)
 }
 
 // TaskFileNames are the task-folder files the channel reads back for an agent, in order.

@@ -103,7 +103,7 @@ func TestANewQuestionKeepsTheOneNobodyAnsweredYet(t *testing.T) {
 	dir := filepath.Join(root, StateBlocked, "picked")
 	writeTaskFile(t, filepath.Join(dir, "task.md"), "# Picked\n")
 	first := Decision{Question: "Which database?", Why: "W", Options: []string{"A — Postgres"}, Recommendation: "A"}
-	if err := WriteDecision(dir, "picked", "Picked", first); err != nil {
+	if err := WriteDecision(dir, "picked", first); err != nil {
 		t.Fatal(err)
 	}
 	unanswered := readFile(t, filepath.Join(dir, "decision.md"))
@@ -322,7 +322,7 @@ func TestDecisionsShowTheQuestionOfANewAndAnOldDecision(t *testing.T) {
 	root := t.TempDir()
 	newDir := filepath.Join(root, StateBlocked, "pick-storage")
 	writeTaskFile(t, filepath.Join(newDir, "task.md"), "# Pick storage\n")
-	if err := WriteDecision(newDir, "pick-storage", "Pick storage", Decision{Question: "Where should uploads be stored?",
+	if err := WriteDecision(newDir, "pick-storage", Decision{Question: "Where should uploads be stored?",
 		Why: "Uploads outgrew one disk.", Options: []string{"A — disk", "B — object storage"}, Recommendation: "B — more than one machine."}); err != nil {
 		t.Fatal(err)
 	}

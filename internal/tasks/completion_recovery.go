@@ -73,7 +73,7 @@ func ParkUncommittedCompletion(task QueuedTask) error {
 			return rollback(err)
 		}
 	}
-	if err := WriteDecision(dir, id, task.Item.Title, Decision{
+	if err := WriteDecision(dir, id, Decision{
 		Question: "Is this task already satisfied, or does it still need work?",
 		Why:      "Two attempts claimed completion without a task-bound commit or an accepted no-change outcome. No source or Git history changed, so Coop preserved the task as unfinished and continued the queue.",
 		Options: []string{

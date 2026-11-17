@@ -501,7 +501,7 @@ func blockedPair(t *testing.T) (string, []decisionRef) {
 	for _, id := range []string{"alpha", "beta"} {
 		dir := filepath.Join(root, StateBlocked, id)
 		writeTaskFile(t, filepath.Join(dir, "task.md"), "# "+strings.ToUpper(id[:1])+id[1:]+"\n")
-		if err := WriteDecision(dir, id, id, Decision{Question: "Which " + id + "?", Why: "W", Options: []string{"A — a", "B — b"}, Recommendation: "B"}); err != nil {
+		if err := WriteDecision(dir, id, Decision{Question: "Which " + id + "?", Why: "W", Options: []string{"A — a", "B — b"}, Recommendation: "B"}); err != nil {
 			t.Fatal(err)
 		}
 		refs = append(refs, decisionRef{root: root, id: id})

@@ -32,7 +32,7 @@ func TestLintNamesAWaitThatNamesNoTask(t *testing.T) {
 		lintedTask(t, root, state, on, "")
 		lintedTask(t, root, StateTodo, "after-"+on, on)
 	}
-	if err := WriteDecision(filepath.Join(root, StateBlocked, "asked"), "asked", "asked", Decision{Question: "Which?", Why: "W", Options: []string{"A — a"}, Recommendation: "A"}); err != nil {
+	if err := WriteDecision(filepath.Join(root, StateBlocked, "asked"), "asked", Decision{Question: "Which?", Why: "W", Options: []string{"A — a"}, Recommendation: "A"}); err != nil {
 		t.Fatal(err)
 	}
 	var code int

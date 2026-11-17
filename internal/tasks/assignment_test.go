@@ -945,7 +945,7 @@ func TestResumedForkKeepsAQuestionTheProjectNeverSaw(t *testing.T) {
 	park := func(owner ForkTaskOwner, question string) {
 		t.Helper()
 		projected, _ := mustCurrentTask(t, owner.Projection, "decision")
-		if err := WriteDecision(projected.Dir, projected.ID, projected.Title, Decision{
+		if err := WriteDecision(projected.Dir, projected.ID, Decision{
 			Question: question, Why: "Only the owner can choose.", Options: []string{"this", "that"}, Recommendation: "this",
 		}); err != nil {
 			t.Fatal(err)

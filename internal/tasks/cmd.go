@@ -2622,7 +2622,7 @@ func saveRequestedDecision(taskDir, id, title string, d Decision) (earlierAnswer
 	case string(existing) != renderDecisionScaffold(id, title):
 		return "", fmt.Errorf("%w — edit %s instead", errDecisionAlreadyWritten, displayPath(filepath.Join(taskDir, "decision.md")))
 	}
-	return "", WriteDecision(taskDir, id, title, d)
+	return "", WriteDecision(taskDir, id, d)
 }
 
 // TaskResolution returns the saved human answer, if any, using the bounded metadata reader.

@@ -28,7 +28,7 @@ func acceptForkDecision(t *testing.T, repo, root string, assignment ForkAssignme
 	if !ok {
 		t.Fatal("assigned projection is missing")
 	}
-	if err := WriteDecision(projected.Dir, projected.ID, projected.Title, Decision{
+	if err := WriteDecision(projected.Dir, projected.ID, Decision{
 		Question:       forkDecisionQuestion,
 		Why:            "Retrying may duplicate a partial write.",
 		Options:        []string{"A — retry the write", "B — leave it for manual repair"},
@@ -245,7 +245,7 @@ func TestMultiQueueDecisionListingNamesForkOnUnwrittenQuestion(t *testing.T) {
 	firstRoot := filepath.Join(repo, ".agent", "tasks")
 	secondRoot := filepath.Join(repo, "packages", "service", ".agent", "tasks")
 	ordinary := taskForLease(t, firstRoot, StateBlocked, "ordinary")
-	if err := WriteDecision(ordinary.Dir, ordinary.ID, ordinary.Title, Decision{
+	if err := WriteDecision(ordinary.Dir, ordinary.ID, Decision{
 		Question: "Keep the ordinary task?", Why: "It is waiting for direction.", Options: []string{"Keep it"}, Recommendation: "Keep it",
 	}); err != nil {
 		t.Fatal(err)
@@ -321,7 +321,7 @@ func TestForkStopCarriesAQuestionTheForkJustParked(t *testing.T) {
 	park := func(owner ForkTaskOwner, question string) {
 		t.Helper()
 		projected, _ := mustCurrentTask(t, owner.Projection, "assigned")
-		if err := WriteDecision(projected.Dir, projected.ID, projected.Title, Decision{
+		if err := WriteDecision(projected.Dir, projected.ID, Decision{
 			Question: question, Why: "Only the owner can choose.", Options: []string{"this", "that"}, Recommendation: "this",
 		}); err != nil {
 			t.Fatal(err)

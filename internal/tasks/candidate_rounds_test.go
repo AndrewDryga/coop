@@ -113,7 +113,7 @@ func TestForkCandidateRoundsRequireFreshReviewAndRetainHistory(t *testing.T) {
 		git(t, f.workspace, "commit", "-qm", "fix reviewed candidate")
 		head, tree = f.headTree()
 		transition, err := SupersedeStaleForkCandidate(f.repo, f.identity, head)
-		if err != nil || !transition.Started || transition.PreviousRound != round-1 || transition.NextRound != round {
+		if err != nil || !transition.Started {
 			t.Fatalf("round %d supersession = %+v, %v", round, transition, err)
 		}
 		if _, active, err := ReadForkCandidate(f.repo, f.identity); err != nil || active {

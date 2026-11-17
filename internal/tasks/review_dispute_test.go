@@ -41,7 +41,7 @@ func TestReviewDisputeRollbackAndHumanUnblock(t *testing.T) {
 	move := TrustedTaskMove{Root: root, Task: done, NewState: StateBlocked, Reopen: &audit, PendingReview: pending,
 		MetadataNames: []string{"state.md", "log.md", "decision.md"},
 		AfterMove: func(dir string) error {
-			if err := WriteDecision(dir, done.ID, done.Title, Decision{Question: "Require evidence?", Why: "Repeated finding", Options: []string{"Run checks"}, Recommendation: "Run checks"}); err != nil {
+			if err := WriteDecision(dir, done.ID, Decision{Question: "Require evidence?", Why: "Repeated finding", Options: []string{"Run checks"}, Recommendation: "Run checks"}); err != nil {
 				return err
 			}
 			return injected

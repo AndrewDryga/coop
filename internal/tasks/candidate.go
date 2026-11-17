@@ -495,9 +495,7 @@ func returnForkCandidateOwnersToReview(candidate ForkCandidate) error {
 // merely finish partially returned owners report Started=false, so operators do not see duplicate
 // round announcements.
 type ForkCandidateSupersession struct {
-	Started       bool
-	PreviousRound uint64
-	NextRound     uint64
+	Started bool
 }
 
 func unfinishedForkLandError(name string) error {
@@ -544,7 +542,7 @@ func SupersedeStaleForkCandidate(repo string, identity forkspace.Identity, head 
 	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", candidate.Head, head); err != nil {
 		return ForkCandidateSupersession{}, errors.New("fork HEAD no longer descends from its reviewed candidate; merge or discard it before more work")
 	}
-	transition := ForkCandidateSupersession{PreviousRound: manifest.Current.Round, NextRound: manifest.Current.Round + 1}
+	var transition ForkCandidateSupersession
 	if manifest.Phase == forkCandidateActive {
 		manifest.Phase, manifest.UpdatedAt = forkCandidateSuperseding, time.Now().UTC()
 		if err := writeForkCandidateManifest(repo, manifest); err != nil {
