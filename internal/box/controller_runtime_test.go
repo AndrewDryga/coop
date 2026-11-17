@@ -129,6 +129,43 @@ func TestControllerReviewRequiresOnlyTheSelectedStack(t *testing.T) {
 	}
 }
 
+// The gate under review may delete or break its compose file. The review stack must still go, so it
+// is removed by its project label rather than by a `compose down` that reads the file again.
+func TestReviewStackIsRemovedWhenTheGateDeletesItsComposeFile(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".agent/project.yaml"), []byte("review:\n  compose: review.yml\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	reviewFile := filepath.Join(repo, "review.yml")
+	if err := os.WriteFile(reviewFile, []byte("services:\n  db:\n    image: postgres:18\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(t.TempDir(), "calls")
+	shim := filepath.Join(t.TempDir(), "rt")
+	script := "#!/bin/sh\necho \"$*\" >> " + strconv.Quote(calls) + "\ncase \"$*\" in\n" +
+		"  *'config --services'*) echo db ;;\n" +
+		"  'run --rm'*) rm -f " + strconv.Quote(reviewFile) + " ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(shim, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{BaseImage: "test-box", ConfigDir: t.TempDir(), HomeInBox: "/home/node", Egress: "open"}
+	code, err := Run(cfg, runtime.Runtime{Name: shim}, RunSpec{Repo: repo, Image: "test-box", ControllerJob: true, Review: true, Batch: true, Quiet: true, Cmd: []string{"true"}})
+	recorded, _ := os.ReadFile(calls)
+	if err != nil || code != 0 {
+		t.Fatalf("Run = (%d, %v), want the stack removed without error\ncalls:\n%s", code, err, recorded)
+	}
+	if _, statErr := os.Stat(reviewFile); !os.IsNotExist(statErr) {
+		t.Fatalf("the gate did not run before teardown: %v\ncalls:\n%s", statErr, recorded)
+	}
+	if want := "label=com.docker.compose.project=" + ComposeProject(repo); !strings.Contains(string(recorded), want) {
+		t.Fatalf("the review stack was not removed by %s:\n%s", want, recorded)
+	}
+}
+
 func TestControllerWorkRefusesSharedServiceVolumesBeforeTheCommand(t *testing.T) {
 	for _, declaration := range []string{"external: true", "name: shared-database"} {
 		t.Run(declaration, func(t *testing.T) {

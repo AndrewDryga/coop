@@ -2,8 +2,8 @@
 name: services-teardown-needs-the-workspace
 description: sibling-service teardown is driven by the workspace's own compose file, so stopping services after deleting the workspace is a silent no-op
 subsystem: box/services
-sources: [internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
-updated: 2026-11-04
+sources: [internal/box/run.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/box/services.go, internal/box/repo.go, internal/forkctl/rm.go, internal/forkspace/create.go]
+updated: 2026-11-17
 ---
 Sibling services are brought up per box (`box.Run` → `startServicesFileContext`) and are deliberately
 **not** brought down when a box exits: the stack is idempotent and reused across iterations, so a
@@ -35,12 +35,15 @@ box-aware wrapper that runs teardown first and then calls it. Anything that reac
 
 Two related seams behave correctly already and are worth copying rather than duplicating:
 - A session's discard doesn't go through that wrapper. A controller job with no project runtime has
-  no services to stop: its boxes never start the repository's services (`ControllerJob`), its project
+  no Work services to stop: its boxes never start the repository's services (`ControllerJob`), its project
   file must not decide or fail worker cleanup, and Compose refuses a non-local Docker endpoint such as
   a dind worker's `tcp://`. A job with a project runtime stops its labeled services first
   (`StopControllerServices` in `executeDiscard`). Either way `discardSessionWorkspace`
   (`internal/sessionsvc/workspace.go`) calls the leaf `forkspace.Destroy` directly on purpose — the
-  one sanctioned direct caller, and only because teardown is already settled.
+  one sanctioned direct caller, and only because teardown is already settled. A controller REVIEW
+  may still start the candidate's `review.compose` stack; `box.Run` removes it itself when the box
+  ends, by label (`StopControllerServices`), because the gate under review may have deleted or broken
+  the file.
 - `StopSessionServices` removes by immutable compose LABELS instead of the file, so an agent's
   interrupted edit to `compose.yml` cannot block cleanup. Prefer that shape when the file's
   trustworthiness — not its existence — is the risk.
@@ -55,6 +58,7 @@ inspection and non-forced removal honor that same endpoint/daemon. In-use networ
 data volumes remain; inspection/removal failures stay errors rather than false stop success.
 
 ## Changelog
+- 2026-11-17 — a controller review's stack is now removed by label when its box ends; `compose down` refused once the gate had deleted the review file, and nothing removed the stack later.
 - 2026-11-04 — the session service no longer downs services for a job-less session, which could never reach discard; the seam now says what each kind of job does.
 - 2026-11-03 — `coop down` with no default Compose file says "No services to stop" and exits 0
   only when `box.DevelopmentServicesRunning` (a label query, not the file) finds nothing running,

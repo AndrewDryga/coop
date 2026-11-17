@@ -1663,15 +1663,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				runErr = errors.Join(runErr, failure)
 			}
 		}
-		// A review's stack is as disposable as its candidate: containers, network and volumes.
+		// A review's stack is as disposable as its candidate: containers, network and volumes. It is
+		// removed by its project label, because the gate under review may have deleted or broken the
+		// compose file that `compose down` would have to read again.
 		if reviewServicesAttempted {
-			var cleanupErr error
-			if spec.ControllerRuntime != nil {
-				cleanupErr = StopControllerServices(context.Background(), rt, spec.Repo, true)
-			} else {
-				cleanupErr = DownServicesFile(rt, spec.Repo, composeFile, true, io.Discard, io.Discard, privateRoots...)
-			}
-			runErr = errors.Join(runErr, cleanupErr)
+			runErr = errors.Join(runErr, StopControllerServices(context.Background(), rt, spec.Repo, true))
 		} else if controllerServicesAttempted && runErr != nil {
 			runErr = errors.Join(runErr, StopControllerServices(context.Background(), rt, spec.Repo, false))
 		}
