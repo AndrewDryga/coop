@@ -495,6 +495,20 @@ func TestRetireForkApprovalsRetiresOnlyTheForks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hiddenRecord := func(repo string) string {
+		t.Helper()
+		if err := withHiddenFilesLock(t.Context(), repo, func() error {
+			return writeHiddenFiles(repo, hiddenFilesRecord{Version: hiddenFilesVersion, Files: []hiddenFile{{Ino: 1, Path: ".env"}}})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		path, err := hiddenFilesPath(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	forkHidden, parentHidden := hiddenRecord(fork), hiddenRecord(parent)
 
 	for range 2 { // a retry after a finished retirement finds nothing left and succeeds
 		if err := RetireForkApprovals(t.Context(), parent, fork); err != nil {
@@ -511,7 +525,7 @@ func TestRetireForkApprovalsRetiresOnlyTheForks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{casePath, filepath.Join(root, "service-"+anchor+".anchor"), filepath.Join(fork, serviceApprovalMarker), filepath.Join(fork, networkstate.ProjectApprovalMarker)} {
+	for _, path := range []string{casePath, filepath.Join(root, "service-"+anchor+".anchor"), filepath.Join(fork, serviceApprovalMarker), filepath.Join(fork, networkstate.ProjectApprovalMarker), forkHidden, forkHidden + ".lock"} {
 		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("retirement left %s: %v", path, err)
 		}
@@ -524,6 +538,9 @@ func TestRetireForkApprovalsRetiresOnlyTheForks(t *testing.T) {
 	}
 	if _, ok := ApprovedServiceSecrets(parent, parentFile, compose); !ok {
 		t.Error("retiring the fork's approvals removed the parent's service approval")
+	}
+	if _, err := os.Lstat(parentHidden); err != nil {
+		t.Errorf("retiring the fork removed the parent's hidden-file record: %v", err)
 	}
 	if _, ok := ApprovedServiceSecrets(other, otherFile, compose); !ok {
 		t.Error("retiring the fork's approvals removed another project's service approval")

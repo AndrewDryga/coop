@@ -2,8 +2,8 @@
 name: secret-shadow-walk
 description: every launch walks the whole checkout from a real-folder root (a linked root and a link to home are refused, though a box that writes the root's parent can still swap it), gitignored task folders included, to hide secrets; its cost grows with local clutter, so the decider remembers directory verdicts, lstats for .coopignore and pre-filters its globs; the .coopignore files above the repository, short of home, apply too
 subsystem: box
-sources: [internal/box/filesystem_walk.go, internal/box/filesystem_snapshot.go, internal/box/mounts.go, internal/box/hidden_files.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
-updated: 2026-11-02
+sources: [internal/box/filesystem_walk.go, internal/box/filesystem_snapshot.go, internal/box/mounts.go, internal/box/hidden_files.go, internal/box/fork_approvals.go, internal/shadowpath/shadowpath.go, internal/shadowpath/homepath_darwin.go, internal/shadowpath/homepath_linux.go, internal/shadowpath/shadowpath_test.go, internal/box/run.go, internal/box/repo.go, internal/box/sourcecopies.go, internal/forkctl/merge.go, internal/sessionsvc/review_scan.go, tools/lifecyclebench]
+updated: 2026-11-17
 ---
 
 The mount backend uses `box.ComputeMounts`; qualified eBPF launches capture the same semantic
@@ -22,6 +22,8 @@ and folder, with the path the rules hid it at, in the host-private service state
 secret scanner, merge, review and init share — hides a remembered identity found at any other path,
 and its folders' contents with it. At its remembered path the rules decide again, so removing a
 rule still shows the file, which is then forgotten. A launch fails if it cannot write the record.
+Removing a fork deletes its record and lock (`RetireForkApprovals`), so a later checkout at the
+same path does not inherit its identities; records of other deleted checkouts stay.
 
 **The root must be a real folder.** `filepath.WalkDir` lstats its root and never follows a link,
 so a repository path that is itself a link was walked as one entry and bound whole: no decoy, no
@@ -221,3 +223,5 @@ and a clean clone 2.30 s; on 2026-10-04 the same checkout took 8.1 s.
   parent-writable limit, bind-by-path included, is stated (task
   2026-10-17-refuse-a-coop-repo-reached-through-a-link-that-r). Checked against box/repo.go,
   box/mounts.go and shadowpath.go.
+- 2026-11-17 — fork removal retires the fork's hidden-file record and lock (audit B2-13). Checked
+  against box/hidden_files.go and box/fork_approvals.go.

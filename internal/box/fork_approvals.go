@@ -113,6 +113,9 @@ func RetireForkApprovals(ctx context.Context, parent, fork string, exposedRoots 
 	if err := retireForkServiceApprovals(fork, serviceRoot); err != nil {
 		return err
 	}
+	if err := retireHiddenFiles(fork); err != nil {
+		return err
+	}
 	root, err := NetworkStatePath()
 	if err != nil {
 		return err
@@ -126,6 +129,21 @@ func RetireForkApprovals(ctx context.Context, parent, fork string, exposedRoots 
 	}
 	defer store.Close()
 	return store.RetireForkApprovals(ctx, fork, ComposeProject(fork)+"-filtered")
+}
+
+// retireHiddenFiles removes the record of what launches hid in a checkout, and its lock, so they do
+// not outlive it and a later checkout at the same path does not inherit its file identities.
+func retireHiddenFiles(repo string) error {
+	path, err := hiddenFilesPath(repo)
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{path, path + ".lock"} {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // retireForkServiceApprovals removes the service and case-exposure approvals filed under the
