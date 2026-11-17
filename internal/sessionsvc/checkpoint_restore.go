@@ -32,18 +32,20 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 		})
 	}
 	if req.SessionID == "" || req.ExpectedRevision <= 0 {
-		return fail(errors.New("restore session and revision are required"))
+		return fail(&session.Error{Code: session.CodeInvalidRequest, Detail: "restore session and revision are required"})
 	}
 	if err := req.Checkpoint.Validate(); err != nil {
-		return fail(err)
+		return fail(&session.Error{Code: session.CodeInvalidRequest, Detail: "checkpoint descriptor is invalid: " + err.Error()})
 	}
 	release, ok := s.beginWorkspaceMutation(ctx, req.SessionID)
 	if !ok {
 		return fail(&session.Error{Code: session.CodeInvalidSessionState, Detail: "restore requires a parked runtime"})
 	}
 	defer release()
-	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, req.SessionID, op.ID); err != nil || pending {
-		return fail(errors.Join(err, errors.New("another checkpoint restore must finish first")))
+	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, req.SessionID, op.ID); err != nil {
+		return fail(err)
+	} else if pending {
+		return fail(checkpointRefusal("another checkpoint restore must finish first"))
 	}
 	sess, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
@@ -125,7 +127,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 		return fail(err)
 	}
 	if sess.WorkspaceTask != nil && *sess.WorkspaceTask != binding {
-		return fail(errors.New("session is already bound to another restored workspace task"))
+		return fail(checkpointRefusal("session is already bound to another restored workspace task"))
 	}
 	if op.State == session.OperationReserved {
 		descriptor, _ := json.Marshal(req.Checkpoint)
@@ -143,7 +145,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	}
 	branch, err := sessionWorkspaceGitText(sess.Workspace, 257, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil || strings.TrimSpace(string(branch)) != sess.ForkName {
-		return fail(errors.New("replacement workspace branch authority changed"))
+		return fail(checkpointRefusal("replacement workspace branch authority changed"))
 	}
 	if err := materializeCheckpoint(ctx, sess.Repository, repository, sess.Workspace, req.Checkpoint, manifest, members); err != nil {
 		return fail(err)
@@ -209,7 +211,7 @@ func validateCheckpointRepository(ctx context.Context, repository string, checkp
 	err = visitCheckpointTrees(ctx, repository, checkpoint.BaseRevision, checkpoint.CommittedRevision, manifest.TrackedTree, func(commit string) error {
 		links, err := forkspace.Gitlinks(ctx, repository, commit)
 		if err != nil || !maps.Equal(wantLinks, links) {
-			return errors.New("checkpoint contains submodule changes without separate custody")
+			return &session.Error{Code: session.CodeInvalidRequest, Detail: "checkpoint contains submodule changes without separate custody"}
 		}
 		if _, _, err := runSessionCompanionGitContext(ctx, repository, 128, "read-tree", commit); err != nil {
 			return err
@@ -237,7 +239,7 @@ func validateCheckpointRepository(ctx context.Context, repository string, checkp
 		entries, err := dir.ReadDir(128)
 		for _, entry := range entries {
 			if strings.HasPrefix(entry.Name(), "lfs-") {
-				return errors.New("checkpoint contains an unused LFS object")
+				return &session.Error{Code: session.CodeInvalidRequest, Detail: "checkpoint contains an unused LFS object"}
 			}
 		}
 		if errors.Is(err, io.EOF) {
@@ -287,7 +289,7 @@ func materializeCheckpoint(ctx context.Context, source, objects, workspace strin
 	defer root.Close()
 	write := func(entry workerproto.WorkspaceCheckpointFileEntry, path []byte) error {
 		if string(path) == forkspace.GenerationMarkerName {
-			return errors.New("checkpoint cannot replace fork authority")
+			return &session.Error{Code: session.CodeInvalidRequest, Detail: "checkpoint cannot replace fork authority"}
 		}
 		file, err := os.Open(members[entry.Entry])
 		if err != nil {

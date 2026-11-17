@@ -242,9 +242,11 @@ func (s *Service) executeCheckpointWorkspace(
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
 	}
-	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, req.SessionID, ""); err != nil || pending {
+	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, req.SessionID, ""); err != nil {
+		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
+	} else if pending {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID,
-			errors.Join(err, errors.New("workspace restore must finish before capture")))
+			checkpointRefusal("workspace restore must finish before capture"))
 	}
 	// Re-read under the runtime hold: no queued turn may race this snapshot.
 	sess, err = s.store.GetSession(ctx, req.SessionID)
@@ -340,21 +342,28 @@ func buildWorkspaceCheckpoint(
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
 	if err := verifyUnchangedSessionSubmodules(ctx, sess.Repository, sess.Workspace, committed); err != nil {
-		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil,
-			fmt.Errorf("nested work needs separate custody before checkpoint: %w", err)
+		if errors.Is(err, errSessionSubmodulesChanged) || errors.Is(err, errSessionSubmodulesTooDeep) {
+			err = checkpointRefusal("nested work needs separate custody before checkpoint: " + err.Error())
+		} else {
+			err = fmt.Errorf("nested work needs separate custody before checkpoint: %w", err)
+		}
+		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
 	branchBytes, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, sess.Workspace, 257, nil, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if truncated {
-		err = errors.New("checkpoint branch exceeds its bound")
+		err = checkpointRefusal("checkpoint branch exceeds its bound")
 	}
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
 	branch := strings.TrimSpace(string(branchBytes))
 	conflicts, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, sess.Workspace, 1, nil, "ls-files", "-u", "-z")
-	if err != nil || truncated || len(conflicts) != 0 {
+	if err != nil {
+		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
+	}
+	if truncated || len(conflicts) != 0 {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil,
-			errors.New("checkpoint workspace contains unresolved Git conflicts")
+			checkpointRefusal("checkpoint workspace contains unresolved Git conflicts")
 	}
 	repository, err := os.CreateTemp(stage, "repository-")
 	if err != nil {
@@ -432,8 +441,11 @@ func buildWorkspaceCheckpoint(
 func checkpointUntrackedFiles(ctx context.Context, workspace string) ([]checkpointBlob, error) {
 	limit := workerproto.MaxWorkspaceCheckpointFiles*(workerproto.MaxWorkspaceCheckpointPathBytes+1) + 1
 	raw, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, limit, nil, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil || truncated {
-		return nil, errors.New("checkpoint untracked path list exceeds its bound")
+	if err != nil {
+		return nil, err
+	}
+	if truncated {
+		return nil, checkpointRefusal("checkpoint untracked path list exceeds its bound")
 	}
 	paths := bytes.Split(raw, []byte{0})
 	if len(paths) > 0 && len(paths[len(paths)-1]) == 0 {
@@ -447,7 +459,7 @@ func checkpointUntrackedFiles(ctx context.Context, workspace string) ([]checkpoi
 		filtered = append(filtered, append([]byte(nil), value...))
 	}
 	if len(filtered) > workerproto.MaxWorkspaceCheckpointFiles {
-		return nil, errors.New("checkpoint contains too many untracked files")
+		return nil, checkpointRefusal("checkpoint contains too many untracked files")
 	}
 	sort.Slice(filtered, func(i, j int) bool { return bytes.Compare(filtered[i], filtered[j]) < 0 })
 	root, err := os.OpenRoot(workspace)
@@ -468,12 +480,12 @@ func checkpointTaskProjection(
 		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, err
 	}
 	if !ok {
-		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, errors.New("bound workspace task is missing")
+		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, checkpointRefusal("bound workspace task is missing")
 	}
 	instance, err := tasks.ReadTaskInstance(queue, item)
 	if err != nil || instance.Ref.QueueID != sess.WorkspaceTask.QueueID ||
 		instance.Ref.TaskID != sess.WorkspaceTask.TaskID || instance.Ref.ID != sess.WorkspaceTask.ID {
-		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, errors.New("workspace task authority changed")
+		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, checkpointRefusal("workspace task authority changed")
 	}
 	paths := [][]byte{[]byte(tasks.QueueIdentityFile)}
 	err = filepath.WalkDir(item.Dir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -494,7 +506,7 @@ func checkpointTaskProjection(
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
-			return errors.New("workspace task projection contains a non-regular file")
+			return checkpointRefusal("workspace task projection contains a non-regular file")
 		}
 		paths = append(paths, []byte(filepath.ToSlash(rel)))
 		return nil
@@ -504,7 +516,7 @@ func checkpointTaskProjection(
 	}
 	sort.Slice(paths, func(i, j int) bool { return bytes.Compare(paths[i], paths[j]) < 0 })
 	if len(paths) == 0 || len(paths) > workerproto.MaxWorkspaceCheckpointTaskFiles {
-		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, errors.New("workspace task file count exceeds its bound")
+		return workerproto.WorkspaceCheckpointTaskProjection{}, nil, nil, checkpointRefusal("workspace task file count exceeds its bound")
 	}
 	root, err := os.OpenRoot(queue)
 	if err != nil {
@@ -531,20 +543,29 @@ func checkpointTaskProjection(
 	return projection, blobs, append([]bool(nil), item.Subtasks...), nil
 }
 
+// checkpointRefusal is workspace state the caller can change and then retry, so it reaches them
+// as invalid_session_state (409) with its reason, not as an internal failure.
+func checkpointRefusal(detail string) error {
+	return &session.Error{Code: session.CodeInvalidSessionState, Detail: detail}
+}
+
 func checkpointFilesFromPaths(ctx context.Context, root *os.Root, paths [][]byte, prefix string, maximum int64) ([]checkpointBlob, error) {
 	result := make([]checkpointBlob, 0, len(paths))
 	var total int64
 	for index, rawPath := range paths {
 		if len(rawPath) == 0 || len(rawPath) > workerproto.MaxWorkspaceCheckpointPathBytes || bytes.IndexByte(rawPath, 0) >= 0 {
-			return nil, errors.New("checkpoint file path is invalid")
+			return nil, checkpointRefusal("checkpoint file path is invalid")
 		}
 		name := string(rawPath)
 		before, err := root.Lstat(name)
-		if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
-			return nil, errors.New("checkpoint member is not a regular file")
+		if err != nil {
+			return nil, err
+		}
+		if !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 {
+			return nil, checkpointRefusal(fmt.Sprintf("checkpoint member %q is not a regular file", name))
 		}
 		if before.Size() < 0 || before.Size() > maximum-total {
-			return nil, errors.New("checkpoint file bytes exceed their bound")
+			return nil, checkpointRefusal("checkpoint file bytes exceed their bound")
 		}
 		file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 		if err != nil {
@@ -555,7 +576,7 @@ func checkpointFilesFromPaths(ctx context.Context, root *os.Root, paths [][]byte
 		after, statErr := file.Stat()
 		closeErr := file.Close()
 		if readErr != nil || statErr != nil || closeErr != nil || !os.SameFile(before, after) || written != before.Size() {
-			return nil, errors.New("checkpoint file changed while reading")
+			return nil, checkpointRefusal("checkpoint file changed while reading")
 		}
 		total += written
 		mode := int64(0o644)

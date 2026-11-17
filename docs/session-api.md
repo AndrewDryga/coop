@@ -797,6 +797,13 @@ A credential found in newly exported content refuses capture with HTTP 409
 `invalid_session_state`, including on replay of the same operation key. The workspace remains
 intact and no checkpoint bundle is published; correct the content before requesting a new capture.
 
+Other workspace states you can fix also refuse with `409 invalid_session_state` and say why:
+unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
+large untracked files, a missing or changed bound task, or a restore that must finish first.
+Restore answers `400 invalid_request` for a malformed descriptor or a bundle it must not apply
+(submodule changes, an unused LFS object, a file that would replace fork authority). A worker fault
+stays `500 internal_error`.
+
 To capture a checkpoint, the session must be idle, writable and bound to a task. You can capture an
 open, exhausted or closed session, but not a discarded one. Capture keeps a closed session closed
 and can't restart model execution. To restore a checkpoint, create an unused replacement session

@@ -188,3 +188,65 @@ func TestCheckpointCredentialRefusalIsDurableAndActionable(t *testing.T) {
 		t.Fatal("refusal changed the workspace")
 	}
 }
+
+// Workspace states the caller can fix were plain errors, so a controller got 500 "internal
+// operation failure" and could not tell them from a worker fault.
+func TestCheckpointWorkspaceStateRefusalsAreConflictsWithTheirReason(t *testing.T) {
+	commit := func(t *testing.T, workspace, content string) {
+		sessionWorkspaceWrite(t, filepath.Join(workspace, "clash.txt"), content)
+		sessionWorkspaceGit(t, workspace, "add", "clash.txt")
+		sessionWorkspaceGit(t, workspace, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", content)
+	}
+	for name, tc := range map[string]struct {
+		prepare func(t *testing.T, workspace string)
+		detail  string
+	}{
+		"conflict": {func(t *testing.T, workspace string) {
+			fork := sessionWorkspaceGit(t, workspace, "symbolic-ref", "--short", "HEAD")
+			sessionWorkspaceGit(t, workspace, "checkout", "-qb", "side")
+			commit(t, workspace, "side\n")
+			sessionWorkspaceGit(t, workspace, "checkout", "-q", fork)
+			commit(t, workspace, "fork\n")
+			if out, err := sessionWorkspaceGitResult(workspace, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "merge", "-q", "side"); err == nil {
+				t.Fatalf("merge did not conflict:\n%s", out)
+			}
+		}, "checkpoint workspace contains unresolved Git conflicts"},
+		"symlink": {func(t *testing.T, workspace string) {
+			if err := os.Symlink("/etc/hosts", filepath.Join(workspace, "linked.txt")); err != nil {
+				t.Fatal(err)
+			}
+		}, `checkpoint member "linked.txt" is not a regular file`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			service, _ := newHTTPTestSessionService(t)
+			defer service.Stop()
+			ctx := t.Context()
+			offer := "record:task_offer:refusal-" + name
+			source, err := service.CreateRemoteSession(ctx, "refusal-source", service.request(t, offer))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err = service.EnsureWorkspaceTask(ctx, "refusal-task", EnsureWorkspaceTaskRequest{SessionID: source.ID, ExpectedRevision: source.Revision, Task: tasks.ControllerTaskDraft{OfferRef: offer, Title: "Refuse a checkpoint", Prompt: "Keep the work.", SuccessChecks: []string{"refusal named"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.prepare(t, source.Workspace)
+			body, err := json.Marshal(map[string]any{"session_ref": "refusal-source", "expected_revision": source.Revision, "placement_generation": 1, "repository_ref": "repository"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+source.ID+"/checkpoint", bytes.NewReader(body))
+			request.Header.Set("Idempotency-Key", "refusal-checkpoint")
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			NewHTTPHandler(service.Service).ServeHTTP(response, request)
+			var got sessionHTTPErrorResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusConflict || got.Error.Code != "invalid_session_state" || got.Error.Detail != tc.detail {
+				t.Fatalf("checkpoint = %d %+v, want 409 invalid_session_state %q", response.Code, got.Error, tc.detail)
+			}
+		})
+	}
+}

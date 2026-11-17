@@ -96,6 +96,12 @@ func cloneSessionSubmodule(ctx context.Context, source, destination, commit stri
 	return os.Rename(stage, destination)
 }
 
+// The submodule refusals a caller can act on, told apart from a Git fault reading them.
+var (
+	errSessionSubmodulesChanged = errors.New("changed submodules require separately authorized source and publication")
+	errSessionSubmodulesTooDeep = errors.New("submodules exceed the authorized nesting depth")
+)
+
 func verifySessionSubmodules(ctx context.Context, repository, commit string) error {
 	return verifySessionSubmodulesDepth(ctx, "", repository, commit, 0)
 }
@@ -116,11 +122,11 @@ func verifySessionSubmodulesDepth(ctx context.Context, source, repository, commi
 		}
 		pinned, err := forkspace.Gitlinks(ctx, source, head)
 		if err != nil || !maps.Equal(pinned, links) {
-			return errors.New("changed submodules require separately authorized source and publication")
+			return errSessionSubmodulesChanged
 		}
 	}
 	if depth >= 16 && len(links) != 0 {
-		return errors.New("submodules exceed the authorized nesting depth")
+		return errSessionSubmodulesTooDeep
 	}
 	for path, head := range links {
 		child, err := forkspace.SubmoduleDirectory(repository, path)

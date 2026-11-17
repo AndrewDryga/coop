@@ -45,8 +45,11 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 		return err
 	}
 	links, err := forkspace.Gitlinks(ctx, private, tree)
-	if err != nil || !maps.Equal(wantLinks, links) {
-		return errors.New("nested work needs separate custody before checkpoint")
+	if err != nil {
+		return err
+	}
+	if !maps.Equal(wantLinks, links) {
+		return checkpointRefusal("nested work needs separate custody before checkpoint")
 	}
 	writer := tar.NewWriter(output)
 	// An explicit positive tree bypasses a commit-only exclusion. Restore fetches
@@ -122,8 +125,11 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 			return errors.New("invalid checkpoint LFS tree")
 		}
 		links, err := forkspace.Gitlinks(ctx, private, commit)
-		if err != nil || !maps.Equal(wantLinks, links) {
-			return errors.New("nested work needs separate custody before checkpoint")
+		if err != nil {
+			return err
+		}
+		if !maps.Equal(wantLinks, links) {
+			return checkpointRefusal("nested work needs separate custody before checkpoint")
 		}
 		if err := command("read-tree", commit).Run(); err != nil {
 			return err
@@ -154,12 +160,12 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 			defer root.Close()
 			file, err := root.Open(checkpointLFSPath(pointer.OID))
 			if err != nil {
-				return fmt.Errorf("checkpoint needs LFS object %s: %w", pointer.OID, err)
+				return checkpointRefusal("checkpoint needs LFS object " + pointer.OID)
 			}
 			defer file.Close()
 			info, err := file.Stat()
 			if err != nil || !info.Mode().IsRegular() || info.Size() != pointer.Size {
-				return errors.New("checkpoint LFS object is unavailable")
+				return checkpointRefusal("checkpoint LFS object " + pointer.OID + " is unavailable")
 			}
 			if err := checkpointTarHeader(writer, "lfs/"+pointer.OID, 0644, pointer.Size); err != nil {
 				return err
