@@ -126,7 +126,7 @@ func selectCredentialPlanWithMarkers(cfg *config.Config, spec RunSpec, markers m
 	if cfg == nil {
 		return nil, nil
 	}
-	if key := extraProviderCredential(spec, cfg.ExtraRunArgs, spec.ExtraArgs); key != "" {
+	if key := extraProviderCredential(cfg.ExtraRunArgs, spec.ExtraArgs); key != "" {
 		if spec.Login {
 			return nil, fmt.Errorf("sign-in does not accept %s through -e; Coop keeps existing reusable credentials outside the login box", key)
 		}
@@ -337,7 +337,7 @@ func extraEnvAssigns(args []string, key string) bool {
 	return false
 }
 
-func extraProviderCredential(spec RunSpec, argSets ...[]string) string {
+func extraProviderCredential(argSets ...[]string) string {
 	for _, name := range agents.Names() {
 		agent, _ := agents.Get(name)
 		for _, key := range agent.CredentialEnvKeys() {

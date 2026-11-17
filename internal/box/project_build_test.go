@@ -17,7 +17,6 @@ import (
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/networkstate"
-	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
 )
 
@@ -63,16 +62,10 @@ func TestFilteredProjectImageRequiresExplicitBuild(t *testing.T) {
 	}
 	d.images[definition.Tag] = d.images[fixtureLockedImage]
 	repo, _ := gitProject(t, reusableDockerfile)
-	marker := filepath.Join(t.TempDir(), "builder-ran")
-	script := filepath.Join(t.TempDir(), "docker")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	_, _, err = filteredProjectImage(context.Background(), runtime.Runtime{Name: script}, &config.Config{}, d, f.store,
+	// filteredProjectImage holds only the filtered Docker binding, which cannot build: a launch
+	// never runs repository build instructions, it asks for an explicit build.
+	_, _, err = filteredProjectImage(context.Background(), &config.Config{}, d, f.store,
 		RunSpec{Repo: repo, Quiet: true}, fixtureCandidate())
-	if _, statErr := os.Stat(marker); !errors.Is(statErr, fs.ErrNotExist) {
-		t.Fatalf("a restricted launch executed repository build instructions: %v (launch: %v)", statErr, err)
-	}
 	if err == nil || !strings.Contains(err.Error(), "coop build --egress filtered") {
 		t.Fatalf("missing explicit build recovery: %v", err)
 	}
@@ -510,7 +503,7 @@ func TestFilteredProjectImageReusesAnUnchangedBuild(t *testing.T) {
 		if !withStore {
 			store = nil
 		}
-		image, _, err := filteredProjectImage(ctx, runtime.Runtime{Name: script}, reuseCfg, d, store, RunSpec{Repo: repo, Quiet: true}, fixtureCandidate())
+		image, _, err := filteredProjectImage(ctx, reuseCfg, d, store, RunSpec{Repo: repo, Quiet: true}, fixtureCandidate())
 		return image, err
 	}
 	expect := func(step string, withStore bool, image string, wantBuilds int) {

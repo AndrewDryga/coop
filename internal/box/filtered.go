@@ -429,7 +429,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 func (f *filteredExecution) selectImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, spec RunSpec, candidate networkstate.CandidateSpec, projectImage bool) error {
 	f.image = candidate.ClientImage
 	if projectImage && !spec.HandshakeOnly {
-		derived, tag, err := filteredProjectImage(ctx, rt, cfg, f.docker, f.store, spec, candidate)
+		derived, tag, err := filteredProjectImage(ctx, cfg, f.docker, f.store, spec, candidate)
 		if err != nil {
 			return err
 		}

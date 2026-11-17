@@ -76,7 +76,7 @@ func filteredProjectTag(repo, lockedImage string) string {
 // filteredProjectImage consumes an approved build, never executing repository build instructions:
 // admission does any automatic rebuild, before the launch gets here. Both results are empty without
 // a project Dockerfile: the locked image runs as-is.
-func filteredProjectImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (image, imageTag string, err error) {
+func filteredProjectImage(ctx context.Context, cfg *config.Config, docker filteredDocker, store *networkstate.Store, spec RunSpec, candidate networkstate.CandidateSpec) (image, imageTag string, err error) {
 	if spec.Login || spec.ControllerJob {
 		return "", "", nil // sign-in uses the locked client, never the project's build instructions
 	}

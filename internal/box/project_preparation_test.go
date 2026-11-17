@@ -232,7 +232,7 @@ func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
 	if _, err := buildPreparedFilteredProject(t.Context(), frozenProjectRuntime(t, script), &config.Config{}, d, f.store, prepared, candidate, io.Discard); err != nil {
 		t.Fatalf("reviewed snapshot was not the build source: %v", err)
 	}
-	_, _, err = filteredProjectImage(t.Context(), runtime.Runtime{}, &config.Config{}, d, f.store, RunSpec{Repo: repo, Quiet: true}, candidate)
+	_, _, err = filteredProjectImage(t.Context(), &config.Config{}, d, f.store, RunSpec{Repo: repo, Quiet: true}, candidate)
 	if err == nil || !strings.Contains(err.Error(), "coop build --egress filtered") {
 		t.Fatalf("later unreviewed edits acquired launch authority: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestReviewedProjectBuildExecutesOnlyItsPrivateSnapshot(t *testing.T) {
 	write(".agent/Dockerfile", reusableDockerfile)
 	var image string
 	output := captureStderr(t, func() {
-		image, _, err = filteredProjectImage(t.Context(), runtime.Runtime{}, &config.Config{}, d, f.store, RunSpec{Repo: repo}, candidate)
+		image, _, err = filteredProjectImage(t.Context(), &config.Config{}, d, f.store, RunSpec{Repo: repo}, candidate)
 		newLaunchSections(RunSpec{Agent: "claude"}).secrets(53)
 	})
 	if !strings.Contains(output, "Unchanged since it was built\n\nProtecting secrets\n") {
@@ -1112,7 +1112,7 @@ func TestANetworkRuleEditAsksForNoProjectBuild(t *testing.T) {
 			if err := x.readiness(); err != nil {
 				t.Fatalf("the edit asked for a build: %v", err)
 			}
-			image, _, err := filteredProjectImage(t.Context(), x.rt, x.cfg, x.d, x.f.store, RunSpec{Repo: x.repo, Quiet: true}, x.candidate)
+			image, _, err := filteredProjectImage(t.Context(), x.cfg, x.d, x.f.store, RunSpec{Repo: x.repo, Quiet: true}, x.candidate)
 			if err != nil || image != fixtureBuiltImage {
 				t.Fatalf("the next box runs %q (%v), want the build the person approved, %q", image, err, fixtureBuiltImage)
 			}
