@@ -3899,7 +3899,7 @@ func lintTaskQueue(root string, known map[string]bool) (int, error) {
 				return -1, err
 			}
 			if !resolved {
-				add(t.ID, "has an unresolved decision.md but is todo — block it (or resolve it and unblock)")
+				add(t.ID, "has an unresolved decision.md but is todo — block it, or write its Resolution")
 			}
 		}
 		// a status field is forbidden — the directory IS the status

@@ -401,7 +401,7 @@ func TestThePendingNoteIsNoAnswerToTheOtherCommands(t *testing.T) {
 				t.Errorf("lint = %d, want 1", code)
 			}
 		})
-		if !strings.Contains(lint, "has an unresolved decision.md but is todo") {
+		if !strings.Contains(lint, "has an unresolved decision.md but is todo — block it, or write its Resolution") {
 			t.Errorf("lint did not flag the open question:\n%s", lint)
 		}
 	})
