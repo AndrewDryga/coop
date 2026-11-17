@@ -138,22 +138,6 @@ func TestGrokMissingCatalogRetainsGoodCache(t *testing.T) {
 	}
 }
 
-func TestModelCatalogNeedsBox(t *testing.T) {
-	a := modelsApp(t)
-	for _, seam := range []bool{false, true} {
-		a.acpModels = nil
-		if seam {
-			a.acpModels = func(string) ([]agents.Model, error) { return nil, nil }
-		}
-		for _, name := range agents.Names() {
-			want := !seam
-			if got := a.fetchNeedsBox(name); got != want {
-				t.Errorf("%s seam=%v needs box=%v, want %v", name, seam, got, want)
-			}
-		}
-	}
-}
-
 // TestModelsCacheAges: the three ages answer different questions — refresh-due at 24h, still
 // presentable as last-known until the retention horizon, and never both.
 func TestModelsCacheAges(t *testing.T) {

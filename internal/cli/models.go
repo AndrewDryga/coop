@@ -214,27 +214,21 @@ func (a *app) refreshDueCatalogs(names []string, forced bool) map[string]string 
 		labels[i] = titleName(agent)
 	}
 	ui.Note("Refreshing model lists for %s…", ui.List(labels, "and"))
-	// Detect the container runtime ONCE, before the fan-out: a.rt is a plain field, so two boxed
-	// probes racing ensureRuntime would be a data race — and a runtime that is down is one cause
-	// for every provider that needs it, not one bounded timeout each.
+	// Every catalog comes from a box. Detect the container runtime ONCE, before the fan-out: a.rt
+	// is a plain field, so two probes racing ensureRuntime would be a data race — and a runtime that
+	// is down is one cause for every provider, not one bounded timeout each. The test seam that
+	// replaces the fetch needs no runtime.
 	var boxDown error
-	for _, agent := range due {
-		if a.fetchNeedsBox(agent) {
-			boxDown = a.probeBoxRuntime()
-			break
-		}
+	if a.acpModels == nil {
+		boxDown = a.probeBoxRuntime()
 	}
 	causes, failed := make([]string, len(due)), make([]bool, len(due))
 	var wg sync.WaitGroup
 	for i, agent := range due {
-		blocked := error(nil)
-		if a.fetchNeedsBox(agent) {
-			blocked = boxDown
-		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			causes[i], failed[i] = a.refreshCatalog(agent, blocked)
+			causes[i], failed[i] = a.refreshCatalog(agent, boxDown)
 		}()
 	}
 	wg.Wait()
@@ -277,12 +271,6 @@ func (a *app) refreshCatalog(agent string, blocked error) (string, bool) {
 	}
 	_ = recordModelsFetchFailure(a.cfg, agent, cause) // best-effort: a lost note costs one refetch
 	return cause, true
-}
-
-// fetchNeedsBox reports whether refreshing agent has to launch a container — the ACP-only
-// providers, unless a test seam has replaced the fetch.
-func (a *app) fetchNeedsBox(agent string) bool {
-	return a.acpModels == nil
 }
 
 // probeBoxRuntime resolves the container runtime a boxed catalog fetch needs, naming what is

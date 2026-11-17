@@ -31,8 +31,8 @@ import (
 //     coop's job and not a chore the help has to teach.
 //   - modelsCacheRetention — past this a list is too old to show even as last-known, and the
 //     release-bundled examples are the honest thing to print.
-//   - modelsRetryAfter — how long a FAILED attempt suppresses the next one, so an uninstalled CLI
-//     or a stopped runtime is paid for once an hour, not on every invocation.
+//   - modelsRetryAfter — how long a FAILED attempt suppresses the next one, so a stopped runtime or
+//     a provider that will not answer is paid for once an hour, not on every invocation.
 const (
 	modelsRefreshAfter   = 24 * time.Hour
 	modelsCacheRetention = 14 * 24 * time.Hour
@@ -42,7 +42,7 @@ const (
 // Native startup includes asynchronous filtered launch; a ready adapter gets a fresh catalog budget.
 const modelStartupTimeout = 60 * time.Second
 
-// modelFetchTimeout bounds native-CLI probes and the catalog request, not boxed startup.
+// modelFetchTimeout bounds the ACP handshake and the catalog request, not boxed startup.
 const modelFetchTimeout = 15 * time.Second
 
 // modelsCache retains the last good catalog separately from the most recent fetch
@@ -141,7 +141,7 @@ func storeModelsCache(cfg *config.Config, agent string, mc modelsCache) error {
 	return config.WriteFileAtomic(modelsCachePath(cfg, agent), b)
 }
 
-// fetchModelCatalog selects the cheapest real catalog source per provider. The ACP seam is
+// fetchModelCatalog asks the provider's ACP adapter for its catalog in a box. The ACP seam is
 // deliberately app-local: unit tests can prove refresh wiring without detecting a runtime, while
 // production always launches the real credential-scoped box.
 func (a *app) fetchModelCatalog(agent string) ([]agents.Model, error) {
