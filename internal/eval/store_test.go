@@ -125,3 +125,24 @@ func TestNewRunIDIsTimeOrderedAndTagged(t *testing.T) {
 		t.Errorf("run id lacks workload tag: %q", early)
 	}
 }
+
+// Two runs of one suite created in the same second share NewRunID's id. The second takes a suffix
+// rather than failing after its staging; CreateRun itself still refuses the collision.
+func TestCreateNewRunSuffixesAnIDTakenInTheSameSecond(t *testing.T) {
+	root := t.TempDir()
+	id := NewRunID(time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC), "WORKLOAD")
+	var ids []string
+	for range 3 {
+		store, err := CreateNewRun(root, RunRecord{ID: id, Suite: "s", Runner: RunnerAgent})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, store.ID())
+	}
+	if want := []string{id, id + "-2", id + "-3"}; !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+	if _, err := CreateRun(root, RunRecord{ID: id, Suite: "s", Runner: RunnerAgent}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("CreateRun on a taken id = %v, want a refusal", err)
+	}
+}

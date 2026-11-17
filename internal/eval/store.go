@@ -146,6 +146,9 @@ type Store struct {
 	id  string
 }
 
+// errRunExists is CreateRun's refusal of an id another run already holds.
+var errRunExists = errors.New("already exists")
+
 // CreateRun makes the run directory under root and writes its manifest. root is the owner-private
 // eval state directory (the CLI resolves it under XDG state; a test passes a temp dir). The run id
 // is time-ordered so `ls` sorts runs chronologically, and carries the workload fingerprint's prefix
@@ -163,7 +166,7 @@ func CreateRun(root string, rec RunRecord) (*Store, error) {
 	dir := filepath.Join(root, rec.ID)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("eval run %s already exists", rec.ID)
+			return nil, fmt.Errorf("eval run %s %w", rec.ID, errRunExists)
 		}
 		return nil, err
 	}
@@ -175,6 +178,19 @@ func CreateRun(root string, rec RunRecord) (*Store, error) {
 		return nil, err
 	}
 	return &Store{dir: dir, id: rec.ID}, nil
+}
+
+// CreateNewRun is CreateRun for a run id NewRunID made: a run of the same suite already created in
+// the same second takes the next free suffix (-2, -3, ...) instead of failing after its staging.
+func CreateNewRun(root string, rec RunRecord) (*Store, error) {
+	base := rec.ID
+	for n := 2; ; n++ {
+		store, err := CreateRun(root, rec)
+		if !errors.Is(err, errRunExists) || n > 9 {
+			return store, err
+		}
+		rec.ID = fmt.Sprintf("%s-%d", base, n)
+	}
 }
 
 // ID is the run's identifier.
@@ -320,7 +336,7 @@ func readJSON(path string, v any) error {
 // NewRunID makes a time-ordered run id that also carries the workload fingerprint's prefix, so `ls`
 // sorts runs chronologically and two runs of the same suite are recognizable at a glance. The
 // timestamp is UTC to a second plus a short workload tag; a second run in the same second gets a
-// distinct id from the caller's uniqueness (the store refuses a collision).
+// distinct id from CreateNewRun's suffix (CreateRun itself refuses a collision).
 func NewRunID(now time.Time, workload Fingerprint) string {
 	tag := string(workload)
 	if len(tag) > 8 {

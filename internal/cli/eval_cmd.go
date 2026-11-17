@@ -324,7 +324,7 @@ func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval
 		return 1, fmt.Errorf("prepare eval runtime profiles: %w", err)
 	}
 	defer captures.close()
-	store, err := eval.CreateRun(root, eval.NewRunRecord(plan, frozen, time.Now()))
+	store, err := eval.CreateNewRun(root, eval.NewRunRecord(plan, frozen, time.Now()))
 	if err != nil {
 		return 1, err
 	}
