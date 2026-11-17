@@ -137,6 +137,8 @@ type sessionActivity struct {
 	// tool call. toolResults counts the tool calls that finished.
 	outputAt    time.Time
 	toolResults int
+	// toolsOverflowed records that a call was not kept because the table was full.
+	toolsOverflowed bool
 
 	wake chan struct{}
 	done chan struct{}
@@ -306,7 +308,7 @@ func (a *sessionActivity) quiet() error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.toolResults == 0 {
+	if a.toolResults == 0 || a.toolsOverflowed {
 		return nil
 	}
 	for _, tool := range a.tools {
@@ -334,6 +336,8 @@ func (a *sessionActivity) observeTool(id, title, kind, status string, rawInput, 
 	tool := a.tools[id]
 	if tool == nil {
 		if len(a.tools) >= sessionActivityMaxTools {
+			// quiet() cannot see a call it does not hold, so it must never call the turn quiet.
+			a.toolsOverflowed = true
 			a.dropped++
 			return
 		}

@@ -748,3 +748,23 @@ func TestAliveOutlivesTheNarrationBudget(t *testing.T) {
 		t.Fatalf("elision counted frames, not lost events: %s %v", last.Type, activityPayload(t, last))
 	}
 }
+
+// After 512 calls a new call is not kept in the table, so the quiet check cannot see that it is
+// still running and must not stop the turn as quiet.
+func TestAToolBeyondTheCallTableIsNeverReadAsQuiet(t *testing.T) {
+	store, sess := newActivityTestStore(t)
+	clock := &activityTestClock{at: time.Unix(1_760_000_000, 0)}
+	activity := newSessionActivity(store, sess, "turn-1", sess.Workspace, clock.now)
+	defer activity.close(context.Background())
+	for index := range sessionActivityMaxTools {
+		id := "t" + strconv.Itoa(index)
+		activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"` + id + `","title":"Read","kind":"read"}}`))
+		activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"` + id + `","status":"completed"}}`))
+	}
+	activity.observe(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"late","title":"Build","kind":"execute"}}`))
+	clock.advance(sessionActivityQuietAfterTools + time.Minute)
+	activity.frame(385, "session/update:usage_update")
+	if err := activity.quiet(); err != nil {
+		t.Fatalf("a turn waiting on a tool past the table was stopped as quiet: %v", err)
+	}
+}
