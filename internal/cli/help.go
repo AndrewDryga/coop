@@ -367,8 +367,8 @@ For more details see:
 
 // agentHelp is `coop help <agent>` — how to run THAT agent, in its own words: the command a
 // person types, five examples, the coop flags read before a `--`, and where its models and
-// accounts live. It documents coop's OWN flags because `coop <agent> --help` forwards to the
-// agent's real CLI. Every line is generated from the adapter (name, effort support), so a new
+// accounts live. It documents coop's OWN flags; the agent's own help is `coop <agent> -- --help`.
+// Every line is generated from the adapter (name, effort support), so a new
 // agent gets its page for free and none of them advertises a flag it refuses — see
 // .agent/kb/rules/agents-are-one-file.md. Orchestration lives in `coop help presets`, the
 // target grammar in `coop help models`; neither is restated here.
@@ -445,8 +445,8 @@ func helpRowsAt(rows [][2]string, column int) string {
 }
 
 // commandHelp is the focused text for `coop <cmd> --help`, per subcommand. fork has its
-// own richer forkHelp, run has runHelp, and the agents use agentHelp (their `--help` forwards to
-// the agent's own CLI). Each value's first line is the synopsis.
+// own richer forkHelp, run has runHelp, and the agents use agentHelp (their own CLI's help is
+// `coop <agent> -- --help`). Each value's first line is the synopsis.
 var commandHelp = map[string]string{
 	"sessions": `coop sessions: let other applications start and manage agents
 
@@ -2134,10 +2134,11 @@ Usage:
   coop build [--egress <mode>]
 
   Builds the shared image, or this project's image when it has a box
-  Dockerfile (.agent/Dockerfile, or box.dockerfile in .agent/project.yaml).
-  Run it after changing that Dockerfile or .tool-versions. Requires a running
-  container runtime. Your home folder is never a project, so from there use
-  --egress open, which builds the shared image.
+  Dockerfile (.agent/Dockerfile, or box.dockerfile in .agent/project.yaml)
+  or, in open or offline mode, a .tool-versions file. Run it after changing
+  that Dockerfile or .tool-versions. Requires a running container runtime.
+  Your home folder is never a project, so from there use --egress open,
+  which builds the shared image.
 
 OPTIONS
   --egress <mode>  prepare the image for filtered, open or offline networking
