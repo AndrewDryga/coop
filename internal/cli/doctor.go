@@ -976,7 +976,26 @@ func doctorFixtureBase() string {
 	if os.MkdirAll(dir, 0o700) != nil {
 		return ""
 	}
+	sweepStaleDoctorFixtures(dir, time.Now().Add(-24*time.Hour))
 	return dir
+}
+
+// sweepStaleDoctorFixtures removes doctor's own projects older than cutoff. An interrupted doctor
+// never reaches its deferred removal, so without this each Ctrl-C would leave a project for good;
+// the age keeps a doctor that is running right now out of reach.
+func sweepStaleDoctorFixtures(dir string, cutoff time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "coop-doctor-") {
+			continue
+		}
+		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(dir, entry.Name()))
+		}
+	}
 }
 
 // seedFixture writes files into a new world-readable temporary git repo, lets link add what a map

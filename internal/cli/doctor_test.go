@@ -649,3 +649,32 @@ func TestKernelSpellingRunRecordsOnlyWhatRan(t *testing.T) {
 		})
 	}
 }
+
+// An interrupted doctor never reaches its deferred removal; the next doctor sweeps what it left
+// behind, and only doctor's own names that are old enough not to belong to a doctor running now.
+func TestDoctorFixtureBaseSweepsStaleFixtures(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	base := doctorFixtureBase()
+	if base == "" {
+		t.Fatal("no fixture base")
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	for _, name := range []string{"coop-doctor-1", "coop-doctor-1-clone", "coop-doctor-2", "other"} {
+		if err := os.MkdirAll(filepath.Join(base, name, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if name != "coop-doctor-2" {
+			if err := os.Chtimes(filepath.Join(base, name), old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if doctorFixtureBase() != base {
+		t.Fatal("fixture base moved")
+	}
+	for name, want := range map[string]bool{"coop-doctor-1": false, "coop-doctor-1-clone": false, "coop-doctor-2": true, "other": true} {
+		if got := pathExists(filepath.Join(base, name)); got != want {
+			t.Errorf("%s exists = %v, want %v", name, got, want)
+		}
+	}
+}
