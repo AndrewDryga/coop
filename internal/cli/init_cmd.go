@@ -364,7 +364,7 @@ func (a *app) cmdInit(args []string) (int, error) {
 		}
 		warnBlock(fmt.Sprintf("%s still %s to be registered", countWord(len(unregistered), "task queue"), verb),
 			project.File+" uses a subprojects list Coop could not update safely.",
-			fmt.Sprintf("Add %s to subprojects in %s.", ui.SafeInline(joinAnd(unregistered)), project.File))
+			fmt.Sprintf("Add %s to subprojects in %s.", ui.SafeInline(ui.List(unregistered, "and")), project.File))
 	}
 	for _, notice := range notices {
 		ui.Note("")
@@ -686,7 +686,7 @@ func initActions(cfg *config.Config, repo string, langs, services, agentDirs []s
 		out = append(out, toolchainAction(missing))
 	}
 	if len(services) > 0 {
-		out = append(out, initAction{title: "Start " + joinAnd(services), actions: []string{"coop up"}})
+		out = append(out, initAction{title: "Start " + ui.List(services, "and"), actions: []string{"coop up"}})
 	}
 	// First-run advice only. On a repo that has been building for weeks it's noise at best.
 	if fresh {
@@ -717,12 +717,12 @@ func toolchainAction(missing []scaffold.Toolchain) initAction {
 		pronoun = "them"
 	}
 	return initAction{
-		title:   "Add " + joinAnd(names) + " to the box",
+		title:   "Add " + ui.List(names, "and") + " to the box",
 		note:    fmt.Sprintf("The default box has no %s toolchain. Pin %s, then build this project's box:", ui.List(names, "or"), pronoun),
 		actions: append(actions, "coop init --stack asdf", "coop build"),
 		// The commit hook skips a language whose formatter is not installed, and agents commit in
 		// the box.
-		until: fmt.Sprintf("Until then, agents' commits skip the %s format %s.", joinAnd(names), plural(len(names), "check")),
+		until: fmt.Sprintf("Until then, agents' commits skip the %s format %s.", ui.List(names, "and"), plural(len(names), "check")),
 	}
 }
 
@@ -765,7 +765,7 @@ func initSharedLine(agentDirs []string, monorepo bool) string {
 	case 1:
 		return names[0] + " has instructions, skills, and " + queues + "."
 	default:
-		return joinAnd(names) + " share instructions, skills, and " + queues + "."
+		return ui.List(names, "and") + " share instructions, skills, and " + queues + "."
 	}
 }
 
@@ -781,19 +781,7 @@ func initProviderLine(agentDirs []string) string {
 	if len(clauses) == 0 {
 		return ""
 	}
-	return joinAnd(clauses) + "."
-}
-
-// joinAnd renders a list as English prose: "a", "a and b", "a, b, and c".
-func joinAnd(items []string) string {
-	switch len(items) {
-	case 0, 1:
-		return strings.Join(items, "")
-	case 2:
-		return items[0] + " and " + items[1]
-	default:
-		return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
-	}
+	return ui.List(clauses, "and") + "."
 }
 
 // writeMCPStub seeds an empty shared mcp.json — coop's one MCP source of truth, translated to
