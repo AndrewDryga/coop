@@ -67,7 +67,7 @@ func (a *app) startTempReap() {
 	if !tempReapDue(stamp, time.Now()) {
 		return
 	}
-	go reapTemp(a.rt, a.cfg, stamp)
+	go reapTemp(a.rt, a.cfg.Clone(), stamp) // the launch goes on changing a.cfg (a loop's applyTarget)
 }
 
 // reapTemp is one pass over the system temp directory and Coop's private runfiles root. That root

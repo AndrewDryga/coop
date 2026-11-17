@@ -409,3 +409,26 @@ func TestTempReapStartsWithABox(t *testing.T) {
 		t.Fatal("an app built outside Main swept the host's temp entries")
 	}
 }
+
+// The sweep runs in the background while the launch goes on changing its configuration (a loop's
+// applyTarget sets the active account, model and effort), so the sweep reads a copy taken before it
+// starts. Under -race, a copy taken inside the goroutine is reported here.
+func TestTempReapReadsItsOwnCopyOfTheConfiguration(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	dir := t.TempDir()
+	runtimePath := filepath.Join(dir, "docker")
+	if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{BoxHome: filepath.Join(dir, "home"), LocalDir: filepath.Join(dir, "local")}
+	a := &app{cfg: cfg, rt: containerruntime.Runtime{Name: runtimePath}, rtSet: true, tempReapPending: true}
+	stamp := tempReapPath(cfg)
+	a.startTempReap()
+	for i := 0; i < 2000 && !pathExists(stamp); i++ {
+		cfg.SetActiveProfile("claude", "account-"+strconv.Itoa(i))
+		time.Sleep(time.Millisecond)
+	}
+	if !pathExists(stamp) {
+		t.Fatal("the sweep did not finish")
+	}
+}
