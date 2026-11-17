@@ -683,6 +683,12 @@ func TestClosedWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *te
 	if err := os.WriteFile(filepath.Join(source.Workspace, "helper.sh"), []byte("#!/bin/sh\necho restored\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A follow-up task the agent filed is workspace content, not the bound task's projection.
+	followUp := filepath.Join(tasks.TasksRoot, "00_todo", "follow-up", "task.md")
+	if err := os.MkdirAll(filepath.Join(source.Workspace, filepath.Dir(followUp)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(source.Workspace, followUp, "# Follow up\n", 0o644)
 	queue := filepath.Join(source.Workspace, tasks.TasksRoot)
 	item, ok := mustCurrentTask(t, queue, source.WorkspaceTask.ID)
 	if !ok {
@@ -855,13 +861,16 @@ func TestClosedWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *te
 	if err != nil || !bytes.Equal(gotTracked, wantTracked) {
 		t.Fatalf("restored tracked membership differs: err=%v\nwant=%q\n got=%q", err, wantTracked, gotTracked)
 	}
-	wantUntracked, err := checkpointUntrackedFiles(context.Background(), source.Workspace)
-	if err != nil || len(wantUntracked) != 2 {
+	wantUntracked, err := checkpointUntrackedFiles(context.Background(), source.Workspace, source.WorkspaceTask.ID)
+	if err != nil || len(wantUntracked) != 3 {
 		t.Fatalf("source untracked files = %+v, err=%v", wantUntracked, err)
 	}
-	gotUntracked, err := checkpointUntrackedFiles(context.Background(), restored.Workspace)
+	gotUntracked, err := checkpointUntrackedFiles(context.Background(), restored.Workspace, source.WorkspaceTask.ID)
 	if err != nil || !checkpointFileEntriesEqual(checkpointEntries(gotUntracked), checkpointEntries(wantUntracked)) {
 		t.Fatalf("restored untracked entries differ: err=%v\nwant=%+v\n got=%+v", err, wantUntracked, gotUntracked)
+	}
+	if got, err := os.ReadFile(filepath.Join(restored.Workspace, followUp)); err != nil || string(got) != "# Follow up\n" {
+		t.Fatalf("restore dropped the agent's follow-up task: %q, %v", got, err)
 	}
 	if got, err := os.ReadFile(filepath.Join(restored.Workspace, "helper.sh")); err != nil || string(got) != "#!/bin/sh\necho restored\n" {
 		t.Fatalf("restored untracked file = %q, err=%v", got, err)
@@ -870,7 +879,8 @@ func TestClosedWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *te
 	if !ok || restoredItem.State != tasks.StateInProgress || len(restoredItem.Subtasks) != 1 || !restoredItem.Subtasks[0] {
 		t.Fatalf("restored task = %+v, ok=%v", restoredItem, ok)
 	}
-	if status := gitOut(restored.Workspace, "status", "--porcelain", "--untracked-files=all"); strings.Contains(status, ".agent/tasks/") {
+	if status := gitOut(restored.Workspace, "status", "--porcelain", "--untracked-files=all"); strings.Contains(status, source.WorkspaceTask.ID) ||
+		strings.Contains(status, tasks.QueueIdentityFile) || !strings.Contains(status, filepath.ToSlash(followUp)) {
 		t.Fatalf("restored task custody counted as product changes:\n%s", status)
 	}
 	replayed, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-once", RestoreWorkspaceCheckpointRequest{

@@ -326,7 +326,7 @@ func verifyStreamedCheckpoint(ctx context.Context, sess session.Session, checkpo
 	if err != nil {
 		return binding, err
 	}
-	untracked, err := checkpointUntrackedFiles(ctx, sess.Workspace)
+	untracked, err := checkpointUntrackedFiles(ctx, sess.Workspace, checkpoint.Task.ID)
 	if err != nil || !checkpointFileEntriesEqual(checkpointEntries(untracked), manifest.UntrackedFiles) {
 		return binding, errors.New("restored workspace untracked files do not match")
 	}

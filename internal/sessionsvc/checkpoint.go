@@ -385,7 +385,7 @@ func buildWorkspaceCheckpoint(
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
 	content := workerproto.WorkspaceCheckpointBundleEntry{Entry: "repository.tar", SHA256: fmt.Sprintf("%x", digest.Sum(nil)), ByteSize: size}
-	untracked, err := checkpointUntrackedFiles(ctx, sess.Workspace)
+	untracked, err := checkpointUntrackedFiles(ctx, sess.Workspace, sess.WorkspaceTask.ID)
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
@@ -438,7 +438,10 @@ func buildWorkspaceCheckpoint(
 	return checkpoint, manifest, bundle, nil
 }
 
-func checkpointUntrackedFiles(ctx context.Context, workspace string) ([]checkpointBlob, error) {
+// checkpointUntrackedFiles lists the workspace's untracked files, leaving out only what the task
+// projection carries: the queue identity and the bound task's own folder. Any other queue file,
+// such as a follow-up task the agent filed, is ordinary workspace content and travels with it.
+func checkpointUntrackedFiles(ctx context.Context, workspace, taskID string) ([]checkpointBlob, error) {
 	limit := workerproto.MaxWorkspaceCheckpointFiles*(workerproto.MaxWorkspaceCheckpointPathBytes+1) + 1
 	raw, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, limit, nil, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
@@ -453,7 +456,7 @@ func checkpointUntrackedFiles(ctx context.Context, workspace string) ([]checkpoi
 	}
 	filtered := make([][]byte, 0, len(paths))
 	for _, value := range paths {
-		if bytes.HasPrefix(value, []byte(tasks.TasksRoot+"/")) {
+		if checkpointTaskProjectionPath(value, taskID) {
 			continue
 		}
 		filtered = append(filtered, append([]byte(nil), value...))
@@ -468,6 +471,18 @@ func checkpointUntrackedFiles(ctx context.Context, workspace string) ([]checkpoi
 	}
 	defer root.Close()
 	return checkpointFilesFromPaths(ctx, root, filtered, "untracked", workerproto.MaxWorkspaceCheckpointStreamBytes)
+}
+
+func checkpointTaskProjectionPath(path []byte, taskID string) bool {
+	rel, ok := bytes.CutPrefix(path, []byte(tasks.TasksRoot+"/"))
+	if !ok {
+		return false
+	}
+	if string(rel) == tasks.QueueIdentityFile {
+		return true
+	}
+	parts := bytes.SplitN(rel, []byte("/"), 3)
+	return taskID != "" && len(parts) == 3 && string(parts[1]) == taskID
 }
 
 func checkpointTaskProjection(
