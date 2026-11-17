@@ -345,8 +345,9 @@ a fallback target. Follow-up consultations use the target that last succeeded.
 
 ### Limits
 
-co:op shows the provider's stderr as diagnostics, and it never saves stderr or treats it as the
-peer's answer.
+co:op shows the provider's stderr as diagnostics and never treats it as the peer's answer. Inside
+`coop loop`, a failed call keeps the last line of its output or stderr in the run's private record
+(see below).
 
 | What | Cap |
 | --- | --- |
@@ -368,9 +369,11 @@ can't safely acquire that lock.
 
 Inside `coop loop`, co:op records each provider's consultation usage in the active run's private,
 Git-ignored `.agent/runs/<run>.peers.jsonl`. Each successful consultation adds at most one row with
-the token counts and cost reported by the provider, and failed consultations add nothing. If the box
-can't write that file, the first consultation says why its usage wasn't recorded; the reply is
-unaffected.
+the token counts and cost reported by the provider. Every consultation also adds one status row with
+its outcome, which later calls in the run read to skip a target that failed for good. A failed
+call's status row keeps the reason: the last line of the provider's output or stderr, up to 300
+bytes. If the box can't write that file, the first consultation says why its usage wasn't
+recorded; the reply is unaffected.
 
 ## The orchestrator pattern
 
