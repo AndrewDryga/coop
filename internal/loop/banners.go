@@ -261,7 +261,7 @@ func progressStateWidth(c tasks.TaskCounts) int {
 	if c.Blocked > 0 {
 		s += fmt.Sprintf(" · %d blocked", c.Blocked)
 	}
-	return len([]rune(s))
+	return ui.DisplayWidth(s)
 }
 
 // progressLineWidth is the queue's at-a-glance state for the live bar: done/total (done greened
@@ -272,7 +272,7 @@ func progressLineWidth(c tasks.TaskCounts, activity string, width int) string {
 	s := progressState(c)
 	activity = cleanDiagnosticLine(activity)
 	const separator = " · "
-	activityW := width - progressStateWidth(c) - len([]rune(separator))
+	activityW := width - progressStateWidth(c) - ui.DisplayWidth(separator)
 	if activity == "" || activityW <= 0 {
 		return s
 	}

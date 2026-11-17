@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -152,6 +154,28 @@ func TestLoopBarActivityUsesAvailableTerminalWidth(t *testing.T) {
 	}
 	if got, max := len([]rune(narrow)), width-1; got > max {
 		t.Errorf("narrow loop bar width = %d, want at most %d: %q", got, max, narrow)
+	}
+}
+
+// A CJK task title takes two columns a character. Measured in runes, the bar fit on paper but not
+// on screen: it wrapped, and each 120 ms repaint left a stale bar row in scrollback.
+func TestLoopBarFitsAWideTitle(t *testing.T) {
+	title := strings.Repeat("界", 30)
+	bar := newLoopBar(nil, loopWidth(80), time.Now(), tasks.TaskCounts{Todo: 3, Doing: 1, Done: 2}, title)
+	line := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(bar.line(), "")
+	columns := 0
+	for _, r := range line {
+		if unicode.Is(unicode.Han, r) {
+			columns += 2
+		} else {
+			columns++
+		}
+	}
+	if columns > 79 {
+		t.Errorf("bar with a 30-character CJK title at width 80 = %d columns, want at most 79: %q", columns, line)
+	}
+	if !strings.Contains(line, "界") || !strings.Contains(line, "…") || !strings.HasSuffix(line, "0:00") {
+		t.Errorf("bar should show the elided title and keep its elapsed suffix: %q", line)
 	}
 }
 

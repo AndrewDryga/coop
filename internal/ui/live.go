@@ -241,8 +241,8 @@ func ProgressBarStates(done, doing, blocked, total, width int) string {
 	return "[" + Cyan(strings.Repeat("█", d)) + Yellow(strings.Repeat(doingCell, a)) + Red(strings.Repeat(blockedCell, b)) + strings.Repeat("░", width-d-a-b) + "]"
 }
 
-// clip truncates s to at most n visible columns, counting runes but not ANSI SGR escapes or OSC 8
-// links, and appends a reset if it cut inside styled text and a link end if it cut inside a link —
+// clip truncates s to at most n visible columns, counting each character's display width
+// (RuneWidth: two for CJK and emoji) but not ANSI SGR escapes or OSC 8 links, and appends a reset if it cut inside styled text and a link end if it cut inside a link —
 // so a colored status line can be width-bounded without leaving a dangling color or link, or
 // miscounting escape bytes as width.
 func clip(s string, n int) string {
@@ -281,7 +281,9 @@ func clip(s string, n int) string {
 			i = j
 			continue
 		}
-		if vis >= n {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		w := RuneWidth(r)
+		if vis+w > n {
 			if linked {
 				b.WriteString("\033]8;;\033\\")
 			}
@@ -290,9 +292,8 @@ func clip(s string, n int) string {
 			}
 			return b.String()
 		}
-		_, size := utf8.DecodeRuneInString(s[i:])
 		b.WriteString(s[i : i+size])
-		vis++
+		vis += w
 		i += size
 	}
 	return s

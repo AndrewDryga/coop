@@ -2,8 +2,8 @@
 name: loop-live-bar
 description: the loop's sticky bottom bar; every paint parks the cursor at column 0 so a kernel ^C echo can't wrap the line and desync the region's erase math — the subsystem once deleted instead of debugged
 subsystem: loop
-sources: [internal/loop/bar.go, internal/loop/iteration.go, internal/loop/loop.go, internal/ui/live.go, internal/ui/ui.go, internal/loop/bar_test.go, internal/loop/interrupt_test.go, internal/ui/live_test.go, internal/ui/region_skip_test.go]
-updated: 2026-11-05
+sources: [internal/loop/bar.go, internal/loop/iteration.go, internal/loop/loop.go, internal/ui/live.go, internal/ui/width.go, internal/ui/ui.go, internal/loop/bar_test.go, internal/loop/interrupt_test.go, internal/ui/live_test.go, internal/ui/region_skip_test.go]
+updated: 2026-11-17
 ---
 
 `coop loop` renders a Docker-build-style live view: the agent's output scrolls in the region
@@ -50,7 +50,10 @@ the next repaint wipes it, instead of extending the line past the final column. 
 Three companions keep the same arithmetic honest, and breaking any one of them reopens the bug:
 
 - **region lines are clipped to `width-1`** so a bar line can never wrap on its own
-  (`clip(line, w-1)` in `Region.Update`, budgeted in `loopBar.line`);
+  (`clip(line, w-1)` in `Region.Update`, budgeted in `loopBar.line`). Widths are display columns
+  (`ui.DisplayWidth`/`ui.RuneWidth`, internal/ui/width.go: CJK and emoji two, combining marks and
+  joiners none), in `clip`, the loop's `truncate` and `progressLineWidth` alike; counting runes let
+  a CJK task title wrap the bar (`TestLoopBarFitsAWideTitle`, `TestClipCountsWideCharactersTwice`);
 - **nothing writes a raw newline to stderr while the bar is up.** `loopInterruptInfo` keeps its
   fresh-line guard only on the plain line-oriented path and goes through `ui` alone when
   `ui.LiveActive()` (pinned by `TestLoopInterruptInfoLiveBarNoRawNewline`);
@@ -90,6 +93,10 @@ loudly. A glitch here is cursor arithmetic to root-cause, never a reason to remo
 [[nonzero-progress-segments-stay-visible]] for the segment-visibility contract of the bar it paints.
 
 ## Changelog
+- 2026-11-17 — clip, truncate and progressLineWidth measure display columns, not runes: a
+  CJK or emoji task title wrapped the bar and left a stale row per repaint (task
+  2026-11-17-the-loop-s-live-bar-measures-display-width-so-wi). Verified against internal/ui/live.go
+  and internal/loop/bar.go.
 - 2026-11-05 — the 2s tick now stamps the state folders (`tasks.QueueStamps`) and re-reads the
   tree only when one changed or `progressRefresh` (30s) passed (`progressTick`): a full read of a
   1,300-task queue cost ~260 ms per tick. Verified `monitorProgress`, `progressTick` and

@@ -47,7 +47,7 @@ func (b *loopBar) line() string {
 	}
 	// Reserve the screen's no-wrap column plus the fixed spinner, bar, separators, and elapsed
 	// suffix. Counts and blocked state inside progressLineWidth win over optional activity text.
-	progressW := width - 1 - ui.SpinnerWidth - (20 + 2) - len([]rune(elapsedText)) - 5
+	progressW := width - 1 - ui.SpinnerWidth - (20 + 2) - ui.DisplayWidth(elapsedText) - 5
 	return fmt.Sprintf("%s %s %s · %s",
 		ui.SpinFrame(b.spin),
 		ui.ProgressBarStates(b.c.Done, b.c.Doing, b.c.Blocked, b.c.Total(), 20),

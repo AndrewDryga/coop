@@ -7,6 +7,45 @@ import (
 	"unicode/utf8"
 )
 
+func TestDisplayWidth(t *testing.T) {
+	for s, want := range map[string]int{
+		"":          0,
+		"hello":     5,
+		"界":         2, // CJK ideograph
+		"한":         2, // Hangul syllable
+		"ｶ":         1, // halfwidth katakana stays narrow
+		"Ａ":         2, // fullwidth Latin
+		"🚀":         2, // emoji
+		"é":        1, // combining acute accent
+		"👩‍💻":       4, // a ZWJ sequence: the joiner is zero-width, each emoji counted
+		"· █░▒⠋":    6, // the live bar's own separators, cells and spinner stay narrow
+		"done · 界面": 11,
+	} {
+		if got := DisplayWidth(s); got != want {
+			t.Errorf("DisplayWidth(%q) = %d, want %d", s, got, want)
+		}
+	}
+}
+
+// A wide character takes two columns. Counting it as one let a CJK or emoji line wider than the
+// terminal through, it wrapped, and the region erased one row of the two on screen.
+func TestClipCountsWideCharactersTwice(t *testing.T) {
+	for name, char := range map[string]string{"CJK": "界", "emoji": "🚀"} {
+		line := strings.Repeat(char, 60)
+		got := clip(line, 79)
+		if runes := utf8.RuneCountInString(got); runes != 39 {
+			t.Errorf("%s line clipped to 79 columns kept %d characters (%d columns), want 39 (78 columns)", name, runes, 2*runes)
+		}
+		if w := DisplayWidth(got); w > 79 {
+			t.Errorf("%s line clipped to 79 measures %d columns", name, w)
+		}
+	}
+	// Styled: the reset still closes a cut that lands on a wide character.
+	if got, want := clip("\033[32m界界界\033[0m", 5), "\033[32m界界\033[0m"; got != want {
+		t.Errorf("clip styled wide = %q, want %q", got, want)
+	}
+}
+
 func TestClip(t *testing.T) {
 	if got := clip("hello world", 5); got != "hello" {
 		t.Errorf("clip plain = %q, want %q", got, "hello")
