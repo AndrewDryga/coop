@@ -22,9 +22,10 @@ import (
 
 // gitFetchInto fetches a fork's branch into review/<name> in the parent repo. The
 // fetch is forced (+) because landing rebases the fork branch, so a re-fetch after a
-// rebase is not a fast-forward of the prior review ref.
+// rebase is not a fast-forward of the prior review ref. --no-tags, because Git otherwise copies
+// every tag the box made on that history into the parent, where a build or `git push --tags` uses it.
 func gitFetchInto(repo, ws, name string) error {
-	return forkspace.GitRun(repo, "fetch", "--quiet", ws, "+"+name+":review/"+name)
+	return forkspace.GitRun(repo, "fetch", "--quiet", "--no-tags", ws, "+"+name+":review/"+name)
 }
 
 // forkReviewCandidate is a disposable, rebased view of a fork. base remains the parent commit the
@@ -105,7 +106,7 @@ func prepareForkReviewCandidate(repo, ws, name string) (c forkReviewCandidate, e
 		return c, fmt.Errorf("detach review scratch base: %w", err)
 	}
 	c.name = name
-	if err = forkspace.GitRun(c.dir, "fetch", "--quiet", ws, "+"+name+":refs/heads/"+name); err != nil {
+	if err = forkspace.GitRun(c.dir, "fetch", "--quiet", "--no-tags", ws, "+"+name+":refs/heads/"+name); err != nil {
 		return c, fmt.Errorf("fetch fork into review scratch: %w", err)
 	}
 	if c.tip = forkspace.GitOut(c.dir, "rev-parse", "--verify", "refs/heads/"+name); c.tip == "" {

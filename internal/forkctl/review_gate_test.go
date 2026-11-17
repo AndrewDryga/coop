@@ -560,3 +560,23 @@ func TestForkReviewReturnsViewerFailure(t *testing.T) {
 		})
 	}
 }
+
+// A review fetches the fork's branch, never its tags: Git follows a tag on fetched history by
+// default, which would plant a box's v* tag in the parent for the next build or push to use.
+func TestForkReviewDoesNotCopyForkTags(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	isolatedTestCommit(t, ws, "feature.txt", "work\n")
+	git(t, ws, "tag", "v99.0.0")
+	c := &Control{cfg: &config.Config{RepoOverride: repo}}
+	out, code, err := reviewCommandOutput(t, c, "perf", "--stat")
+	if code != 0 || err != nil {
+		t.Fatalf("ForkReview = (%d, %v)\n%s", code, err, out)
+	}
+	if tags := forkspace.GitOut(repo, "for-each-ref", "refs/tags"); tags != "" {
+		t.Fatalf("the review copied the fork's tags into the parent: %q", tags)
+	}
+}
