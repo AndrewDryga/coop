@@ -143,7 +143,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			case workers <- struct{}{}:
 				defer func() { <-workers }()
 			case <-ctx.Done():
-				row.quotaErr = errors.New("usage lookup timed out")
+				row.quotaErr = errors.New("usage lookup was stopped") // only an interrupt ends ctx; the time limits are per lookup
 				return
 			}
 			ag, _ := agents.Get(row.provider)
