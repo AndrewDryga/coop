@@ -3360,6 +3360,12 @@ func appendPublish(args []string, cfg *config.Config, spec RunSpec, free func(in
 func announceServePlan(plan []servePublication) {
 	var published []servePublication
 	for _, s := range plan {
+		if s.Unassigned {
+			ui.Warning(fmt.Sprintf("Could not publish box port %d", s.Port),
+				"It was added to serve.ports after this editor session started.",
+				"Restart the editor session to publish it.")
+			continue
+		}
 		if !s.Published {
 			// The host port and the box port can differ, so both are named: one is the URL to open,
 			// the other is what the dev server inside the box listens on.

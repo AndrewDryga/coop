@@ -17,6 +17,7 @@ type servePublication struct {
 	Bind       int // the host port this box binds when it is not Host: an editor session forwards Host to it
 	Published  bool
 	HostTaken  bool // an editor session could not take Host, so a browser does not reach this box there yet
+	Unassigned bool // added after the editor session started, so the session gave it no port to bind
 }
 
 // servePublicationFor decides one port. In an editor session (ServeBinds set) only the supervisor
@@ -26,6 +27,8 @@ func (spec RunSpec) servePublicationFor(port int, free func(int) bool) servePubl
 	s := servePublication{Port: port, Host: project.HostPort(spec.Repo, port), Bind: spec.ServeBinds[port], HostTaken: spec.ServeTaken[port]}
 	if spec.ServeBinds == nil || s.Bind != 0 {
 		s.Published = free(s.bound())
+	} else {
+		s.Unassigned = true
 	}
 	return s
 }
@@ -170,8 +173,10 @@ func serveLines(serve []servePublication) []string {
 				continue
 			}
 			lines = append(lines, fmt.Sprintf("- your port %d is published: a browser on the host reaches it at http://localhost:%d", s.Port, s.Host))
+		} else if s.Unassigned {
+			lines = append(lines, fmt.Sprintf("- your port %d is NOT published: it was added after this editor session started; a human restarts the session to publish it", s.Port))
 		} else {
-			lines = append(lines, fmt.Sprintf("- your port %d is NOT published: host port %d is already in use by another process", s.Port, s.Host))
+			lines = append(lines, fmt.Sprintf("- your port %d is NOT published: host port %d is already in use by another process", s.Port, s.bound()))
 		}
 	}
 	return lines

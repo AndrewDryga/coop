@@ -262,4 +262,17 @@ func TestEditorServePortStates(t *testing.T) {
 	if !strings.Contains(note, "does not reach it yet") || strings.Contains(note, "a browser on the host reaches it at") {
 		t.Fatalf("note = %s", note)
 	}
+	// The added port is not busy: nothing probed it, so nobody is told to free a host port.
+	if !plan[1].Unassigned || !strings.Contains(note, "port 5173 is NOT published: it was added after this editor session started") || strings.Contains(note, "already in use") {
+		t.Fatalf("note = %s", note)
+	}
+	out := captureStderr(t, func() { announceServePlan(plan[1:]) })
+	if !strings.Contains(out, "Restart the editor session") || strings.Contains(out, "already in use") {
+		t.Fatalf("terminal warning = %s", out)
+	}
+	// A busy private port is named as the port that is busy, not the stable address.
+	busy := servePublicationPlan(&config.Config{Egress: "open"}, spec, func(int) bool { return false })
+	if note := servicesNote(serviceLaunchOutcome{state: servicesNotConfigured}, nil, false, busy[:1]); !strings.Contains(note, "host port 41234 is already in use") {
+		t.Fatalf("busy note = %s", note)
+	}
 }
