@@ -919,7 +919,11 @@ func (s *Service) reclaimStorageOnce(ctx context.Context) {
 		s.log.Warn("worker storage reclamation problem", "problem", problem)
 	}
 	if result.StagedPurged > 0 {
-		s.log.Info("finished staged fork discards", "staged_purged", result.StagedPurged)
+		// Staged fork discards and interrupted review and checkpoint stages share this counter.
+		s.log.Info("purged staged discards", "staged_purged", result.StagedPurged)
+	}
+	if result.SnapshotsPruned > 0 {
+		s.log.Info("pruned companion snapshots no session can still use", "snapshots_pruned", result.SnapshotsPruned)
 	}
 	if result.CompanionsReclaimed > 0 || result.CompanionStagesPurged > 0 {
 		s.log.Info("reclaimed closed-session companions", "companions_reclaimed", result.CompanionsReclaimed, "staged_purged", result.CompanionStagesPurged)
