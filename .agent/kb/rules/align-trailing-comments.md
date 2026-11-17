@@ -2,9 +2,9 @@
 name: align-trailing-comments
 description: "trailing `#` comments in an example line up in one column"
 scope: docs
-sources: [internal/cli/help.go, tools/aligncomments/main.go, README.md, docs, CONTRIBUTING.md, MIGRATING.md]
+sources: [internal/cli/help.go, tools/aligncomments/main.go, README.md, docs, CONTRIBUTING.md, MIGRATING.md, Makefile, site/index.html, site/docs.html]
 check: "make align"
-updated: 2026-10-16
+updated: 2026-11-17
 ---
 
 # Trailing `#` comments in an example line up in one column
@@ -36,14 +36,19 @@ Same failure as a help row pushing past the description gap — see
 - `help.go` is the source of truth for the manual: edit it, run `make docs` (docs-check
   enforces the sync), and the alignment flows into cli.md/coop.1/llms.txt.
 
-**Mechanically:** `make align` (or `go run ./tools/aligncomments -check` / `-write`) over README,
-the site pages, and cli.md. It aligns jagged blocks, skips aligned ones and lone outliers, and
-counts width visually (HTML tags/entities and the `<pre>` `>` don't count). The stanza-vs-block
-and outlier calls are heuristic, so it's an aid, not a gate — confirm the result in review.
+**Mechanically:** `make align` (or `go run ./tools/aligncomments -check` / `-write`) over the
+files in `defaultFiles` (README, CONTRIBUTING, MIGRATING, the two site pages and the docs pages). It
+aligns jagged blocks, skips aligned ones and lone outliers, and counts width visually (HTML
+tags/entities and the `<pre>` `>` don't count). It is a gate step: `make check` (`check-static`)
+and `make check-local` fail on a jagged block. The stanza-vs-block and outlier calls are heuristic,
+so when it misjudges a block, reshape the block rather than skip the check, and confirm the result
+in review.
 
 See also [[help-output-style]], [[no-color-in-width-fields]], [[tag-exceptions-not-every-row]].
 
 ## Changelog
+- 2026-11-17 — `make align` is a gate step in `make check` and `check-local`, not an optional aid;
+  the file set is `defaultFiles` (audit R1-1; checked the Makefile and tools/aligncomments/main.go).
 - 2026-08-25 — replaced the retired Fleet watch example with task watch; the alignment rule is
   unchanged.
 - 2026-07-10 — created
