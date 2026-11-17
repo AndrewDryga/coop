@@ -453,6 +453,9 @@ func filteredWritableRoots(cfg *config.Config, spec RunSpec) []string {
 		for _, root := range configRoots[1:] {
 			// BoxHome is protected host authority, not a directory mounted into the box.
 			// Treating it as writable rejects the selected profile beneath the default agents/ tree.
+			// What this can still add is the native authority folder when it sits outside ConfigDir.
+			// No box mounts it; listing it keeps every bind source out from under it, a second
+			// guard beside CheckExposure.
 			if root != cfg.BoxHome && root != cfg.RunfilesHome() {
 				roots = append(roots, root)
 			}
