@@ -1879,6 +1879,42 @@ func TestSessionServiceWatchdogPreservesPendingCancelUntilWorkerRegisters(t *tes
 	}
 }
 
+// A turn left running with no worker (its usage unsettled, or between the worker's exit and its
+// fallback) will never register. A timed-out cancel must not leave an entry that refuses every
+// later cancel of that turn under a new key.
+func TestTimedOutCancelOfAnUnownedTurnLeavesNoPendingEntry(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	service.stopTimeout = 10 * time.Millisecond
+	defer service.Stop()
+	ctx := context.Background()
+	sess, err := service.CreateRemoteSession(ctx, "create-unowned", service.request(t, "unowned"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.Store().SubmitTurn(ctx, "turn-unowned", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := service.Store().LeaseNextTurn(ctx, sess.ID); err != nil || !ok {
+		t.Fatalf("lease: %v %v", ok, err)
+	}
+	req := session.CancelTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: sess.Revision}
+	if _, err := service.CancelTurn(ctx, "cancel-unowned-1", req); err == nil {
+		t.Fatal("cancel of an unowned turn reported success")
+	}
+	service.mu.Lock()
+	left := len(service.pendingCancels)
+	service.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("timed-out cancel left %d pending entries", left)
+	}
+	if _, err := service.CancelTurn(ctx, "cancel-unowned-2", req); session.CodeOf(err) == session.CodeIdempotencyConflict {
+		t.Fatalf("a later cancel under a new key was refused: %v", err)
+	}
+}
+
 func TestSessionServiceStartupCompletesInterruptedCancelReceipt(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")

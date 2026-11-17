@@ -3254,9 +3254,11 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 				return s.uncertainCancelOperation(ctx, op, "active turn finished during cancellation handoff")
 			}
 		case <-timer.C:
+			s.dropUnclaimedCancel(req.SessionID, req.TurnID, pending)
 			return session.Turn{}, wrapServiceOperationError(op.ID,
 				errors.New("active turn worker did not register before the cancellation deadline"))
 		case <-ctx.Done():
+			s.dropUnclaimedCancel(req.SessionID, req.TurnID, pending)
 			return session.Turn{}, wrapServiceOperationError(op.ID, ctx.Err())
 		}
 		s.mu.Lock()
@@ -3297,6 +3299,23 @@ func sessionTurnTerminal(state session.TurnState) bool {
 	default:
 		return false
 	}
+}
+
+// dropUnclaimedCancel forgets a pending cancel no worker can still claim. A session worker holds
+// the runtime from before lease until its turn returns, so a free runtime proves no worker is
+// between lease and registration; a held one keeps the entry for that worker to pick up.
+// Otherwise the entry outlived its turn and refused every later cancel under a new key.
+func (s *Service) dropUnclaimedCancel(sessionID, turnID string, pending *pendingSessionCancel) {
+	unlock, ok := s.tryLockSessionRuntime(sessionID)
+	if !ok {
+		return
+	}
+	defer unlock()
+	s.mu.Lock()
+	if s.pendingCancels[turnID] == pending {
+		delete(s.pendingCancels, turnID)
+	}
+	s.mu.Unlock()
 }
 
 func (s *Service) failCancelOperation(ctx context.Context, op session.Operation, err error) error {
