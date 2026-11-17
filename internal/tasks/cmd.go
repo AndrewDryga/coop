@@ -1466,8 +1466,15 @@ func parkTask(root string, t Item, reason string, actor ClaimActor) error {
 		return err
 	}
 	defer owner.Close()
-	if _, claimed, err := owner.Read(); err != nil {
+	if record, claimed, err := owner.Read(); err != nil {
 		return err
+	} else if claimed && record.Kind == TaskOwnerFork {
+		// Release refuses a fork's task, so its advice would be a dead end here.
+		cause := "It is " + ui.SafeInline(TaskOwnerLabel(record)) + ", and a fork's task cannot be parked."
+		if t.State == StateBlocked {
+			return refuse(cause, [2]string{"Answer it:", "coop tasks unblock " + id + ` "<answer>"`})
+		}
+		return refuse(cause)
 	} else if claimed {
 		return refuse("It is claimed.", [2]string{"Release it first:", "coop tasks release " + id}, [2]string{"Then park it:", "coop tasks park " + id})
 	}

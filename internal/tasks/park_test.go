@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -218,6 +220,36 @@ func TestParkRefusesAClaimedOrReopenedTaskInTheSharedBlock(t *testing.T) {
 		if !pathExists(filepath.Join(root, StateTodo, id)) {
 			t.Errorf("a refused park moved %s", id)
 		}
+	}
+}
+
+// A fork's blocked question is refused with what works: release refuses a fork's task, so the
+// refusal names the fork and offers the answer instead.
+func TestParkRefusesAForksQuestionWithTheAnswerNotARelease(t *testing.T) {
+	root := t.TempDir()
+	item := taskForLease(t, root, StateBlocked, "forked")
+	instance, err := EnsureTaskInstance(root, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 10, 28, 1, 2, 3, 0, time.UTC)
+	if err := writeTaskOwnerRecord(root, TaskOwnerRecord{Version: taskOwnershipRecordVersion, TaskID: item.ID, Kind: TaskOwnerFork, Task: &instance, Fork: &ForkTaskOwner{
+		Fork: forkspace.Identity{Name: "web", Generation: forkspace.Generation(strings.Repeat("a", 32))}, AssignmentID: strings.Repeat("b", 32), Phase: ForkAssignmentBlocked,
+		Projection: filepath.Join(t.TempDir(), "projection"), BaselineHead: strings.Repeat("c", 40), ProjectionDigest: strings.Repeat("d", 64), CandidateID: strings.Repeat("e", 32), AssignedAt: stamp, UpdatedAt: stamp,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := tasksFolderPark(root, []string{"forked"})
+	if code != 1 {
+		t.Fatalf("park of a fork's task = (%d, %v), want exit 1 and a refusal", code, err)
+	}
+	want := "\n✗ Could not park forked\n\n      It is assigned to fork web (blocked), and a fork's task cannot be parked.\n\n" +
+		"  Answer it: coop tasks unblock forked \"<answer>\"\n"
+	if got := refusal(t, err).Render(ui.Palette{}); got != want {
+		t.Fatalf("park of a fork's task:\n%s\nwant:\n%s", got, want)
+	}
+	if !pathExists(filepath.Join(root, StateBlocked, "forked")) {
+		t.Error("a refused park moved the fork's task")
 	}
 }
 
