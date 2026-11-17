@@ -80,6 +80,7 @@ type app struct {
 	acpSupervise        func([]string, *acpctl.Control) (int, error) // test seam; nil → the real stdio supervisor
 	admitNetwork        admitNetworkFunc                             // test seam for an ACP supervisor's admission; nil → box.AdmitNetwork
 	forkLoopRun         func(loop.RunSpec) (int, error)              // test seam for a fork scheduler's loop passes; nil → the loop engine
+	evalRunBox          boxRunner                                    // test seam for eval trial boxes; nil → box.Run
 }
 
 // ensureRuntime lazily detects and caches the container runtime the first time a box-running command

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -53,10 +54,16 @@ type TrialFunc func(ctx context.Context, t Trial) TrialResult
 // test can shrink it.
 var cleanupReserve = 10 * time.Second
 
+// ErrInterrupted is Execute's answer when the caller's context was cancelled rather than run out of
+// time — the operator pressed Ctrl-C. The run is left unsealed, and each trial it stopped keeps its
+// running record: started, never finished.
+var ErrInterrupted = errors.New("the eval run was interrupted")
+
 // Execute runs the whole plan. It writes a pending record for every requested trial first (so an
 // interrupted run is visibly incomplete, never silently short), then works the schedule with `jobs`
 // workers until the schedule is empty or the admission deadline passes, and finally seals the
-// summary over the FULL requested matrix. It returns the sealed summary.
+// summary over the FULL requested matrix. It returns the sealed summary, or ErrInterrupted unsealed
+// when ctx is cancelled.
 func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Store, run TrialFunc, now func() time.Time) (RunSummary, error) {
 	if now == nil {
 		now = time.Now
@@ -156,6 +163,13 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 				trialCtx, cancel := context.WithDeadline(runCtx, t.Deadline)
 				res := run(trialCtx, t)
 				cancel()
+				if interrupted(ctx) {
+					// Not a verdict and not a timeout: the record stays running, with why.
+					rec := runningRecord(store.ID(), t, started)
+					rec.Detail = "interrupted before it finished"
+					noteErr(store.WriteTrial(rec))
+					continue
+				}
 				status := res.Status
 				if status == "" {
 					status = TrialError
@@ -178,6 +192,9 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 	if recordErr != nil {
 		return RunSummary{}, recordErr
 	}
+	if interrupted(ctx) {
+		return RunSummary{}, ErrInterrupted
+	}
 
 	// The trials never admitted (deadline/cancel) are still pending on disk; reflect them in the
 	// summary so requested == the full matrix and coverage is honest.
@@ -195,6 +212,11 @@ func Execute(ctx context.Context, plan *Plan, frozen []FrozenConfig, store *Stor
 		return RunSummary{}, err
 	}
 	return summary, nil
+}
+
+// interrupted reports a caller context cancelled before its deadline: a signal, never a timeout.
+func interrupted(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.Canceled)
 }
 
 // capDetail bounds a trial's detail — it can carry candidate-influenced text — so one trial cannot

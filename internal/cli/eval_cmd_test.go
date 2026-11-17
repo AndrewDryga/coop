@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -417,6 +419,63 @@ func TestEvalExpiredPreparationLeavesNoRunOrStagedInputs(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(root); err != nil && !os.IsNotExist(err) || len(entries) != 0 {
 		t.Fatalf("expired preparation left state: %v, %v", entries, err)
+	}
+}
+
+// Trial boxes run in their own process groups, so the terminal's Ctrl-C never reaches them: the
+// signal must cancel the run. The trial's box sees its context end, the command exits 130, and the
+// run is left unsealed with the trial marked as stopped, not timed out.
+func TestEvalRunInterruptStopsTrialBoxesAndLeavesTheRunUnsealed(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	suite := trialSuite(t)
+	shim := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Keeps the test process alive on the old code, which installs no handler and would die of it.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGHUP)
+	defer signal.Stop(guard)
+
+	stopped := make(chan bool, 1)
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), BaseImage: "worker-base:fixed"}, rt: runtime.Runtime{Name: shim}, rtSet: true}
+	a.evalRunBox = func(spec box.RunSpec) (int, error) {
+		if spec.Agent == "" {
+			return 0, nil // grading never comes after an interrupt
+		}
+		if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+			t.Error(err)
+		}
+		select {
+		case <-spec.Ctx.Done():
+			stopped <- true
+			return 1, spec.Ctx.Err()
+		case <-time.After(10 * time.Second):
+			stopped <- false
+			return 1, errors.New("the trial box was never stopped")
+		}
+	}
+	code, err := a.evalRun([]string{suite.Path, "codex", "--timeout", "10m"})
+	if !<-stopped {
+		t.Fatal("the signal did not end the trial box's context")
+	}
+	if code != interruptedStatus || err == nil || !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("interrupted eval run = (%d, %v), want exit 130 and an interrupted error", code, err)
+	}
+	root, err := evalStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := eval.ListRuns(root)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs = %v, %v", runs, err)
+	}
+	if _, sealed, err := eval.LoadSummary(root, runs[0]); err != nil || sealed {
+		t.Fatalf("the interrupted run was sealed: %v, %v", sealed, err)
+	}
+	trials, err := eval.LoadTrials(root, runs[0])
+	if err != nil || len(trials) != 1 || trials[0].Status != eval.TrialRunning || !strings.Contains(trials[0].Detail, "interrupted") {
+		t.Fatalf("trial records = %+v, %v; want the stopped trial marked interrupted", trials, err)
 	}
 }
 

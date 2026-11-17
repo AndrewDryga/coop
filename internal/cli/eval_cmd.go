@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -238,7 +240,16 @@ func (a *app) evalRun(args []string) (int, error) {
 		fmt.Println("Dry run: nothing was launched.")
 		return 0, nil
 	}
-	return a.executeEvalRun(ctx, plan, frozen)
+	// From here trials launch boxes and loop children in their own process groups, which the
+	// terminal's Ctrl-C never reaches: the signal cancels the run, so each gets its own teardown and
+	// the deferred cleanup runs.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	code, err := a.executeEvalRun(ctx, plan, frozen)
+	if errors.Is(err, eval.ErrInterrupted) || err != nil && errors.Is(ctx.Err(), context.Canceled) {
+		return interruptedStatus, errors.New("the eval run was interrupted; its record is left unfinished (coop eval inspect shows what ran)")
+	}
+	return code, err
 }
 
 // evalDeadline bounds the invocation by its --timeout from when the command started. Only a preview
@@ -335,7 +346,7 @@ func (a *app) executeEvalRun(ctx context.Context, plan *eval.Plan, frozen []eval
 			presets[c.Label] = filepath.Join(inputs, "presets", c.Label)
 		}
 	}
-	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image, presets: presets, profiles: captures}
+	runner := &trialRunner{app: a, suite: plan.Suite, workRoot: workRoot, image: image, presets: presets, profiles: captures, runBox: a.evalRunBox}
 	for _, c := range plan.Suite.Cases {
 		if r := c.Runtime; r != nil {
 			printEvalText("Runtime: ", fmt.Sprintf("%s — %s, %s, %s", c.ID, eval.ProfileProtocol, r.ImageID, r.Platform))

@@ -109,7 +109,8 @@ func TestExecuteRunsEveryTrialBoundedAndSeals(t *testing.T) {
 	}
 }
 
-// Cancellation after every pending record is durable seals the full matrix without launching.
+// Cancellation after every pending record is durable launches nothing and leaves the full matrix
+// pending in an unsealed run: an interrupt, never a finished run.
 func TestExecuteLeavesUnadmittedTrialsPending(t *testing.T) {
 	plan, frozen := agentPlan(t, 2, 1, 1, time.Hour)
 	root := t.TempDir()
@@ -132,15 +133,14 @@ func TestExecuteLeavesUnadmittedTrialsPending(t *testing.T) {
 		atomic.AddInt32(&ran, 1)
 		return TrialResult{Status: TrialPassed}
 	}
-	sum, err := Execute(ctx, plan, frozen, store, run, now)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Execute(ctx, plan, frozen, store, run, now); !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("Execute = %v, want ErrInterrupted", err)
 	}
 	if ran != 0 {
 		t.Errorf("ran %d trials on a cancelled run, want 0", ran)
 	}
-	if sum.Requested != 4 || sum.Counts[TrialPending] != 4 {
-		t.Errorf("cancelled run summary = %+v, want 4 pending", sum)
+	if _, sealed, err := LoadSummary(root, store.ID()); err != nil || sealed {
+		t.Errorf("a cancelled run was sealed: %v %v", sealed, err)
 	}
 	// Every trial is on disk as pending.
 	trials, err := LoadTrials(root, "run2")
@@ -350,5 +350,48 @@ func TestExecuteInterruptedPreparationRemainsUnsealed(t *testing.T) {
 				t.Fatalf("incomplete preparation sealed: %v %v", sealed, err)
 			}
 		})
+	}
+}
+
+// An interrupt (the caller's context cancelled, not expired) mid-trial stops the trial, records no
+// verdict or timeout for it, admits nothing more and leaves the run unsealed.
+func TestExecuteInterruptedTrialStaysRunningAndTheRunUnsealed(t *testing.T) {
+	plan, frozen := agentPlan(t, 2, 1, 1, time.Hour)
+	root := t.TempDir()
+	store, err := CreateRun(root, RunRecord{ID: "interrupted", Suite: "s", Runner: RunnerAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var launched int32
+	_, err = Execute(ctx, plan, frozen, store, func(trialCtx context.Context, _ Trial) TrialResult {
+		atomic.AddInt32(&launched, 1)
+		cancel() // the operator's Ctrl-C
+		<-trialCtx.Done()
+		return TrialResult{Status: TrialTimedOut, Detail: "stopped"}
+	}, nil)
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("Execute = %v, want ErrInterrupted", err)
+	}
+	if launched != 1 {
+		t.Errorf("launched %d trials after the interrupt, want only the one running", launched)
+	}
+	trials, err := LoadTrials(root, store.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	statuses := map[TrialStatus]int{}
+	for _, tr := range trials {
+		statuses[tr.Status]++
+		if tr.Status == TrialRunning && !strings.Contains(tr.Detail, "interrupted") {
+			t.Errorf("the stopped trial's record does not say it was interrupted: %q", tr.Detail)
+		}
+	}
+	if statuses[TrialRunning] != 1 || statuses[TrialTimedOut] != 0 || statuses[TrialPending] != len(trials)-1 {
+		t.Errorf("trial statuses = %v; want the stopped trial running and the rest pending", statuses)
+	}
+	if _, sealed, err := LoadSummary(root, store.ID()); err != nil || sealed {
+		t.Fatalf("an interrupted run was sealed: %v %v", sealed, err)
 	}
 }
