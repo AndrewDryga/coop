@@ -69,12 +69,9 @@ func captureNetworkRulesFile(path string, exposed []string) (*networkRulesFile, 
 	return &networkRulesFile{rules: rules}, nil
 }
 
-func (f *networkRulesFile) apply(input networkstate.Admission) (networkstate.Admission, error) {
-	if f == nil {
-		return input, nil
-	}
+func (f *networkRulesFile) apply(input networkstate.Admission) networkstate.Admission {
 	input.Operator = append(append([]egress.Input{}, input.Operator...), egress.Input{Rules: f.rules, Origin: egress.Origin{Kind: "operator", Name: "rules-file"}})
-	return input, nil
+	return input
 }
 
 // hostFileSource is one resolved host input: path is the canonical endpoint that

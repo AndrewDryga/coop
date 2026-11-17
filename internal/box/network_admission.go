@@ -374,9 +374,11 @@ func checkRuleFlags(spec RunSpec, options NetworkAdmission, input networkstate.A
 		networkLaunchName(spec), named, adds, modeSource(input, mode), mode.Word(), named)
 }
 
-// modeSource names what chose a run's network mode, in the words it was set with, by the order
-// networkstate.Admission.resolveMode reads them in. A saved approval is the one source this input
-// does not carry, so it is what is left.
+// modeSource names a source that holds the run's network mode, in the words it was set with: the
+// flag, then COOP_EGRESS, then box.egress. A saved approval is the one source this input does not
+// carry, so it is named only when none of these holds the mode. resolveMode reads the approval
+// second, so when the approval decided and a later source holds the same value, that source is
+// named instead; the refusal's advice works either way.
 func modeSource(input networkstate.Admission, mode egress.Mode) string {
 	switch {
 	case input.InvocationMode != nil && *input.InvocationMode == mode:
@@ -556,7 +558,7 @@ func networkAdmissionInput(cfg *config.Config, p *project.Project, options Netwo
 	if err != nil {
 		return networkstate.Admission{}, err
 	}
-	return rules.apply(input)
+	return rules.apply(input), nil
 }
 
 // checkFilteredRuntime refuses a launch whose runtime can never serve a filtered box. Every

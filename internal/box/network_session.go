@@ -41,7 +41,7 @@ func ControllerJobFromEnvironment() (bool, error) {
 	return true, nil
 }
 
-// sessionNetworkCaptureLimit bounds the encoded reference. Five short opaque
+// sessionNetworkCaptureLimit bounds the encoded reference. Six short opaque
 // identities never approach it; anything larger is not this contract.
 const sessionNetworkCaptureLimit = 4 << 10
 
