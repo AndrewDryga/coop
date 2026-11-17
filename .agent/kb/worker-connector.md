@@ -2,8 +2,8 @@
 name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
-sources: [internal/session/quiescence.go, internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/box/controller_runtime.go, .agent/kb/controller-project-runtime.md, internal/workerconnector/activity_narration.go]
-updated: 2026-11-07
+sources: [internal/session/quiescence.go, internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/box/controller_runtime.go, .agent/kb/controller-project-runtime.md, internal/workerconnector/activity_narration.go, internal/workerconnector/job_sources.go]
+updated: 2026-11-17
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -136,7 +136,8 @@ The traps the code does not make obvious:
 - **A create waiting on a first download is held, quietly.** A repository's first download (its
   whole history) runs in the background, and a create that needs it fails with
   `errJobSourceDownloading`, which has no result, so the controller redelivers it on every poll.
-  `firstDownloadWaits` (first_download_waits.go) skips staging it for 5 s, doubling to 2 min;
+  `firstDownloadWaits` (first_download_waits.go) skips staging it for 5 s, doubling to 15 s; a create
+  waiting for disk space (`errJobSourceStorage`) is held the same way;
   polling goes on meanwhile, so redelivery keeps renewing the controller's lease. Run reports the
   wait once, when it begins, not on every try. Tests that drive Run should use synctest and few
   polls, because every poll fsyncs the journal; a fake API needs `Forward` too, or a create is
@@ -191,6 +192,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-17 — a held create's retry caps at 15 s, not 2 min, and the disk-space wait holds the same way (audit K6-8; checked internal/workerconnector/first_download_waits.go).
 - 2026-11-07 — a saved identity is bound to its controller in one spelling, and an expired one and a file open
   to other users end `coop sessions connect` in the shared block (task 2026-11-07-treat-a-controller-url-with-a-trailing-slash-as).
 - 2026-11-07 — a saved identity for another controller, or a damaged one, ends `coop sessions connect` in the
