@@ -672,7 +672,21 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 		t.Error("publisher permissions must remain explicitly scoped")
 	}
 	setup, notes, remote, publisher, setups := -1, -1, -1, -1, 0
+	attest, undraft := -1, -1
 	for i, step := range publish.Steps {
+		if strings.HasPrefix(step.Uses, "actions/attest-build-provenance@") {
+			attest = i
+			if step.With["subject-path"] != "dist/coop_*.tar.gz" {
+				t.Error("provenance must cover every published archive")
+			}
+		}
+		if strings.TrimSpace(step.Run) == `gh release edit "$RELEASE_TAG" --draft=false` {
+			undraft = i
+			if step.Env["RELEASE_TAG"] != "${{ github.ref_name }}" || step.Env["GH_TOKEN"] != "${{ secrets.GITHUB_TOKEN }}" ||
+				step.Env["GH_REPO"] != "${{ github.repository }}" {
+				t.Error("the undraft step must publish the event tag's release in this repository")
+			}
+		}
 		if strings.HasPrefix(step.Uses, "actions/setup-go@") {
 			setup = i
 			setups++
@@ -713,6 +727,13 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 		t.Errorf("preflight must follow checkout and Go setup, and remote recheck immediately precede publisher: setup=%d notes=%d remote=%d publisher=%d",
 			setup, notes, remote, publisher)
 	}
+	// A release goes public only after its provenance is attested: GoReleaser publishes a draft,
+	// the attestation follows, and the last step undrafts it. Attesting before GoReleaser would
+	// attest archives that do not exist yet; a draft never undrafted is never released.
+	if attest < 0 || attest < publisher || undraft != len(publish.Steps)-1 || undraft < attest {
+		t.Errorf("the release must be published as the last step, after its provenance is attested: publisher=%d attest=%d undraft=%d",
+			publisher, attest, undraft)
+	}
 	data, err := os.ReadFile(".goreleaser.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -720,9 +741,16 @@ func TestReleaseWorkflowQualification(t *testing.T) {
 	var config struct {
 		Before    struct{ Hooks []string } `yaml:"before"`
 		Changelog struct{ Disable bool }   `yaml:"changelog"`
+		Release   struct {
+			Draft                bool `yaml:"draft"`
+			ReplaceExistingDraft bool `yaml:"replace_existing_draft"`
+		} `yaml:"release"`
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
+	}
+	if !config.Release.Draft || !config.Release.ReplaceExistingDraft {
+		t.Error("GoReleaser must create a draft the workflow publishes after attestation, and a rerun must replace a failed draft")
 	}
 	if config.Changelog.Disable {
 		t.Error("GoReleaser must keep changelog enabled to load --release-notes")

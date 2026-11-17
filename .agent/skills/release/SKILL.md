@@ -87,4 +87,7 @@ each time — this is the contract; follow it.
 - Failed before publishing? Delete the tag both sides (`git tag -d "v<version>"`,
   `git push origin ":v<version>"`), restore its changes under Unreleased, fix, retry. Verify no
   public release/assets exist first and retain the exact tag identity in task artifacts.
+- Failed after GoReleaser, at the provenance attestation or the final undraft step? The release
+  is still a draft, never public: rerun the failed job (`gh run rerun <run-id> --failed`); its
+  GoReleaser run replaces the draft, then attests and publishes it.
 - Already published? Never rewrite a public tag — roll forward with a follow-up patch.

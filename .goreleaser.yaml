@@ -63,8 +63,13 @@ signs:
 # own compare link against the previous published release, which a git-tag {{ .PreviousTag }}
 # can get wrong, and a footer would add a second link to every page.
 
+# The release is created as a draft. The workflow attests the archives' build provenance, then
+# publishes the draft, so a release is never public without provenance. A failed attestation
+# leaves only the draft, which a rerun of the job replaces.
 release:
   github:
     owner: AndrewDryga
     name: coop
   prerelease: auto
+  draft: true
+  replace_existing_draft: true
