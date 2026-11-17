@@ -36,6 +36,47 @@ func TestReviewPacketIncludesBoundedExactCommitDiff(t *testing.T) {
 	}
 }
 
+// Long subjects and a large diff must not cut the packet's tail: the diff's END marker always
+// closes the untrusted block, and subjects that did not fit are counted, not silently lost.
+func TestReviewPacketBudgetsSubjectsAndKeepsDiffClosed(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	if err := os.WriteFile(filepath.Join(repo, "big.txt"), []byte(strings.Repeat("a line of changed text\n", 1000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "big.txt")
+	git("commit", "-qm", "big change")
+	sha := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	var subjects []string
+	for i := range 6 {
+		dir := filepath.Join(t.TempDir(), "task")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "# T\n\n**Acceptance criteria:**\n" + strings.Repeat("criterion ", 300) + "\n"
+		state := "**Done so far:** " + strings.Repeat("step ", 300) + "\n"
+		if err := os.WriteFile(filepath.Join(dir, "task.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "state.md"), []byte(state), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		subjects = append(subjects, "task-"+string(rune('a'+i))+" — "+dir)
+	}
+	packet := reviewPacket(repo, nil, subjects, loopChangeSet{tasks: []taskChanges{{
+		id: "task-a", commits: []commitInfo{{sha: sha, subject: "big change"}}, files: []string{"big.txt"},
+	}}})
+	if !strings.HasSuffix(packet, "\nEND UNTRUSTED EXACT COMMIT DIFF\n") || !strings.Contains(packet, "+a line of changed text") {
+		t.Fatalf("packet does not close its diff block:\n…%s", packet[max(0, len(packet)-300):])
+	}
+	if !strings.Contains(packet, "more subjects omitted for length") || !strings.Contains(packet, "- task-a\n") {
+		t.Fatalf("packet neither lists nor counts its subjects:\n%s", packet)
+	}
+	if n := len([]rune(packet)); n > reviewPacketBudget {
+		t.Fatalf("review packet grew beyond its bound: %d runes", n)
+	}
+}
+
 // Coop's host re-signing gives a commit a new id but keeps its tree, so verification a worker
 // recorded at the unsigned commit still covers the signed one. The review packet maps the two, and
 // only when the trees match: a re-sign entry whose copy holds another tree maps nothing.
