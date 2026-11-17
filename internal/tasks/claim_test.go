@@ -568,6 +568,8 @@ func TestCmdTasksFolderClaimFlags(t *testing.T) {
 		"no id":           {"claim", "--as", "codex"},
 		"two ids":         {"claim", "flags", "again"},
 		"value-less --as": {"claim", "flags", "--as"},
+		"--force=false":   {"claim", "flags", "--force=false"},
+		"--force=":        {"claim", "flags", "--force="},
 	} {
 		if code, err := CmdTasksFolder("", root, args); code != 2 || err == nil {
 			t.Errorf("%s: %v = %d, %v; want a usage error", name, args, code, err)

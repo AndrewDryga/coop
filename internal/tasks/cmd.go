@@ -901,6 +901,9 @@ func parseClaimArgs(args []string) (string, claimOptions, error) {
 			}
 			opts.actor.PID = n
 		case "--force":
+			if hasValue { // --force=false must not force a takeover
+				return "", opts, ui.InvalidOptionValue(value, "--force", "coop tasks claim", "--force takes no value.", "coop tasks claim login-retries --force")
+			}
 			opts.force = true
 		default:
 			if strings.HasPrefix(args[i], "-") && args[i] != "-" {
