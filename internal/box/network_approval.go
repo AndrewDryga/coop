@@ -298,8 +298,9 @@ func ReviewProjectNetworkContext(ctx context.Context, cfg *config.Config, repo s
 	if !inputs.needs {
 		return &ProjectNetworkApproval{project: inputs.canonical, unchanged: true}, nil
 	}
-	// Approve is the explicit host operation that may create the authority
-	// root: a launch never does, so this is where an owner key is born.
+	// Approve may create the authority root and its owner key, as a filtered
+	// launch, a filtered build and setup do; reads and forget open it with
+	// OpenExisting and never create it.
 	if err := forkspace.ExcludeIfRepository(inputs.canonical, "/"+networkstate.ProjectApprovalMarker); err != nil {
 		return nil, fmt.Errorf("exclude project approval marker: %w", err)
 	}
