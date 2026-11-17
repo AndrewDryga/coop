@@ -435,7 +435,7 @@ thread-messages-check: ## Every message Coop writes into an editor thread has it
 
 clean: ## Remove build artifacts
 	@rm -f coop
-	@rm -rf dist
+	@rm -rf dist completions
 
 help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
