@@ -140,7 +140,9 @@ func EnsureControllerTask(workspace string, draft ControllerTaskDraft) (TaskInst
 	}
 
 	todo := filepath.Join(root, StateTodo)
-	tmp, err := os.MkdirTemp(todo, ".controller-task-")
+	// Staged at the queue root, like proposals: a crash before the rename must not leave a folder
+	// holding a task.md inside 00_todo/, where every queue read would list it as a task.
+	tmp, err := os.MkdirTemp(root, ".controller-task-")
 	if err != nil {
 		return TaskInstance{}, fmt.Errorf("create controller task staging folder: %w", err)
 	}
