@@ -296,8 +296,23 @@ func TestInstallScriptIsPublishedFromTheRepoNotCopied(t *testing.T) {
 	if !strings.Contains(workflow, "run: cp install.sh site/install.sh") {
 		t.Error("the Pages job must copy install.sh into the site")
 	}
-	if !strings.Contains(workflow, "'install.sh'") {
-		t.Error("an install.sh change must redeploy the site")
+	// install.sh is run as curl | sh, so it and the site go live only after CI passed on that commit:
+	// the one trigger is the ci workflow finishing on main, and the job deploys only a success.
+	for _, want := range []string{
+		"workflow_run:\n    workflows: [ci]\n    types: [completed]\n    branches: [main]",
+		"github.event.workflow_run.conclusion == 'success'",
+		"github.event.workflow_run.event == 'push'",
+		`[ "$(git rev-parse HEAD)" = "$CI_SHA" ]`,
+		"CI_SHA: ${{ github.event.workflow_run.head_sha }}",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("the Pages job must deploy only after CI passes on main; missing %q", want)
+		}
+	}
+	for _, early := range []string{"\n  push:", "\n  workflow_dispatch:", "\n  pull_request"} {
+		if strings.Contains(workflow, early) {
+			t.Errorf("the Pages job must have one trigger, CI finishing; it also has %q", strings.TrimSpace(early))
+		}
 	}
 }
 

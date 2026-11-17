@@ -3,13 +3,16 @@ name: pages
 # Deploy the static site in site/ to GitHub Pages. No build step: the site is static
 # HTML/CSS/JS, and its generated pages are committed (tools/gendocs); this job just uploads it,
 # with the repo's install.sh beside it so coop.dryga.com/install.sh is always the script at main.
+# It runs only after the ci workflow passed on a push to main, so a commit that fails CI (say,
+# ShellCheck on install.sh) never reaches users who run curl | sh. To redeploy, re-run this
+# workflow's run for that CI run.
 # One-time setup: repo Settings → Pages → Source: "GitHub Actions".
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
-    paths: ['site/**', 'install.sh', '.github/workflows/pages.yml']
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,6 +26,10 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -31,8 +38,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           persist-credentials: false
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+      # CI runs on main can finish out of order, and a re-run of an old one passes late. Deploy only
+      # when the commit CI passed is still main's tip, so an older site never replaces a newer one;
+      # the newer commit's own CI run deploys it.
+      - name: Deploy only the commit CI passed, while it is main's tip
+        id: newest
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$CI_SHA" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "main moved past $CI_SHA; the newer commit's CI run deploys the site"
+          fi
+        env:
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+      - if: steps.newest.outputs.deploy == 'true'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       # actions/upload-pages-artifact is a composite that nests a tag-pinned
       # actions/upload-artifact, which this repo's "every action SHA-pinned" policy
       # rejects. Replicate it inline: its exact tar, then a SHA-pinned upload-artifact.
@@ -40,8 +62,10 @@ jobs:
       # Copied at deploy time, never committed under site/, so the published installer can't drift
       # from the one in the repo (tools/gendocs/site_test.go checks both).
       - name: Publish install.sh with the site
+        if: steps.newest.outputs.deploy == 'true'
         run: cp install.sh site/install.sh
       - name: Archive the site into a Pages artifact
+        if: steps.newest.outputs.deploy == 'true'
         run: |
           tar \
             --dereference --hard-dereference \
@@ -50,11 +74,13 @@ jobs:
             --exclude=.git \
             --exclude=.github \
             .
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - if: steps.newest.outputs.deploy == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: github-pages
           path: ${{ runner.temp }}/artifact.tar
           retention-days: 1
           if-no-files-found: error
       - id: deploy
+        if: steps.newest.outputs.deploy == 'true'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

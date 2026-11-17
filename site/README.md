@@ -172,10 +172,11 @@ you change any of them. `make docs-check` fails until you do.
 
 ## Deploy
 
-`.github/workflows/pages.yml` uploads `site/` to GitHub Pages on every push to `main` that
-touches it, `install.sh` or the workflow itself, and you can also start it by hand. It publishes the
-committed files, plus the repo's `install.sh` beside them, so `coop.dryga.com/install.sh` is always
-the script on `main`.
+`.github/workflows/pages.yml` uploads `site/` to GitHub Pages after the `ci` workflow passes on a
+push to `main`, and only while that commit is still the tip of `main`. A commit that fails CI is
+never published, since people run `install.sh` straight from the site. To redeploy, re-run the
+Pages run of a passing CI run. It publishes the committed files, plus the repo's `install.sh` beside
+them, so `coop.dryga.com/install.sh` is always the script on `main`.
 
 You set it up once: in the repo, open Settings → Pages and set Source to "GitHub Actions".
 
