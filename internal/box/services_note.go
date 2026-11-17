@@ -147,6 +147,22 @@ func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined boo
 	default:
 		lines = append(lines, servicePortAvailabilityLines(ports, joined)...)
 	}
+	return noteSection(append(lines, serveLines(serve)...))
+}
+
+// filteredServicesNote is servicesNote for a filtered box. Its approved services start with the
+// box, and a failed start stops the launch, so a running box has them; it reaches each by its
+// Compose name through its network rules, never at a forwarded localhost port.
+func filteredServicesNote(services *preparedFilteredServices, serve []servePublication) string {
+	var lines []string
+	if services != nil && len(services.names) > 0 {
+		lines = append(lines, "- Sibling services "+strings.Join(services.names, ", ")+" run with this box. Reach each by its name, at the URL in its COOP_SERVICE_<NAME>_URL variable, as far as your network rules allow.")
+	}
+	return noteSection(append(lines, serveLines(serve)...))
+}
+
+func serveLines(serve []servePublication) []string {
+	var lines []string
 	for _, s := range serve {
 		if s.Published {
 			if s.HostTaken {
@@ -158,6 +174,10 @@ func servicesNote(services serviceLaunchOutcome, ports []ServicePort, joined boo
 			lines = append(lines, fmt.Sprintf("- your port %d is NOT published: host port %d is already in use by another process", s.Port, s.Host))
 		}
 	}
+	return lines
+}
+
+func noteSection(lines []string) string {
 	if len(lines) == 0 {
 		return ""
 	}

@@ -1707,6 +1707,11 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		spec.activityID = execution.ID
 	}
 	if filtered != nil {
+		// Publication and the services were decided when the launch was prepared, so the agent's
+		// note is written now, before its files are mounted.
+		if err := appendInstructionNote(noteMounts, filteredServicesNote(filtered.preparedServices, launchServePlan(cfg, spec, filtered, hostPortFree))); err != nil {
+			return finish(-1, err)
+		}
 		options := assembleOptions(cfg, rt.SupportsInit(), spec, mounts, decoy.Name(), decoyDir, workdir, mode, rawMCP,
 			mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts, "", envFile, boxLimits(cfg, rt)...)
 		options, capturedEnv, err := captureRequiredMCPEnv(options, requiredMCPEnv, artifacts)

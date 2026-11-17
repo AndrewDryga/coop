@@ -157,6 +157,21 @@ func TestFilteredNoteReportsTheControllersPublishDecision(t *testing.T) {
 		t.Errorf("a filtered note differs from an open one:\n%s\nopen:\n%s", note, openNote)
 	}
 
+	// The filtered note carries the same port lines and names the services that start with the box,
+	// reached by name rather than at a forwarded localhost port.
+	filteredNote := filteredServicesNote(&preparedFilteredServices{names: []string{"db", "web"}}, got)
+	for _, want := range []string{"# Services and ports (coop)", "Sibling services db, web run with this box", "COOP_SERVICE_<NAME>_URL", "your port 3000 is published", "your port 5173 is NOT published"} {
+		if !strings.Contains(filteredNote, want) {
+			t.Errorf("the filtered note is missing %q:\n%s", want, filteredNote)
+		}
+	}
+	if strings.Contains(filteredNote, "sidecar ") {
+		t.Errorf("a filtered box was told a forwarded localhost address:\n%s", filteredNote)
+	}
+	if got := filteredServicesNote(nil, nil); got != "" {
+		t.Errorf("a filtered box with no services and no ports has nothing to read, got %q", got)
+	}
+
 	// A filtered box that did not ask to publish has nothing to report, and an offline one decides
 	// the way it always did.
 	if got := launchServePlan(&config.Config{Egress: "filtered"}, spec, &filteredExecution{}, func(int) bool {

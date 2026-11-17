@@ -3,7 +3,7 @@ name: box-host-port-window-is-contended
 description: coop's deterministic serve host ports sit inside the OS ephemeral range, so any process can be holding one — publishing is best-effort, and a test must never claim one for real
 subsystem: box
 sources: [internal/project/project.go, internal/box/run.go, internal/box/services_note.go, internal/box/filtered_services.go, internal/box/publish_test.go]
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 `project.HostPortFor` hashes repo+key into `[hostPortBase, hostPortBase+hostPortSpan)` = **[20000,
@@ -23,6 +23,9 @@ the `-p` mapping for that box. The stderr warning `Could not publish box port P`
 to an unrelated test's `--- FAIL` and read like its cause. A filtered box decides the same way in
 `filteredPublish` (internal/box/filtered_services.go), for its gateway controller's `-p` options;
 `launchServePlan` hands the agent's note that plan, so a filtered launch never probes twice.
+Run writes that note (`filteredServicesNote`) into every agent's instruction file, the consult
+lead's included, before the filtered branch mounts them; the open path appends `servicesNote` later,
+once its sidecars started.
 
 **The trap:** never claim an assigned host port for real in a test. `servePublicationPlan` and
 `appendPublish` take the probe as a parameter (`free func(int) bool`, `hostPortFree` in production)
@@ -40,6 +43,8 @@ The supervisor also runs one watcher in the live box over `docker exec -i`, read
 port, because a dev server would log that.
 
 ## Changelog
+- 2026-11-17 — the filtered note is now actually written (it was only reached from tests), and the
+  consult lead's file gets it too.
 - 2026-11-03 — an editor session now owns its stable ports and forwards them to its live box.
 - 2026-11-03 — added the filtered box's own decision, now the one its agent's note reads.
 - 2026-10-17 — replaced line-number citations with `hostPortBase`/`hostPortSpan`,
