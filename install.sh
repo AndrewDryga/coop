@@ -111,6 +111,9 @@ url="https://github.com/$repo/releases/download/$ver/$asset"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# dash, sh on Debian and Ubuntu, skips the EXIT trap when a signal ends it; exiting runs it.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 printf 'Installing Coop %s\n' "${ver#v}"
 printf '  Downloading %s…\n\n' "$asset"
 # Every release ships this archive for each supported system, so a 404 means there is no such

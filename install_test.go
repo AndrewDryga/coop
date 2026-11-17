@@ -180,6 +180,48 @@ func TestInstallPinnedVersion(t *testing.T) {
 	}
 }
 
+// Ctrl-C during the download removes the installer's temporary folder. dash, which is sh on Debian
+// and Ubuntu, skips an EXIT trap when a signal ends the shell, so the script traps INT and TERM too.
+func TestInstallInterruptRemovesTemporaryFolder(t *testing.T) {
+	for _, shell := range []string{"sh", "dash", "bash"} {
+		path, err := exec.LookPath(shell)
+		if err != nil {
+			continue
+		}
+		t.Run(shell, func(t *testing.T) {
+			root := t.TempDir()
+			bin := installerFixture(t, root)
+			// The fake download notes the folder it writes into, then interrupts the installer's
+			// whole process group, as Ctrl-C does.
+			writeFixture(t, filepath.Join(bin, "curl"), `#!/bin/sh
+prev=
+for arg; do
+  test "$prev" = -o && dirname "$arg" > "$TEST_ROOT/folder"
+  prev=$arg
+done
+kill -INT 0
+sleep 5
+`, 0o755)
+			cmd := exec.Command(path, "./install.sh")
+			cmd.Env = []string{"PATH=" + bin, "HOME=" + root, "TMPDIR=" + root, "SHELL=/bin/sh",
+				"COOP_VERSION=v9.9.9", "COOP_NO_BUILD=1", "COOP_BIN_DIR=" + filepath.Join(root, "installed"), "TEST_ROOT=" + root}
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("an interrupted install succeeded:\n%s", out)
+			}
+			folder, readErr := os.ReadFile(filepath.Join(root, "folder"))
+			if readErr != nil {
+				t.Fatalf("the download never started: %v\n%s", readErr, out)
+			}
+			if _, err := os.Stat(strings.TrimSpace(string(folder))); !os.IsNotExist(err) {
+				_ = os.RemoveAll(strings.TrimSpace(string(folder)))
+				t.Errorf("interrupted install left its temporary folder %s (%v):\n%s", folder, err, out)
+			}
+		})
+	}
+}
+
 // installStub is the coop binary in the fixture release: it prints its version, and records the
 // build and doctor calls with the exit codes the test chose.
 const installStub = `#!/bin/sh
