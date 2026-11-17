@@ -418,7 +418,7 @@ func ensureOpenBrokerImage(ctx context.Context, cfg *config.Config, rt runtime.R
 	var stderr bytes.Buffer
 	code, err := rt.RunInterruptible(ctx, bytes.NewReader(source), io.Discard, &stderr, append(args, "-")...)
 	if err != nil || code != 0 {
-		return "", fmt.Errorf("build the image for Coop's credential broker: %s", boundedCause(lastLines(stderr.String(), 4), exitError(code, err)))
+		return "", fmt.Errorf("build the image for Coop's credential broker: %s", boundedCause(stderr.String(), exitError(code, err)))
 	}
 	markImageUsed(cfg, tag)
 	return tag, nil

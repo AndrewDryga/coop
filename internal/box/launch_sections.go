@@ -897,22 +897,20 @@ func serviceCauseDetails(cause string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-// boundedCause is the bounded reason a warning or failure carries: what the tool itself printed,
-// then the error, trimmed to the first few lines so a launch never dumps a screen of Compose
-// output into the middle of its narration. Empty tool output falls back to the error alone.
+// boundedCause is the bounded reason a warning or failure carries: the last few lines the tool
+// itself printed (Compose prints progress first and its reason last), then the error, so a launch
+// never dumps a screen of Compose output into the middle of its narration. Empty tool output falls
+// back to the error alone.
 func boundedCause(output string, err error) string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if err != nil {
-		lines = append(lines, err.Error())
-	}
-	kept := make([]string, 0, 4)
-	for _, line := range lines {
+	var kept []string
+	for _, line := range strings.Split(output, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			kept = append(kept, line)
 		}
-		if len(kept) == 4 {
-			break
-		}
+	}
+	kept = kept[max(0, len(kept)-3):]
+	if err != nil {
+		kept = append(kept, err.Error())
 	}
 	return strings.Join(kept, "\n")
 }

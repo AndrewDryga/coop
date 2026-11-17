@@ -1111,3 +1111,17 @@ func TestOnlyMountProtectionSaysWhatItLeavesOut(t *testing.T) {
 		t.Fatalf("a quiet launch said %q", got)
 	}
 }
+
+// Compose prints its progress first and the reason last: a failed start shows the reason and the
+// exit status, not the first progress lines.
+func TestBoundedCauseKeepsTheReasonAndTheError(t *testing.T) {
+	output := " Container a  Creating\n Container a  Created\n Container b  Creating\n\n Container b  Created\n Container c  Creating\nError response from daemon: port is already allocated\n"
+	got := boundedCause(output, errors.New("exit status 1"))
+	want := "Container b  Created\nContainer c  Creating\nError response from daemon: port is already allocated\nexit status 1"
+	if got != want {
+		t.Fatalf("cause = %q, want %q", got, want)
+	}
+	if got := boundedCause("", errors.New("exit status 1")); got != "exit status 1" {
+		t.Fatalf("empty output = %q, want the error alone", got)
+	}
+}
