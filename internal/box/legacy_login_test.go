@@ -74,8 +74,6 @@ func TestPreV11LoginIsRefusedByNameAndLeftUntouched(t *testing.T) {
 				if found {
 					t.Error("an old key was read")
 				}
-				_, err = SelectedHostCredentialPath(cfg, ag, "work")
-				mustRefuse("SelectedHostCredentialPath", err)
 			}
 			if ProfileCredentialReady(cfg, tc.provider, "work", time.Now()) || ProfileAuthed(cfg, tc.provider, "work") {
 				t.Error("an old login counted as a sign-in")
@@ -173,9 +171,6 @@ func TestSignedInAccountBesideOldLoginFilesIsNotRefused(t *testing.T) {
 			if ag.HostCredential().Declared() {
 				if _, _, _, err := LoadHostCredential(cfg, ag, "work"); err != nil {
 					t.Errorf("LoadHostCredential = %v", err)
-				}
-				if _, err := SelectedHostCredentialPath(cfg, ag, "work"); err != nil {
-					t.Errorf("SelectedHostCredentialPath = %v", err)
 				}
 			}
 			if !ProfileAuthed(cfg, name, "work") {

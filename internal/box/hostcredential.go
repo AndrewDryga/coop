@@ -87,8 +87,9 @@ func LoadHostCredential(cfg *config.Config, ag agents.Agent, profile string) (en
 	return "", "", false, refuseLegacyLogin(cfg, ag, profile)
 }
 
-// RemoveHostCredential removes only the exact adapter-owned secret for an explicitly confirmed
-// account deletion. The native profile is removed separately by the caller.
+// RemoveHostCredential removes an account's pre-v11 host-credentials/<account> folder (Coop no
+// longer writes or reads it) when the account is deleted. The canonical record and the native
+// profile are removed separately by the caller.
 func RemoveHostCredential(cfg *config.Config, ag agents.Agent, profile string) error {
 	spec := ag.HostCredential()
 	if !spec.Declared() {
@@ -102,52 +103,6 @@ func RemoveHostCredential(cfg *config.Config, ag agents.Agent, profile string) e
 		return fmt.Errorf("remove private %s credential: %w", ag.DisplayName(), err)
 	}
 	return nil
-}
-
-// ProjectHostCredential copies the Coop-held API key one account runs on into another config's
-// vault — the host-side store a session child brokers it from, never a home a box mounts — and
-// returns the file it wrote, for its owner to remove. An account whose key Coop does not hold (or
-// does not select) writes nothing.
-func ProjectHostCredential(from, to *config.Config, ag agents.Agent, profile string) (string, error) {
-	path, err := SelectedHostCredentialPath(from, ag, profile)
-	if err != nil || path == "" {
-		return "", err
-	}
-	_, value, found, err := LoadHostCredential(from, ag, profile)
-	if err != nil || !found {
-		return "", err
-	}
-	if err := SaveHostCredential(to, ag, profile, []byte(value)); err != nil {
-		return "", err
-	}
-	return SelectedHostCredentialPath(to, ag, profile)
-}
-
-// SelectedHostCredentialPath identifies the selected account's credential input without
-// modifying it. An account with no canonical record has none; one that only builds before v11
-// signed in is refused.
-func SelectedHostCredentialPath(cfg *config.Config, ag agents.Agent, profile string) (string, error) {
-	spec := ag.HostCredential()
-	if !spec.Declared() {
-		return "", nil
-	}
-	if err := validateHostCredentialSpec(ag, spec); err != nil {
-		return "", err
-	}
-	if record, exists, err := readNativeAccountSnapshot(cfg, ag, profile); exists {
-		if err != nil {
-			return "", err
-		}
-		if record.Revoked {
-			return "", nil
-		}
-		state, err := ag.NativeCredentials().Inspect(record.Artifacts, time.Now())
-		if err != nil || !state.APIKey {
-			return "", err
-		}
-		return filepath.Join(cfg.NativeAuthorityConfig().ConfigDir, ag.Name(), "credentials", profile, "authority.json"), nil
-	}
-	return "", refuseLegacyLogin(cfg, ag, profile)
 }
 
 func hostCredentialSelected(ag agents.Agent, profileDir string, markerPresent bool) bool {
