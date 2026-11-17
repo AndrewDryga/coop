@@ -21,6 +21,19 @@ co:op hides files and directories whose names look like secrets, including `.env
 files such as `secrets.env`. Source and docs like `secrets.go` and `secrets.md` stay readable, and
 templates (`*.example`, `*.sample`, `*.template`) stay visible.
 
+### SSH keys and agent forwarding
+
+A coding agent can use an SSH key without reading the key file if you forward your
+computer's SSH-agent socket into the box. co:op does not forward that socket by
+default. It also hides `.ssh` folders in your project.
+
+Mounts, environment variables and MCP servers you add can give the agent more
+access. Keep your SSH-agent socket and credential folders out of the sandbox. If the
+agent needs production access, give it tools limited to the actions it needs.
+See how to [connect MCP servers](integrations.md#mcp-servers).
+
+### How secret protection works
+
 co:op protects these files in one of two ways. Projects get eBPF protection automatically on
 supported Docker runtimes: APFS projects on a Mac, enforced in the Docker VM, and ext4 or xfs
 projects on Linux. Docker must use cgroup v2 with the `cgroupfs` or `systemd` cgroup driver. The

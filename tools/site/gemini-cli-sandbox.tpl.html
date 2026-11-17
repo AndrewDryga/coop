@@ -198,6 +198,7 @@ wc: .env.coop-demo: Operation not permitted
 
 <p>The agent can read <code>README.md</code>, but co:op blocks access to the secret or shows it as an empty file.</p>
 <p>Files matching <code>.env.*</code> are protected automatically. To hide other files or folders, add them to <a href="box.html#your-own-paths-coopignore">.coopignore</a>.</p>
+<p>co:op also hides <code>.ssh</code> folders in your project and keeps your computer’s SSH keys outside the sandbox. See <a href="box.html#ssh-keys-and-agent-forwarding">SSH keys and agent forwarding</a> before adding private Git or server access.</p>
 <p>To scan project files for credentials, open a second terminal in the demo folder and run:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source>coop check-secrets --include-ignored</code></li></ul>

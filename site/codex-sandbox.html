@@ -6,13 +6,13 @@
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0e1014">
   <title>Run Codex CLI in a sandbox · co:op</title>
-  <meta name="description" content="Run Codex CLI in a local Docker sandbox with filtered network access and a clear diff to review.">
+  <meta name="description" content="Run Codex CLI in Docker with your ChatGPT subscription. Hide project secrets, restrict network access, and review the changes.">
   <link rel="canonical" href="https://coop.dryga.com/codex-sandbox.html">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="co:op">
   <meta property="og:url" content="https://coop.dryga.com/codex-sandbox.html">
   <meta property="og:title" content="Run Codex CLI in a sandbox">
-  <meta property="og:description" content="Run Codex CLI in a local Docker sandbox with filtered network access and a clear diff to review.">
+  <meta property="og:description" content="Run Codex CLI in Docker with your ChatGPT subscription. Hide project secrets, restrict network access, and review the changes.">
   <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -92,7 +92,7 @@
 </details>
 </div>
   <main id="main" class="docs-page guide" tabindex="-1">
-<header class="guide-hero"><div class="guide-intro"><p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Get started</p><h1>Run Codex CLI in a sandbox.</h1><p class="guide-lead">Run Codex CLI in a local Docker sandbox with filtered network access and a clear diff to review.</p></div></header>
+<header class="guide-hero"><div class="guide-intro"><p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Get started</p><h1>Run Codex CLI in a sandbox.</h1><p class="guide-lead">Run Codex CLI in Docker with your ChatGPT subscription. Hide project secrets, restrict network access, and review the changes.</p></div></header>
 <div class="docs guide-body"><details class="docs-side" open><summary>In this walkthrough</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script><nav aria-label="On this page">
 <div class="guide-toc-group"><h2>Get started</h2>
 <ol role="list" start="0">
@@ -241,6 +241,7 @@ wc: .env.coop-demo: Operation not permitted
 
 <p>The agent can read <code>README.md</code>, but co:op blocks access to the secret or shows it as an empty file.</p>
 <p>Files matching <code>.env.*</code> are protected automatically. To hide other files or folders, add them to <a href="box.html#your-own-paths-coopignore">.coopignore</a>.</p>
+<p>co:op also hides <code>.ssh</code> folders in your project and keeps your computer’s SSH keys outside the sandbox. See <a href="box.html#ssh-keys-and-agent-forwarding">SSH keys and agent forwarding</a> before adding private Git or server access.</p>
 <p>To scan project files for credentials, open a second terminal in the demo folder and run:</p>
 <div class="terminal-example">
 <ul class="cmds" role="list"><li><code data-copy-source>coop check-secrets --include-ignored</code></li></ul>
