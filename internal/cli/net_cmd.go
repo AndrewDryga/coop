@@ -635,7 +635,7 @@ func (a *app) cmdNetRuns(args []string) (int, error) {
 	if !opts.all && !opts.allProjects && len(runs) > netRecentRuns {
 		runs = runs[:netRecentRuns]
 	}
-	listed, err := netRunOutcomes(runs)
+	listed, err := netRunOutcomes(runs, !opts.json) // the JSON listing carries no ACTIVITY
 	if err != nil {
 		return 1, err
 	}
@@ -860,7 +860,10 @@ func netExecutionsOf(evidence *networkstate.Evidence) (networkstate.ExecutionPag
 // carries no outcome, which is not the same as a run that saw no traffic. A run
 // with no final record is live the way `coop net inspect` says so: it is being
 // observed now, or its supervisor is still running here.
-func netRunOutcomes(summaries []networkstate.ExecutionSummary) ([]netRun, error) {
+//
+// Without outcomes, a finished run is not read at all: only an unfinished one needs its record, to
+// tell whether it is still live.
+func netRunOutcomes(summaries []networkstate.ExecutionSummary, outcomes bool) ([]netRun, error) {
 	if len(summaries) == 0 {
 		return nil, nil
 	}
@@ -872,6 +875,10 @@ func netRunOutcomes(summaries []networkstate.ExecutionSummary) ([]netRun, error)
 	runs := make([]netRun, 0, len(summaries))
 	for _, summary := range summaries {
 		run := netRun{ExecutionSummary: summary, Outcome: netActivityUnknown}
+		if summary.Final && !outcomes {
+			runs = append(runs, run)
+			continue
+		}
 		if inspection, err := evidence.Inspect(summary.ID, time.Now(), true); err == nil {
 			run.Outcome = netRunOutcome(inspection)
 			run.Live = !summary.Final && networkreport.RunLive(inspection)
