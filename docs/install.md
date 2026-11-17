@@ -27,7 +27,8 @@ To change what the script does, set these before `sh`, as in
 
 Online providers need Docker, which supports the helper that keeps provider credentials outside the
 box. Apple [container](https://github.com/apple/container) on macOS 26+ can run commands with open
-networking and no credentials. If both are installed, co:op chooses Docker.
+networking and no credentials. If both are installed, co:op uses Docker while it is running and Apple
+container otherwise; set `COOP_RUNTIME=docker` to always use Docker.
 
 On a Linux host with SELinux, such as Fedora or RHEL, co:op starts its containers with SELinux
 labels turned off (`label=disable`), so a box can read your project without relabeling your files.
