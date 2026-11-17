@@ -143,11 +143,9 @@ func writeForkProposalRecordFile(root *os.Root, name string, record ForkProposal
 }
 
 func createForkProposalRecord(repo string, record ForkProposalRecord) error {
+	// The check also keeps AssignmentID safe as a path component below.
 	if err := validateForkProposalRecord(record); err != nil {
 		return err
-	}
-	if !validAssignmentID(record.AssignmentID) {
-		return errors.New("invalid proposal assignment identity")
 	}
 	root, err := openStateRoot(repo, forkProposalAssignmentRecordRoot(repo, record.Fork, record.AssignmentID), true)
 	if err != nil {
