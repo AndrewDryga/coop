@@ -1638,7 +1638,8 @@ Usage:
 APPROVALS
   Coop asks at a terminal before a service may read a hidden secret file
   through a read-only bind, or use an external or custom-named Docker volume.
-  Declining stops startup. Until you approve, the file stays hidden.
+  Declining a volume or a changed image stops startup. Declining a first
+  secret-file approval starts the services with the file hidden.
   Automatic, filtered and non-terminal starts refuse such volumes even after
   approval. An approval covers this checkout's exact Compose file and the
   service's local image, so any change asks again.

@@ -562,8 +562,9 @@ what a tag points to can't give a different image the same access without review
 - If the approved image was removed, startup stops before creating a container. Pull the tag,
   then run `coop up` to review it again.
 - Before asking for a first approval, co:op may pull an image that is not cached, using Docker's
-  existing registry login. If you decline, the service does not start or receive access. The
-  downloaded image stays in Docker's cache.
+  existing registry login. If you decline, the service gets no access: a declined volume stops
+  startup, and a declined secret file stays hidden while the services start. The downloaded image
+  stays in Docker's cache.
 
 Services without access to approved secret files or outside volumes keep their normal image
 update behavior.
