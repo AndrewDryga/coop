@@ -232,9 +232,10 @@ See [evaluations](https://coop.dryga.com/evals.html).
 - A compromised agent can keep using the account it runs on, which costs you subscription limits
   or API charges. A hook it adds to its own settings runs again in later boxes for the same
   repository.
-- Filtered networking needs Docker and reaches IPv4 addresses only. Without
-  [eBPF protection](https://coop.dryga.com/box.html#hiding-secrets), a secret file you add while a
-  box is running stays readable until that box restarts.
+- Filtered networking needs Docker and reaches IPv4 addresses only. A secret file you add while a
+  box is running can stay readable until that box restarts.
+  [eBPF protection](https://coop.dryga.com/box.html#hiding-secrets) hides a new file at once when its
+  name is on the built-in list, such as `.env` or `*.pem`.
 - co:op relies on your container runtime for isolation, so it can't protect you from a bug in that
   runtime or the kernel.
 

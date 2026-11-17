@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=7046a0ed0f">
-  <script src="assets/js/site.js?v=7046a0ed0f" defer></script>
-  <script src="assets/js/analytics.js?v=7046a0ed0f" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
+  <script src="assets/js/site.js?v=66031b5921" defer></script>
+  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -1655,10 +1655,11 @@ OPTIONS
   coop build [--egress &lt;mode&gt;]
 
   Builds the shared image, or this project&#39;s image when it has a box
-  Dockerfile (.agent/Dockerfile, or box.dockerfile in .agent/project.yaml).
-  Run it after changing that Dockerfile or .tool-versions. Requires a running
-  container runtime. Your home folder is never a project, so from there use
-  --egress open, which builds the shared image.
+  Dockerfile (.agent/Dockerfile, or box.dockerfile in .agent/project.yaml)
+  or, in open or offline mode, a .tool-versions file. Run it after changing
+  that Dockerfile or .tool-versions. Requires a running container runtime.
+  Your home folder is never a project, so from there use --egress open,
+  which builds the shared image.
 
 OPTIONS
   --egress &lt;mode&gt;  prepare the image for filtered, open or offline networking
@@ -1723,7 +1724,7 @@ See: coop help setup apparmor</code></pre></div></section><section class="doc-se
   coop doctor asks, such as after an update changes the profile.
   Requires Docker to be running.
 
-Example:
+EXAMPLES
   coop setup apparmor</code></pre></div></section><section class="doc-section reference-section" id="coop-version-print-the-installed-coop-version"><h2>coop version: print the installed Coop version</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop version: print the installed Coop version code example" tabindex="0"><code>Usage:
   coop version
 

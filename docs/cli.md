@@ -1902,10 +1902,11 @@ Usage:
   coop build [--egress <mode>]
 
   Builds the shared image, or this project's image when it has a box
-  Dockerfile (.agent/Dockerfile, or box.dockerfile in .agent/project.yaml).
-  Run it after changing that Dockerfile or .tool-versions. Requires a running
-  container runtime. Your home folder is never a project, so from there use
-  --egress open, which builds the shared image.
+  Dockerfile (.agent/Dockerfile, or box.dockerfile in .agent/project.yaml)
+  or, in open or offline mode, a .tool-versions file. Run it after changing
+  that Dockerfile or .tool-versions. Requires a running container runtime.
+  Your home folder is never a project, so from there use --egress open,
+  which builds the shared image.
 
 OPTIONS
   --egress <mode>  prepare the image for filtered, open or offline networking
@@ -1988,7 +1989,7 @@ Usage: coop setup apparmor
   coop doctor asks, such as after an update changes the profile.
   Requires Docker to be running.
 
-Example:
+EXAMPLES
   coop setup apparmor
 
 ==============================================================================

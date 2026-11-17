@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=7046a0ed0f">
-  <script src="assets/js/site.js?v=7046a0ed0f" defer></script>
-  <script src="assets/js/analytics.js?v=7046a0ed0f" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
+  <script src="assets/js/site.js?v=66031b5921" defer></script>
+  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -344,7 +344,7 @@ working, that answer is lost and needs a retry.</p>
 <tr>
 <td><code>COOP_<wbr/>EDITOR</code></td>
 <td>detected</td>
-<td>The editor for <code>coop fork review --open</code>.</td>
+<td>The editor for <code>coop fork open</code> and <code>coop fork review --open</code>.</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>REVIEW_<wbr/>CMD</code></td>
@@ -417,9 +417,9 @@ working, that answer is lost and needs a retry.</p>
 </table></div></div>
 <p>The <code>--preflight</code> flag turns on the same cleanup for one run.</p>
 <h3 id="command-valued-settings">Command-valued settings</h3>
-<p>co:op splits <code>COOP_GATE</code>, <code>COOP_RUN_ARGS</code> and the <code>COOP_&lt;AGENT&gt;_CMD</code> overrides into <code>argv</code>. Single
-and double quotes group text into one argument, and <code>\</code> escapes a character. It doesn&#39;t run these
-settings through a shell, so it doesn&#39;t expand wildcard paths or <code>$VAR</code> values.</p>
+<p>co:op splits <code>COOP_GATE</code>, <code>COOP_RUN_ARGS</code>, <code>COOP_EDITOR</code> and the <code>COOP_&lt;AGENT&gt;_CMD</code> overrides into
+<code>argv</code>. Single and double quotes group text into one argument, and <code>\</code> escapes a character. It
+doesn&#39;t run these settings through a shell, so it doesn&#39;t expand wildcard paths or <code>$VAR</code> values.</p>
 <p>For example, <code>COOP_GATE=&#39;bash -lc &#34;make check &amp;&amp; make lint&#34;&#39;</code> produces three arguments, with the
 quoted text as one of them. co:op passes a bare <code>&amp;&amp;</code>, <code>|</code> or <code>$VAR</code> literally, so wrap commands that
 need those shell features in <code>bash -lc &#34;…&#34;</code>. <code>COOP_REVIEW_CMD</code> is the exception: co:op runs it
@@ -442,8 +442,9 @@ signed out. If that happens, run <code>coop login</code> on that machine.</p>
 caches, ACP traces, network approvals and Git views, live in <code>$XDG_STATE_HOME/coop</code>, or in
 <code>~/.local/state/coop</code> when <code>XDG_STATE_HOME</code> isn&#39;t set. They never need syncing. Of an account, only
 <code>agents/&lt;agent&gt;/credentials/&lt;account&gt;/authority.json</code> needs to sync. Its other files are journals and
-locks for one machine. With Dropbox, put these rules in <code>rules.dropboxignore</code> at the Dropbox root, and
-<code>coop doctor</code> notes that the folder syncs by them.</p>
+locks for one machine. With Dropbox, write rules in <code>rules.dropboxignore</code> at the Dropbox root that
+keep those files on each machine and let <code>authority.json</code> sync. <code>coop doctor</code> notes when that file
+has rules for the folder, but it doesn&#39;t check them.</p>
 <p>Some records stay in <code>~/.local/state/coop</code> whatever <code>XDG_STATE_HOME</code> says. Every co:op process on
 this machine has to find the same ones, including a process your editor starts without your shell&#39;s
 variables:</p>
@@ -605,7 +606,8 @@ views are:</p>
 <li><code>coop tasks watch --json</code> is the standard snapshot of the project&#39;s tasks and activity.</li>
 <li><code>coop fork ls --json</code> lists workspace URLs and fork status.</li>
 </ul>
-<p><code>coop context</code>, the <code>coop net</code> views and <code>coop sessions doctor</code> also accept <code>--json</code>.
+<p><code>coop context</code>, the <code>coop net</code> views, <code>coop sessions doctor</code> and <code>coop sessions quiescence</code> also accept
+<code>--json</code>.
 <code>coop net export</code> always writes JSON.</p>
 </section>
         <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="cli.html"><span>Previous</span>Commands</a><a class="docs-pager-next" href="session-api.html"><span>Next</span>Worker API</a></nav>

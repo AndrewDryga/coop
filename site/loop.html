@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=7046a0ed0f">
-  <script src="assets/js/site.js?v=7046a0ed0f" defer></script>
-  <script src="assets/js/analytics.js?v=7046a0ed0f" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
+  <script src="assets/js/site.js?v=66031b5921" defer></script>
+  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -221,9 +221,10 @@ remain part of the ordinary task history.</p>
 on, without holding other sessions open. <code>coop init</code> sets it up in new projects. A repo set up by
 an older co:op needs <a href="migrating.html#the-sweep-stop-hook-in-older-repos">a manual update</a>.</p>
 <p><code>init</code> installs a fast commit check for Claude. For other committers, it installs a Git pre-commit
-check at <code>.githooks/pre-commit</code> and sets <code>core.hooksPath</code>, so the format check runs for everyone,
-including Codex, Gemini and a plain <code>git commit</code>. Git tracks the hook files, but <code>core.hooksPath</code>
-is local, so run <code>coop init</code> in each new clone to enable them there.</p>
+check at <code>.githooks/pre-commit</code> and sets <code>core.hooksPath</code>, so the format check runs for Codex and a
+plain <code>git commit</code> too. Gemini CLI turns Git hooks off for its commands (below), so its commits skip
+it. Git tracks the hook files, but <code>core.hooksPath</code> is local, so run <code>coop init</code> in each new clone
+to enable them there.</p>
 <p>The tracked <code>.githooks/prepare-commit-msg</code> hook also calls co:op&#39;s box-attribution hook when that
 hook is mounted. On a normal host, the tracked hook does nothing.</p>
 <p><code>init</code> leaves an existing custom <code>core.hooksPath</code> unchanged. Copy both tracked hooks into your
@@ -344,9 +345,10 @@ also depends on wrapper scripts or ordinary source files, list their exact repo-
 under <code>gate_sources:</code> in <code>.agent/project.yaml</code>.</p>
 <p>The loop keeps the list it read at startup, so a task can&#39;t remove itself from review. Restart
 the loop to apply a deliberate change to the list.</p>
-<p>Settings live in the same file: <code>signoff.rounds</code>, <code>preflight.enabled</code>, <code>verify.enabled</code> and
-<code>work.command</code>. Every field is optional, and without the file co:op uses the built-in defaults.
-<code>coop init</code> creates a fully commented starter file.</p>
+<p>Settings live in the same file: <code>signoff.rounds</code>, <code>preflight.enabled</code>, <code>verify.enabled</code>,
+<code>work.command</code>, and <code>mcp: false</code>, which runs every stage without the shared MCP servers
+(<code>--no-mcp</code> does that for one run). Every field is optional, and without the file co:op uses the
+built-in defaults. <code>coop init</code> creates a fully commented starter file.</p>
 </section><section class="doc-section reference-section" id="the-agent-folder"><h2>The .agent/ folder</h2>
 <p><code>init</code> creates a folder for instructions and working notes that any supported agent can use.
 The agent reads it when it starts and after its conversation is compacted. Git ignores the

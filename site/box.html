@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=7046a0ed0f">
-  <script src="assets/js/site.js?v=7046a0ed0f" defer></script>
-  <script src="assets/js/analytics.js?v=7046a0ed0f" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
+  <script src="assets/js/site.js?v=66031b5921" defer></script>
+  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -149,7 +149,8 @@ shell <code>while read</code> loop, give each <code>coop run</code> its own inpu
 <p>co:op hides files and directories whose names look like secrets, including <code>.env</code>, <code>*.tfvars</code>,
 <code>*.pem</code>, <code>*.key</code>, <code>id_rsa*</code>, <code>secrets/</code>, <code>.ssh</code>, dotfiles ending in <code>secrets</code> such as <code>.shell-secrets</code>, and config
 files such as <code>secrets.env</code>. Source and docs like <code>secrets.go</code> and <code>secrets.md</code> stay readable, and
-templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible.</p>
+templates (<code>*.example</code>, <code>*.sample</code>, <code>*.template</code>) stay visible, except key names such as
+<code>id_rsa.example</code>.</p>
 <h3 id="ssh-keys-and-agent-forwarding">SSH keys and agent forwarding</h3>
 <p>A coding agent can use an SSH key without reading the key file if you forward your
 computer&#39;s SSH-agent socket into the box. co:op does not forward that socket by
@@ -554,9 +555,10 @@ derived from its path, so repositories with the same folder name stay separate.<
 <p>Agents can change data in services they can reach, so use disposable development databases.</p>
 <p>Each project&#39;s <code>~/.cache</code> is a volume of its own that keeps downloads between runs, so one
 project&#39;s box cannot change the modules another project&#39;s box uses. Forks share their project&#39;s
-cache; isolated forks share one of their own. These volumes are named <code>coop-cache-&lt;project&gt;-&lt;id&gt;</code>;
-remove one with <code>docker volume rm</code> when you no longer need the project. Claude&#39;s MCP logs at
-<code>~/.cache/claude-cli-nodejs</code> are kept separately: each run starts with an empty log folder.</p>
+cache; isolated forks share one of their own. These volume names start with <code>coop-cache-</code>: list
+them with <code>docker volume ls --filter name=coop-cache-</code> and remove one with <code>docker volume rm</code> when
+you no longer need the project. Claude&#39;s MCP logs at <code>~/.cache/claude-cli-nodejs</code> are kept
+separately: each run starts with an empty log folder.</p>
 <h3 id="volumes-from-outside-the-project">Volumes from outside the project</h3>
 <p>An <code>external: true</code> or custom-named volume may contain another project&#39;s data. When you run
 <code>coop up</code> in a terminal, it shows the actual Docker volume name, which services will use it and

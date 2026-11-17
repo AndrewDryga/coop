@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=7046a0ed0f">
-  <script src="assets/js/site.js?v=7046a0ed0f" defer></script>
-  <script src="assets/js/analytics.js?v=7046a0ed0f" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
+  <script src="assets/js/site.js?v=66031b5921" defer></script>
+  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -144,9 +144,10 @@ and no <code>Controller</code>.</strong> Written only by main builds of 2026-11-
 &#34;filesystem custody record from before the shared filesystem controller&#34; names it. Its protection
 keeps holding. Run Coop v12.1.0 in the project: its daily sweep retires a record whose owner is
 gone. Then come back.</li>
-<li><strong>A credential renewal journal without <code>received_at</code></strong> (<code>credentials/&lt;account&gt;/renewal.json</code>, kept
-by Coop v11.3.0 or earlier). The message says it was kept without an arrival time. Open the
-account once with Coop v12.1.0 to finish it, or run <code>coop login &lt;agent&gt;@&lt;account&gt;</code>.</li>
+<li><strong>A credential renewal journal without <code>received_at</code></strong>
+(<code>~/.config/coop/agents/&lt;agent&gt;/credentials/&lt;account&gt;/renewal.json</code>, kept by Coop v11.3.0 or
+earlier). The message says it was kept without an arrival time. Open the account once with Coop
+v12.1.0 to finish it, or run <code>coop login &lt;agent&gt;@&lt;account&gt;</code>.</li>
 <li><strong>Version 4 service approvals</strong> grant nothing and are not read. <code>coop up</code> shows the review again.</li>
 </ul>
 </section><section class="doc-section reference-section" id="v1300-old-session-store-data-is-refused-by-name"><h2>v13.0.0: old session store data is refused by name</h2>
@@ -158,7 +159,8 @@ the worker stopped is still marked interrupted, as before.</p>
 Exit 0 means the data is current. Exit 4 with &#34;session schema N is older than this coop build
 supports&#34; means the store needs the converting build first.</li>
 <li>For a store below schema 26, back up the stopped state folder, open it once with a Coop build at
-or before commit 29133b0e (it converts to schema 26 on start), stop it, then use the new build.</li>
+or before commit 29133b0e, such as v12.1.0 (it converts to schema 26 on start), stop it, then
+use the new build.</li>
 <li>For a stored session that the log names as quarantined (no saved job, a blank mode, or the
 removed <code>readonly</code> or <code>bare</code> mode), either retire its record with
 <code>{&#34;retire_quarantined&#34;: true, &#34;expected_revision&#34;: N}</code> on <code>/v1/sessions/{id}/discard</code>, or cancel,
@@ -186,8 +188,9 @@ starts as usual.</li>
 <li>Policy copies an old <code>coop net setup</code> check saved without a marker stay on disk, unused.</li>
 </ul>
 </section><section class="doc-section reference-section" id="v1300-logins-and-history-from-before-v11-are-not-converted"><h2>v13.0.0: logins and history from before v11 are not converted</h2>
-<p>Coop no longer moves a login out of <code>profiles/&lt;account&gt;</code> or <code>host-credentials/&lt;account&gt;</code>, and no
-longer imports history or editor thread bindings from the folders Coop before v11 used.</p>
+<p>Coop no longer moves a login out of <code>profiles/&lt;account&gt;</code> or <code>host-credentials/&lt;account&gt;</code> under
+<code>~/.config/coop/agents/&lt;agent&gt;/</code>, and no longer imports history or editor thread bindings from the
+folders Coop before v11 used.</p>
 <ul>
 <li>Run <code>coop login &lt;agent&gt;@&lt;account&gt;</code> for every account that <code>coop credentials</code> shows as needing a
 new sign-in. The old folder stays where it is, untouched. A Coop-held API key (Gemini) is saved
