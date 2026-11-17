@@ -316,6 +316,9 @@ func effectiveCredentialEnv(cfg *config.Config, spec RunSpec, agent agents.Agent
 func extraEnvAssigns(args []string, key string) bool {
 	for index := 0; index < len(args); index++ {
 		name, value, inline := strings.Cut(args[index], "=")
+		if name != "-e" && strings.HasPrefix(args[index], "-e") {
+			name, value, inline = "-e", strings.TrimPrefix(args[index], "-e"), true // Docker's joined -eKEY=VALUE
+		}
 		if name != "-e" && name != "--env" {
 			continue
 		}

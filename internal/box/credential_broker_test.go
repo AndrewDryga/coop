@@ -408,10 +408,14 @@ func TestRawBoxDropsProviderKeysAndRefusesRuntimeInjection(t *testing.T) {
 		values["NORMAL"] != "user-value" || values["PROJECT"] != "value" {
 		t.Fatalf("raw box environment = %#v", values)
 	}
-	spec := RunSpec{ExtraArgs: []string{"-e", "XAI_API_KEY=runtime-secret"}}
-	if candidate, err := firstBrokerRoute(cfg, spec); err == nil || candidate != nil ||
-		!strings.Contains(err.Error(), "cannot enter an agent box through -e") {
-		t.Fatalf("raw runtime credential = %#v, %v", candidate, err)
+	// Docker takes -e KEY=V, -e=KEY=V, --env KEY=V, --env=KEY=V and the joined -eKEY=V alike.
+	for _, args := range [][]string{{"-e", "XAI_API_KEY=runtime-secret"}, {"-e=XAI_API_KEY=runtime-secret"},
+		{"--env", "XAI_API_KEY=runtime-secret"}, {"--env=XAI_API_KEY=runtime-secret"}, {"-eXAI_API_KEY=runtime-secret"}} {
+		spec := RunSpec{ExtraArgs: args}
+		if candidate, err := firstBrokerRoute(cfg, spec); err == nil || candidate != nil ||
+			!strings.Contains(err.Error(), "cannot enter an agent box through -e") {
+			t.Fatalf("raw runtime credential through %q = %#v, %v", args, candidate, err)
+		}
 	}
 }
 
