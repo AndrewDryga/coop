@@ -1276,7 +1276,7 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	}
 	var checklist *IncompleteChecklistError
 	if errors.As(err, &checklist) {
-		return &drawnRefusal{usage: checklistUsage(checklist, t), err: checklist}
+		return &drawnRefusal{usage: checklistUsage(checklist, t, retry), err: checklist}
 	}
 	return fmt.Errorf("%w — fix the obstruction, then retry: %s", err, retry)
 }
@@ -1318,11 +1318,12 @@ func (e *drawnRefusal) Error() string   { return e.usage.Error() }
 func (e *drawnRefusal) Unwrap() []error { return []error{e.usage, e.err} }
 
 // checklistUsage is the person's view of an unfinished checklist: what is still open, the task.md
-// that holds it, and the command to run once it is ticked.
-func checklistUsage(e *IncompleteChecklistError, t Item) *ui.UsageError {
+// that holds it, and retry, the command to run once it is ticked (doneRetry, so it keeps the call's
+// flags).
+func checklistUsage(e *IncompleteChecklistError, t Item, retry string) *ui.UsageError {
 	// A folder name can come from a box, so the id and path are escaped like any other refusal.
 	id, file := ui.SafeInline(t.ID), ui.SafeInline(displayPath(filepath.Join(t.Dir, "task.md")))
-	headline, again := "Could not complete "+id, [2]string{"Then run:", "coop tasks done " + id}
+	headline, again := "Could not complete "+id, [2]string{"Then run:", retry}
 	if t.State == StateDone {
 		headline = id + " is already done, but its checklist is unfinished"
 	}

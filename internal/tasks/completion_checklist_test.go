@@ -397,9 +397,24 @@ func TestForkChecklistCheckedAgainAtPublicationAndLanding(t *testing.T) {
 func TestDoneRefusalEscapesTheTaskFolderName(t *testing.T) {
 	id := "fix\x1b[2Jlogin"
 	refusal := checklistUsage(&IncompleteChecklistError{ID: id, Done: 0, Total: 1, Open: []string{"Run the gate"}},
-		Item{ID: id, Dir: filepath.Join(t.TempDir(), StateInProgress, id)})
+		Item{ID: id, Dir: filepath.Join(t.TempDir(), StateInProgress, id)}, "coop tasks done "+ui.SafeInline(id))
 	if got := refusal.Render(ui.Palette{}); strings.Contains(got, "\x1b") || !strings.Contains(got, "Run the gate") {
 		t.Fatalf("refusal printed a raw control sequence or lost its item:\n%q", got)
+	}
+}
+
+// The checklist refusal offers the call's own retry: a --from-fork close is told to run
+// --from-fork again, not a plain done that is refused for another reason.
+func TestChecklistRefusalKeepsFromFork(t *testing.T) {
+	task := Item{ID: "fork-task", Dir: filepath.Join(t.TempDir(), StateInProgress, "fork-task")}
+	err := trustedCompletionError(&IncompleteChecklistError{ID: task.ID, Total: 1, Open: []string{"Run the gate"}},
+		task, claimOptions{fromFork: true})
+	var usage *ui.UsageError
+	if !errors.As(err, &usage) {
+		t.Fatalf("refusal = %v, want a drawn usage error", err)
+	}
+	if got := usage.Render(ui.Palette{}); !strings.Contains(got, "coop tasks done fork-task --from-fork") {
+		t.Fatalf("refusal lost --from-fork:\n%s", got)
 	}
 }
 
