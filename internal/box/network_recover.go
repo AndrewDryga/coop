@@ -217,8 +217,8 @@ type networkRunInventory struct {
 // cannot read is skipped and counted (UnreadableNetworkRuns), so one bad record
 // does not hold back the others, and recovery never reports "nothing pending"
 // from a partial inventory. The unscoped pass also names the finished runs
-// retention may remove, from every page, and every policy a listed run names,
-// but only from a listing read whole.
+// retention may remove, and every policy a listed run names, but only from a
+// listing read whole.
 func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.Time) (networkRunInventory, error) {
 	var out networkRunInventory
 	if runID != "" {
@@ -233,7 +233,7 @@ func pendingNetworkRuns(evidence *networkstate.Evidence, runID string, now time.
 	var unreadable []string
 	page, err := evidence.ExecutionInventory()
 	if err != nil {
-		return networkRunInventory{expired: out.expired}, err
+		return out, err
 	}
 	for _, name := range page.UnreadableNames {
 		unreadable = append(unreadable, filepath.Join(evidence.Path(), name))
