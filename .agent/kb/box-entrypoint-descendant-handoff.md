@@ -2,8 +2,8 @@
 name: box-entrypoint-descendant-handoff
 description: Supervised loop/review boxes authenticate forwarder exemptions and hand off live detached jobs
 subsystem: box
-sources: [internal/box/supervisor/main.go, internal/box/supervisor.go, internal/box/image.go, internal/box/run.go, internal/loop/loop.go, internal/loop/ratelimit.go]
-updated: 2026-11-10
+sources: [internal/box/supervisor/main.go, internal/box/supervisor.go, internal/box/image.go, internal/box/run.go, internal/loop/loop.go, internal/loop/ratelimit.go, internal/loop/watchdog.go]
+updated: 2026-11-17
 ---
 
 `RunSpec.SuperviseDescendants` is set only for loop and review iterations. In that mode
@@ -43,6 +43,7 @@ stops with exit 1, never the reserved code. Interactive boxes retain the normal 
 path.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 - 2026-11-10 — revalidated classification snapshots and excluded single-thread kernel exit
   transitions after hosted daemon-only failures. Synthetic stale/exit/thread controls and the
   real lifecycle cases cover this boundary. The daemon fixture joins its launcher and publishes

@@ -2,8 +2,8 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go]
-updated: 2026-11-08
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go, internal/cli/net_approve.go, internal/box/services.go]
+updated: 2026-11-17
 ---
 
 A filtered `coop acp` no longer exits when its project box cannot start. Admission runs with
@@ -241,6 +241,7 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 - 2026-11-06 — a `/build` Coop refuses while saving the files for review is remembered as a host build's refusal is, and
   its answer names the reason; a Dockerfile that is a link reads "is a symbolic link" there as in `coop build`.
   Covered by tests of the real saving and of the record, and of the thread's answer.

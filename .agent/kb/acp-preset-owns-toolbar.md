@@ -2,8 +2,8 @@
 name: acp-preset-owns-toolbar
 description: Active ACP presets own the whole lead target and refuse stale Provider/Account editor replays; the box's own wire messages are the only truth the controller may cache
 subsystem: acp
-sources: [internal/agent/agent.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/acpproxy/scripted_e2e_test.go, internal/acpproxy/e2e_test.go, internal/cli/help.go]
-updated: 2026-11-04
+sources: [internal/agent/agent.go, internal/acpctl/control.go, internal/acpproxy/proxy.go, internal/acpproxy/scripted_e2e_test.go, internal/acpproxy/e2e_test.go, internal/cli/help.go, internal/acpctl/visible_selects.go]
+updated: 2026-11-17
 ---
 
 ACP selection is tagged: `Preset != ""` means Provider and Account are empty. A preset's ladder
@@ -56,6 +56,7 @@ provider or message type is safe only when it is plumbed through one of those �
 "routed through" the resync path is a design read, not a grep), so review is what catches a violation.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 - 2026-11-04 — `git log --follow` names `internal/acpctl/control.go`; `internal/cli/acpcontrol.go`
   is gone.
 - 2026-10-28 — required the setting method before selector dispatch; unrelated-method regression

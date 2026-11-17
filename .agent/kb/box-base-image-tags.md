@@ -2,12 +2,12 @@
 name: box-base-image-tags
 description: Coop's shared base is tagged by its box definition so two Coop versions on one host keep their own; why there is no :latest alias, how an upgrade is repaired, and what stays shared
 subsystem: box
-sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/network_setup.go, internal/runtime/docker.go, internal/runtime/runtime.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/network_qualification.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go]
-updated: 2026-11-10
+sources: [internal/box/reclaim.go, internal/box/derived_image.go, internal/box/network_setup.go, internal/runtime/docker.go, internal/runtime/runtime.go, internal/box/project_preparation.go, internal/box/network_admission.go, internal/box/network_qualification.go, internal/box/filtered.go, internal/box/image.go, internal/box/staleness.go, internal/box/locked_image.go, internal/cli/launch_box.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/cli/cli.go, internal/cli/build_cmd.go, internal/cli/project_build.go, internal/cli/selfupdate.go, internal/runtime/project_build.go, internal/cli/eval_cmd.go, internal/cli/session_cmd.go, internal/forkctl/host.go, internal/forkctl/merge.go, internal/sessionsvc/service.go]
+updated: 2026-11-17
 ---
 
 `COOP_BASE_IMAGE` defaults to the bare repository `coop-box`, which `box.ResolveBaseImage` (run
-right after `config.Load` in `cli.Main` and the session service) turns into
+right after `config.Load` in `cli.Main`, `coop eval` and the session service) turns into
 `coop-box:<first 32 hex of baseDefHash>`: the hash of the base definition this binary would build.
 On native Linux, the host user's UID/GID are part of that definition and the locked-client image's
 build arguments, so two users of one Docker daemon do not reuse images with mismatched `/home/node`
@@ -128,6 +128,7 @@ record, so the 14 days start then), and an image any container still references 
 stopped, whoever owns it — is kept.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 - 2026-11-10 — rechecked definition inputs after shared supervisor/asdf helper builds and the
   verified npm replacement; removed obsolete native-asdf pin and single-stage descriptions.
 - 2026-10-17 — identifier check: `box.JobImage` is `box.SharedImage` since f90505e4, and the

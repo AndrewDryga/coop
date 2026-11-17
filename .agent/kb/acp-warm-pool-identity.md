@@ -2,8 +2,8 @@
 name: acp-warm-pool-identity
 description: coop acp parks one box per signed-in provider the session is not using and lends it to a switch only on an identical identity — plain target at the default model/effort, same account, box image and network policy; prove a hit from the trace, never from timing
 subsystem: acp
-sources: [internal/acpctl/warm.go, internal/box/filtered_launch.go, internal/cli/acp_refresh.go, internal/cli/fork_cmd.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecyclebench/acp.go]
-updated: 2026-11-03
+sources: [internal/acpctl/warm.go, internal/box/filtered_launch.go, internal/cli/acp_refresh.go, internal/cli/fork_cmd.go, internal/acpctl/resume.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/acpproxy/proxy.go, internal/runtime/runtime.go, internal/box/derived_image.go, tools/lifecyclebench/acp.go, internal/box/image.go, internal/acpctl/network.go]
+updated: 2026-11-17
 ---
 `coop acp` keeps a parked box (`acpctl.WarmPool`) for each signed-in provider the session is not
 using. After every factory spawn — the first one included, which is what fans the pool out —
@@ -72,6 +72,7 @@ editor session's (`COOP_ACP_INNER`, no session run ID): a session daemon's child
 and still reports the stop.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 - 2026-11-03 — `coop fork <name> acp` children stopped by their editor session exit quietly too;
   session daemon children keep reporting (`TestForkACPEditorChildStoppedBySupervisorIsQuiet`).
 - 2026-11-03 — a child its supervisor stopped exits quietly; verified with

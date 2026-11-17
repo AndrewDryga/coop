@@ -2,8 +2,8 @@
 name: acp-auth-is-provider-account-scoped
 description: ACP initialize capability truth and successful authentication belong to one provider account
 subsystem: acp
-sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/acpctl/network.go, internal/agent/agent.go, internal/agent/target.go, internal/box/network_bundles.go, internal/box/profiles.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/commands.go, internal/cli/rotation.go, internal/acpproxy/scripted_e2e_test.go]
-updated: 2026-11-07
+sources: [internal/acpproxy/proxy.go, internal/acpctl/control.go, internal/acpctl/network.go, internal/agent/agent.go, internal/agent/target.go, internal/box/network_bundles.go, internal/box/profiles.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/commands.go, internal/cli/rotation.go, internal/acpproxy/scripted_e2e_test.go, internal/config/config.go]
+updated: 2026-11-17
 ---
 
 An editor's `initialize` request can be reused when a child is replaced, but its response is fresh
@@ -61,6 +61,7 @@ make an editor-named account active, so classification reads the admitted scope'
 the provider's active one.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 
 - 2026-11-07 - an offline editor session said "Sign in to codex@personal on the host" when a restored
   session failed its sign-in check (the account was signed in; offline boxes cannot reach OpenAI). A session
