@@ -16,6 +16,7 @@ func TestUsageNativeHistory(t *testing.T) {
 		{"claude", `
 {"type":"assistant","timestamp":"2026-09-30T10:00:00Z","requestId":"r","message":{"id":"m","model":"claude-sonnet-4-6","usage":{"input_tokens":20,"cache_read_input_tokens":100,"cache_creation_input_tokens":30,"output_tokens":1}}}
 {"type":"assistant","timestamp":"2026-09-30T10:00:01Z","requestId":"r","message":{"id":"m","model":"claude-sonnet-4-6","stop_reason":"end_turn","usage":{"input_tokens":20,"cache_read_input_tokens":100,"cache_creation_input_tokens":30,"cache_creation":{"ephemeral_5m_input_tokens":10,"ephemeral_1h_input_tokens":20},"output_tokens":40}}}
+{"type":"assistant","timestamp":"2026-09-30T10:00:02Z","message":{"id":"s","model":"<synthetic>","stop_reason":"stop_sequence","usage":{"input_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}}}
 `, 20, 100, 10, 20, 40},
 		{"codex", `
 {"timestamp":"2026-09-30T10:00:00Z","type":"turn_context","payload":{"turn_id":"t","model":"gpt-6.1-sol"}}
@@ -33,8 +34,9 @@ func TestUsageNativeHistory(t *testing.T) {
 		t.Run(tc.provider, func(t *testing.T) {
 			ag, _ := Get(tc.provider)
 			history, err := ag.Usage().ParseHistory(strings.NewReader(strings.TrimSpace(tc.data)))
-			if err != nil || len(history.Events) != 1 {
-				t.Fatalf("events=%d error=%v", len(history.Events), err)
+			// The Claude fixture ends with a zero-usage "<synthetic>" notice, which is not usage.
+			if err != nil || len(history.Events) != 1 || (tc.provider == "claude" && history.Partial) {
+				t.Fatalf("events=%d partial=%v error=%v", len(history.Events), history.Partial, err)
 			}
 			e := history.Events[0]
 			if e.Input != tc.input || e.Read != tc.read || e.Write != tc.write || e.Write1h != tc.hour || e.Output != tc.output {

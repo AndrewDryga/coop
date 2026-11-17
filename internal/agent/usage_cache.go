@@ -16,7 +16,7 @@ import (
 )
 
 // Increment this when normalized history decoding changes. Tariffs need no invalidation.
-const usageCacheVersion = 1
+const usageCacheVersion = 2
 
 type usageFileFingerprint struct {
 	Device, Inode           uint64

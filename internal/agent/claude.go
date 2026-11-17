@@ -293,7 +293,9 @@ func claudeUsageHistory(reader io.Reader) (UsageHistory, error) {
 		if json.Unmarshal(line, &row) != nil {
 			return false
 		}
-		if row.Type != "assistant" || row.Message.Usage == nil {
+		// Claude Code writes its own error and notice lines as zero-usage "<synthetic>" rows,
+		// usually without a request id; no tokens were spent, so they are not usage.
+		if row.Type != "assistant" || row.Message.Usage == nil || row.Message.Model == "<synthetic>" {
 			return true
 		}
 		u := row.Message.Usage
