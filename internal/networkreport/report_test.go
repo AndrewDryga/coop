@@ -9,14 +9,18 @@ import (
 )
 
 // reasonWrite captures the code from a source line that writes a reason into a record a report can
-// print, including a Failure, which safeReason turns into a denial's reason. The native broker's stop
-// reasons and failures go only to the gateway's log, so its files are not read.
+// print, including a Failure, which safeReason turns into a denial's reason.
 var reasonWrite = regexp.MustCompile(`(?:` +
 	`(?:markProxyPartial|markBoundaryGap|partialCoverage|missingCoverage|Failure)\(|` +
 	`addSessionLossReason\([^,]+, |append\([^,]*Reasons, |Reasons = \[\]string\{|` +
 	`\b[Rr]eason(?:s\[\d+\])?\s*(?::=|=|:)\s*(?:[\w.]+,\s*|"[^"\n]*",\s*)*|` +
 	`lastOutcome = |return "ready", ` +
 	`)"([a-z][a-z0-9_]*)"`)
+
+// brokerRefusal captures the code the native broker refuses a request with: refuse records it as an
+// admission_failed event, which the evidence and `coop net blocked` print. The broker's other stop
+// reasons and failures go only to the gateway's log, so only this write is read from its files.
+var brokerRefusal = regexp.MustCompile(`\brefuse\([^,]+, [^,]+, [^,]+, "([a-z][a-z0-9_]*)"`)
 
 // notPrintedReasons match reasonWrite without being reasons a report prints.
 var notPrintedReasons = map[string]bool{
@@ -36,15 +40,19 @@ func TestEveryRecordedReasonHasPlainText(t *testing.T) {
 		}
 		for _, file := range files {
 			base := filepath.Base(file)
-			if strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "native_") {
+			if strings.HasSuffix(base, "_test.go") {
 				continue
 			}
 			source, err := os.ReadFile(file)
 			if err != nil {
 				t.Fatal(err)
 			}
+			scan := reasonWrite
+			if strings.HasPrefix(base, "native_") {
+				scan = brokerRefusal
+			}
 			for _, line := range strings.Split(string(source), "\n") {
-				for _, match := range reasonWrite.FindAllStringSubmatch(line, -1) {
+				for _, match := range scan.FindAllStringSubmatch(line, -1) {
 					codes[match[1]] = true
 				}
 			}
@@ -53,7 +61,7 @@ func TestEveryRecordedReasonHasPlainText(t *testing.T) {
 	// The scan itself must keep finding the codes the gateway writes, one from each kind of producer.
 	for _, sure := range []string{
 		"upstream_reset", "proxy_flow_stale", "socket_join_expired", "dns_query_invalid", "owned_run_set_incomplete", "gateway_start_timeout",
-		"terminal_observation_unavailable", "last_lookup_exchange_failed",
+		"terminal_observation_unavailable", "last_lookup_exchange_failed", "native_broker_connect_refused",
 	} {
 		if !codes[sure] {
 			t.Errorf("the source scan no longer finds %q; update reasonWrite", sure)
