@@ -23,8 +23,11 @@ type UsageSnapshot struct {
 	Truncated bool
 }
 
-// ReadUsageSnapshot does not create, migrate, checkpoint or rewrite session state. Read the live
-// WAL rather than using immutable=1, which would silently miss newly committed usage.
+// ReadUsageSnapshot does not create, migrate, checkpoint or rewrite session state. While a service
+// runs (or after a crash) the -shm index exists, and readonly_shm=1 reads the live WAL through it
+// without writing beside the store; immutable=1 there would silently miss newly committed usage.
+// A cleanly stopped store has neither -wal nor -shm, and immutable=1 reads it without leaving the
+// pair a plain read-only open creates (see readSchemaVersion).
 func ReadUsageSnapshot(ctx context.Context, root string, since, until time.Time) (UsageSnapshot, error) {
 	var out UsageSnapshot
 	path := filepath.Join(root, databaseName)
@@ -35,7 +38,13 @@ func ReadUsageSnapshot(ctx context.Context, root string, since, until time.Time)
 	if !info.Mode().IsRegular() {
 		return out, errors.New("session usage database is not a regular file")
 	}
-	db, err := sql.Open("sqlite", sqliteFileURI(path, url.Values{"mode": {"ro"}, "_pragma": {"busy_timeout(1000)"}}))
+	query := url.Values{"mode": {"ro"}, "_pragma": {"busy_timeout(1000)"}}
+	if shm, err := os.Lstat(path + "-shm"); err == nil && shm.Mode().IsRegular() {
+		query.Set("readonly_shm", "1")
+	} else if stoppedCleanly(path) {
+		query.Set("immutable", "1")
+	}
+	db, err := sql.Open("sqlite", sqliteFileURI(path, query))
 	if err != nil {
 		return out, errors.New("session usage database is unavailable")
 	}
@@ -102,4 +111,15 @@ func ReadUsageSnapshot(ctx context.Context, root string, since, until time.Time)
 		return out, errors.New("retained session usage read was interrupted")
 	}
 	return out, nil
+}
+
+// stoppedCleanly reports a store with no -wal, -shm or rollback journal beside it, which immutable
+// mode reads completely and safely.
+func stoppedCleanly(path string) bool {
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Lstat(path + suffix); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return true
 }

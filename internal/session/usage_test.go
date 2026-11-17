@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -82,5 +83,35 @@ func TestUsageSnapshotMissingStateDoesNotCreateAnything(t *testing.T) {
 	}
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatal("inspection created state")
+	}
+}
+
+func TestUsageSnapshotOfStoppedStoreWritesNothingBesideIt(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store := openTestStore(t, root)
+	if _, err := store.CreateSession(ctx, "usage-stopped", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:gpt-6.1-sol@work"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	list := func() []string {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		return names
+	}
+	before := list()
+	if _, err := ReadUsageSnapshot(ctx, root, time.Now().Add(-time.Hour), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if after := list(); !slices.Equal(before, after) {
+		t.Fatalf("usage snapshot wrote beside a stopped store: before=%v after=%v", before, after)
 	}
 }
