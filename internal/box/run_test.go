@@ -470,6 +470,27 @@ func TestRunTellsTheConsultLeadItsServePorts(t *testing.T) {
 	}
 }
 
+// Agents take the box note as ground truth, so each apt-installed tool it names must be one the
+// image's Dockerfile installs. The base node image ships no wget.
+func TestBoxEnvNoteNamesOnlyInstalledTools(t *testing.T) {
+	dockerfile, err := BaseDockerfile("amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := boxEnvNote(false)
+	for tool, pkg := range map[string]string{"curl": "curl", "jq": "jq", "rg": "ripgrep", "fd": "fd-find", "psql": "postgresql-client"} {
+		if strings.Contains(note, " "+tool+",") && !strings.Contains(dockerfile, " "+pkg+" ") {
+			t.Errorf("the note names %s, but the image does not install %s", tool, pkg)
+		}
+	}
+	if strings.Contains(note, "wget") && !strings.Contains(dockerfile, " wget ") {
+		t.Error("the note names wget, which the image does not install")
+	}
+	if strings.Contains(note, "once per machine") {
+		t.Error("~/.cache is a per-project volume; the browser download repeats per project")
+	}
+}
+
 func TestRunRepoWritableWithReadOnlyDescendant(t *testing.T) {
 	pinHome(t)
 	repo := t.TempDir()

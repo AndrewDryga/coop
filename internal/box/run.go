@@ -2749,9 +2749,9 @@ You run inside a coop container: a Debian box that IS your sandbox and security 
 - OS-level sandboxing (bubblewrap) is intentionally absent. A "bubblewrap is required" notice
   is expected, not a bug — don't investigate or work around it, just proceed.
 - Installed and ready: node, npm, yarn, python (= python3), pip, git, gcc/make, jq, rg, fd,
-  curl, wget, perl, psql. %s
+  curl, perl, psql. %s
 - Playwright's Chromium system libraries are preinstalled. The browser binary downloads on
-  first use (cached in ~/.cache, so once per machine): run "npx playwright install chromium"
+  first use (cached in ~/.cache, so once per project): run "npx playwright install chromium"
   if it's missing. Launch headless and pass args: ['--no-sandbox'] — Chromium's own sandbox
   can't run here (the box already is the sandbox), so without it the launch fails.
 - Write inside the repo (your working directory) — that's where your changes belong and your
