@@ -960,14 +960,6 @@ func (a geminiAgent) ActiveCredentialEnvKeys(profileDir string, markerPresent bo
 	return nil
 }
 
-// MarkerProvidesSelectedCredential recognizes only Gemini's native OAuth store. Its encrypted
-// API-key store is bound to one container hostname and is therefore not runnable in a fresh box;
-// Coop's host credential is the portable API-key authority.
-func (geminiAgent) MarkerProvidesSelectedCredential(profileDir string) bool {
-	selectedType, ok, err := geminiSelectedAuthType(profileDir)
-	return err == nil && ok && selectedType == "oauth-personal"
-}
-
 func geminiSelectedAuthType(profileDir string) (string, bool, error) {
 	data, present, err := readDefaultsFile(filepath.Join(profileDir, "settings.json"))
 	if err != nil {
@@ -987,17 +979,6 @@ func geminiSelectedAuthType(profileDir string) (string, bool, error) {
 		return "", false, err
 	}
 	return settings.Security.Auth.SelectedType, true, nil
-}
-
-func (geminiAgent) StoredCredentialStatus(profileDir string, _ time.Time) StoredCredentialStatus {
-	selectedType, ok, err := geminiSelectedAuthType(profileDir)
-	if err != nil || !ok {
-		return StoredCredentialReauthRequired
-	}
-	if selectedType == "gemini-api-key" {
-		return StoredCredentialReauthRequired
-	}
-	return StoredCredentialUnknown
 }
 
 // MCP builds the settings mounted inside a gemini box: the host settings plus the box-only

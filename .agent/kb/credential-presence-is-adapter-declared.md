@@ -3,13 +3,13 @@ name: credential-presence-is-adapter-declared
 description: adapters own credential presence, selected env authority, and inspectable stored readiness
 subsystem: credentials
 sources: [internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/acpctl/control.go, internal/box/auth.go, internal/box/credential_broker.go, internal/box/profiles.go, internal/cli/rotation.go, internal/cli/profiles.go, internal/cli/target.go, internal/cli/cli.go, internal/cli/acp_cmd.go, internal/cli/acp_network.go, internal/cli/fork_cmd.go, internal/cli/commands.go, internal/cli/loop_cmd.go, internal/loop/loop.go, internal/loop/review.go, internal/testutil/liveprovider/credentials.go, internal/box/account_renewal.go, internal/box/native_account.go]
-updated: 2026-11-04
+updated: 2026-11-17
 ---
 
-Adapters own six credential facts: `AuthMarker` names their login file and canonical primary env
+Adapters own the credential facts: `AuthMarker` names their login file and canonical primary env
 key; `CredentialEnvKeys` is the complete set of token keys they accept;
 `ActiveCredentialEnvKeys` selects the env family authoritative for one profile; and
-`StoredCredentialStatus` validates a native marker when its shape is safely inspectable.
+`NativeCredentials().Inspect` judges whether a canonical account record is ready.
 `CredentialBroker` declares the one pinned API-key route Coop has actually qualified, while the
 optional `StoredAPIKeyDetector` identifies a reusable API key hidden in a native marker so launch
 can refuse it instead of mounting it. Presence
@@ -27,9 +27,7 @@ other named profiles require their own marker file. Read, completion, runnable-t
 checks use `EffectiveProfiles`, including the checks before setting a default or removing one. A
 run on a marker-backed profile strips that provider's env keys before passing the env file, so the
 provider-wide token cannot shadow the account-specific marker mounted into the box. A marker owns
-presence when the adapter selects no env authority; the optional `MarkerCredentialSelector`
-capability can additionally declare that a native marker stores the same credential as a selected
-env family. Environment selection and filtering remain independent. This matters for Gemini:
+presence when the adapter selects no env authority. Environment selection and filtering remain independent. This matters for Gemini:
 `gemini-api-key` accepts `GEMINI_API_KEY` from the default account's env or Coop's owner-private
 per-account host credential. Gemini's encrypted native marker is bound to the box identity that
 created it and does not make an API key portable; `vertex-ai` selects `GOOGLE_API_KEY`, and
@@ -40,10 +38,10 @@ its selected entry is usable. Filtered-network admission is stricter: it admits 
 account/auth family whose portable authority it can prove and keeps OAuth and not-yet-qualified
 Vertex accounts out of the selector.
 
-After presence succeeds, `ProfileCredentialReady` asks the adapter for marker readiness only when
-that exact profile has a marker. Claude, Codex, and Grok distinguish usable or refreshable OAuth
-from malformed, stripped, and nonrenewable records; Gemini returns unknown and preserves
-presence-based behavior. `coop credentials`, runnable ladder expansion, and the ACP Account selector
+`ProfileCredentialReady` reads the account's canonical record (`nativeAccountReady`) and asks the
+adapter's `NativeCredentials().Inspect` whether it is ready: usable or refreshable OAuth passes,
+malformed, stripped and nonrenewable records do not. An account with no canonical record is ready
+only as the default with its selected env key present. `coop credentials`, runnable ladder expansion, and the ACP Account selector
 use this same refinement, so a native login already labeled `Sign in again` is neither attempted
 during failover nor offered as a normal editor switch. A canonical record whose grant the provider
 refused at its last renewal counts as not ready too (its recorded refusal, see
@@ -98,6 +96,9 @@ does not recursively chmod provider transcripts or state; the private ancestors 
 descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-11-17 - removed `StoredCredentialStatus` and `MarkerCredentialSelector`, which no code had
+  called since the pre-v11 profile readers went (audit AG-5); readiness is the canonical record's
+  inspection; verified against internal/box/profiles.go and native_account.go
 - 2026-11-04 - the privacy paragraph described mounting profile folders; it now says what config
   load and native home preparation do; verified against internal/config/config.go and
   internal/box/account_authority.go

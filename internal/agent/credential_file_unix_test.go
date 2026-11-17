@@ -27,9 +27,6 @@ func TestProviderCredentialReadersRefuseFIFOsWithoutBlocking(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				if got := tc.agent.StoredCredentialStatus(profile, time.Now()); got == StoredCredentialReady {
-					t.Errorf("FIFO credential reported ready")
-				}
 				if got := tc.agent.LiveCredentials().Portability(profile, time.Now().Add(time.Hour)); got == CredentialPortable {
 					t.Errorf("FIFO credential reported portable")
 				}

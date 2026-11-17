@@ -1149,27 +1149,6 @@ func (a codexAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []stri
 	return a.CredentialEnvKeys()
 }
 
-func (codexAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
-	data, err := readCodexCredential(filepath.Join(profileDir, "auth.json"))
-	if err != nil {
-		return StoredCredentialReauthRequired
-	}
-	var source codexSourceCredential
-	if json.Unmarshal(data, &source) != nil {
-		return StoredCredentialReauthRequired
-	}
-	if source.AuthMode == "apikey" || (source.AuthMode == "" && source.OpenAIAPIKey != "") {
-		if source.OpenAIAPIKey != "" {
-			return StoredCredentialReady
-		}
-		return StoredCredentialReauthRequired
-	}
-	if source.Tokens != nil && (source.Tokens.RefreshToken != "" || jwtExpiresAfter(source.Tokens.AccessToken, now)) {
-		return StoredCredentialReady
-	}
-	return StoredCredentialReauthRequired
-}
-
 func codexCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
 	data, err := readCodexCredential(filepath.Join(profileDir, "auth.json"))
 	if err != nil {

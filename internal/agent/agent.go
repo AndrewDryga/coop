@@ -285,13 +285,6 @@ type CredentialArtifact struct {
 	Project func([]byte) ([]byte, error)
 }
 
-// MarkerCredentialSelector is the optional capability for an adapter whose native marker can
-// hold the same selected credential as an environment key. Returning false does not veto a marker
-// when the account selects no environment key.
-type MarkerCredentialSelector interface {
-	MarkerProvidesSelectedCredential(profileDir string) bool
-}
-
 // HostCredentialSpec is one adapter-owned API-key login that Coop can persist outside the
 // provider home mounted into boxes. The adapter owns the human wording and the profile mutation
 // that selects this credential family; shared code owns hidden input and private storage. A
@@ -449,17 +442,6 @@ const (
 	CredentialNotPortable
 )
 
-// StoredCredentialStatus is the adapter's best-effort validity check for its native credential
-// marker. Unknown preserves presence-based behavior for opaque or host-bound stores. Ready includes
-// credentials the native CLI can refresh without another login.
-type StoredCredentialStatus uint8
-
-const (
-	StoredCredentialUnknown StoredCredentialStatus = iota
-	StoredCredentialReady
-	StoredCredentialReauthRequired
-)
-
 // Agent is everything coop needs to drive one coding agent. To add an agent, write a
 // new file implementing this interface and self-register it from an init().
 // ControllerJobConfig is an adapter whose box config differs in a controller job's box, where
@@ -566,9 +548,6 @@ type Agent interface {
 	// nonempty result means those keys, not a stale marker, define presence and execution authority.
 	// The caller reports marker presence; adapters decide precedence once from it and their selector.
 	ActiveCredentialEnvKeys(profileDir string, markerPresent bool) []string
-	// StoredCredentialStatus validates the adapter's native marker for user-facing credential status.
-	// It never reads provider-wide env credentials; those retain their presence-based status.
-	StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus
 	// LiveCredentials declares the access-only credential projection and redacted compatibility
 	// diagnostics for this adapter. Filtered networking reads its Portability and the loop its
 	// AuthSignals; the opt-in live suite reads the rest, so a registered provider cannot evade it.
@@ -668,17 +647,6 @@ type Agent interface {
 	// ShellPrelude is optional helper-function shell the wrappers emit ONCE before the
 	// per-agent case (e.g. codex's output filter); "" for agents that need none.
 	ShellPrelude() string
-}
-
-// MarkerProvidesActiveCredential reports whether a present native marker can satisfy this
-// profile. A marker satisfies a profile with no selected environment family; an optional selector
-// may additionally recognize a native form of an env-backed credential.
-func MarkerProvidesActiveCredential(ag Agent, profileDir string, activeEnvKeys []string) bool {
-	if len(activeEnvKeys) == 0 {
-		return true
-	}
-	selector, ok := ag.(MarkerCredentialSelector)
-	return ok && selector.MarkerProvidesSelectedCredential(profileDir)
 }
 
 // projectJSONLeaf emits one scalar nested field and drops sibling auth settings.

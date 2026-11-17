@@ -1126,40 +1126,6 @@ func TestGeminiCredentialEnvPrecedence(t *testing.T) {
 	}
 }
 
-func TestGeminiMarkerCredentialSelection(t *testing.T) {
-	gemini, _ := Get("gemini")
-	selector, ok := gemini.(MarkerCredentialSelector)
-	if !ok {
-		t.Fatal("Gemini does not declare native marker selection")
-	}
-	dir := t.TempDir()
-	for authType, want := range map[string]bool{
-		"gemini-api-key": false,
-		"oauth-personal": true,
-		"vertex-ai":      false,
-		"unknown":        false,
-	} {
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"`+authType+`"}}}`), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if got := selector.MarkerProvidesSelectedCredential(dir); got != want {
-			t.Errorf("selectedType %q marker authority = %v, want %v", authType, got, want)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if selector.MarkerProvidesSelectedCredential(dir) {
-		t.Error("malformed settings granted marker authority")
-	}
-	if err := os.Remove(filepath.Join(dir, "settings.json")); err != nil {
-		t.Fatal(err)
-	}
-	if selector.MarkerProvidesSelectedCredential(dir) {
-		t.Error("missing settings granted marker authority")
-	}
-}
-
 func TestGeminiHostCredentialSelectsAPIKeyWithoutClobberingSettings(t *testing.T) {
 	gemini, _ := Get("gemini")
 	spec := gemini.HostCredential()
@@ -1257,91 +1223,6 @@ func TestPortableCredentialSafetyRequiresValidityBeyondDeadline(t *testing.T) {
 		`{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`, past.Format(time.RFC3339Nano)))
 	if got := grokLive.Portability(grokDir, deadline); got != CredentialRefreshRequired {
 		t.Fatal("expired Grok refresh credential was treated as safe to copy")
-	}
-}
-
-func TestStoredCredentialStatus(t *testing.T) {
-	root := t.TempDir()
-	now := time.Now()
-	futureMillis := now.Add(time.Hour).UnixMilli()
-	claude, _ := Get("claude")
-	claudeDir := filepath.Join(root, "claude")
-	writeClaude := func(body string) StoredCredentialStatus {
-		mustWrite(t, filepath.Join(claudeDir, ".credentials.json"), body)
-		return claude.StoredCredentialStatus(claudeDir, now)
-	}
-	if got := writeClaude(fmt.Sprintf(
-		`{"claudeAiOauth":{"accessToken":"access","expiresAt":%d,"scopes":["user:inference"]}}`, futureMillis)); got != StoredCredentialReady {
-		t.Errorf("current Claude access = %v, want ready", got)
-	}
-	if got := writeClaude(`{"claudeAiOauth":{"refreshToken":"refresh","scopes":["user:inference"]}}`); got != StoredCredentialReady {
-		t.Errorf("refreshable Claude = %v, want ready", got)
-	}
-	for name, body := range map[string]string{
-		"stripped":              `{"claudeAiOauth":{"scopes":["user:inference"]}}`,
-		"future without access": fmt.Sprintf(`{"claudeAiOauth":{"expiresAt":%d,"scopes":["user:inference"]}}`, futureMillis),
-		"missing scope":         fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"access","expiresAt":%d}}`, futureMillis),
-		"malformed":             `{`,
-	} {
-		if got := writeClaude(body); got != StoredCredentialReauthRequired {
-			t.Errorf("%s Claude = %v, want reauth required", name, got)
-		}
-	}
-
-	grok, _ := Get("grok")
-	grokDir := filepath.Join(root, "grok")
-	grokEntry := func(expiresAt, refresh string) string {
-		return fmt.Sprintf(`{"key":"access","refresh_token":%q,"expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}`, refresh, expiresAt)
-	}
-	writeGrok := func(body string) StoredCredentialStatus {
-		mustWrite(t, filepath.Join(grokDir, "auth.json"), body)
-		return grok.StoredCredentialStatus(grokDir, now)
-	}
-	future := now.Add(time.Hour).UTC().Format(time.RFC3339Nano)
-	past := now.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
-	if got := writeGrok(`{"issuer::id":` + grokEntry(future, "") + `}`); got != StoredCredentialReady {
-		t.Errorf("current Grok access = %v, want ready", got)
-	}
-	if got := writeGrok(`{"issuer::id":` + grokEntry(past, "refresh") + `}`); got != StoredCredentialReady {
-		t.Errorf("refreshable Grok = %v, want ready", got)
-	}
-	if got := writeGrok(`{"expired":` + grokEntry(past, "") + `,"current":` + grokEntry(future, "") + `}`); got != StoredCredentialReady {
-		t.Errorf("mixed-expiry Grok = %v, want ready", got)
-	}
-	for name, body := range map[string]string{
-		"expired":         `{"issuer::id":` + grokEntry(past, "") + `}`,
-		"missing routing": fmt.Sprintf(`{"issuer::id":{"key":"access","expires_at":%q}}`, future),
-		"mixed scalar":    `{"issuer::id":` + grokEntry(future, "") + `,"bad":"scalar"}`,
-		"malformed":       `{`,
-	} {
-		if got := writeGrok(body); got != StoredCredentialReauthRequired {
-			t.Errorf("%s Grok = %v, want reauth required", name, got)
-		}
-	}
-
-	codex, _ := Get("codex")
-	codexDir := filepath.Join(root, "codex")
-	mustWrite(t, filepath.Join(codexDir, "auth.json"), `{"tokens":{"id_token":"identity","access_token":"expired","refresh_token":"refresh"},"last_refresh":"2026-07-15T00:00:00Z"}`)
-	if got := codex.StoredCredentialStatus(codexDir, now); got != StoredCredentialReady {
-		t.Errorf("refreshable Codex stored credential status = %v, want ready", got)
-	}
-	mustWrite(t, filepath.Join(codexDir, "auth.json"), `{"tokens":{"id_token":"identity","access_token":"expired","refresh_token":""},"last_refresh":"2026-07-15T00:00:00Z"}`)
-	if got := codex.StoredCredentialStatus(codexDir, now); got != StoredCredentialReauthRequired {
-		t.Errorf("expired Codex stored credential status = %v, want reauth", got)
-	}
-
-	gemini, _ := Get("gemini")
-	geminiDir := filepath.Join(root, "gemini")
-	if got := gemini.StoredCredentialStatus(geminiDir, now); got != StoredCredentialReauthRequired {
-		t.Errorf("Gemini marker without a selector = %v, want reauth", got)
-	}
-	mustWrite(t, filepath.Join(geminiDir, "settings.json"), `{"security":{"auth":{"selectedType":"oauth-personal"}}}`)
-	if got := gemini.StoredCredentialStatus(geminiDir, now); got != StoredCredentialUnknown {
-		t.Errorf("Gemini OAuth stored credential status = %v, want unknown", got)
-	}
-	mustWrite(t, filepath.Join(geminiDir, "settings.json"), `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`)
-	if got := gemini.StoredCredentialStatus(geminiDir, now); got != StoredCredentialReauthRequired {
-		t.Errorf("Gemini native API-key status = %v, want reauth", got)
 	}
 }
 

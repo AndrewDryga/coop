@@ -3,7 +3,7 @@ name: sign-in-again-is-actionable
 description: refreshable OAuth stays usable; "Sign in again" means the stored login cannot recover (a provider-refused grant included) and every command words it the same — run the coop login it names
 subsystem: credentials
 sources: [internal/agent/agent.go, internal/agent/target.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/box/profiles.go, internal/box/account_renewal.go, internal/box/native_account.go, internal/box/native_broker.go, internal/cli/profiles.go, internal/cli/commands.go, internal/cli/modelscache.go, internal/cli/usage.go, internal/cli/rotation.go, internal/sessionsvc/acp.go]
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 `coop credentials` lists an account whose OAuth access token has expired but whose refresh authority
 is valid as healthy: Coop renews it on use, so the row carries no warning. A marker or canonical
@@ -39,8 +39,8 @@ reads the account as ready (`accountBusy`: the lock wait gave up, nothing else d
 command calls it signed in; a launch waits for the lock and judges what that process left. A damaged
 or refused record still reads `Sign in again` once it can be read.
 
-The provider adapter owns this distinction through `StoredCredentialStatus`. Claude, Codex, and
-Grok validate their native OAuth records; Gemini retains opaque presence behavior. Env-only
+The provider adapter owns this distinction through `NativeCredentials().Inspect`, which
+`nativeAccountReady` runs on the account's canonical record. Env-only
 credentials also remain presence-based because there is no native marker to inspect. Runnable
 account ladders exclude a marker that is known to require another login before launching a provider;
 if a pinned account or every candidate is excluded, the error names the exact
@@ -55,6 +55,8 @@ A healthy row's `refreshed <age>` reads the marker mtime through `box.ProfileTok
 behind provider expiries.
 
 ## Changelog
+- 2026-11-17 — the adapter check is `NativeCredentials().Inspect` on the canonical record;
+  `StoredCredentialStatus` had no caller and was removed (audit AG-5).
 - 2026-11-03 — a listing taken while a renewal held an account's lock showed `Sign in again` for a
   healthy account; a busy lock now reads as signed in, and `ProfileTokenMtime` dates the record
   without waiting 30 seconds for that lock.

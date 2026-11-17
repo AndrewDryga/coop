@@ -881,22 +881,6 @@ func (a claudeAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []str
 	return a.CredentialEnvKeys()
 }
 
-func (claudeAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
-	data, err := ReadCredentialArtifact(filepath.Join(profileDir, ".credentials.json"), claudeCredentialLimit)
-	if err != nil {
-		return StoredCredentialReauthRequired
-	}
-	credential, err := parseClaudeSourceCredential(data)
-	if err != nil || !slices.Contains(credential.Scopes, "user:inference") {
-		return StoredCredentialReauthRequired
-	}
-	if credential.RefreshToken != "" || (credential.AccessToken != "" && credential.ExpiresAt > 0 &&
-		time.UnixMilli(credential.ExpiresAt).After(now)) {
-		return StoredCredentialReady
-	}
-	return StoredCredentialReauthRequired
-}
-
 func claudeCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
 	data, err := ReadCredentialArtifact(filepath.Join(profileDir, ".credentials.json"), claudeCredentialLimit)
 	if err != nil {
@@ -913,10 +897,8 @@ const (
 	// Claude Code's own token endpoint and public client. Read out of the shipped CLI
 	// rather than recalled: the credential coop stores is the one that CLI wrote, so the
 	// grant has to be the one that CLI sends.
-	claudeRefreshTokenURL  = "https://platform.claude.com/v1/oauth/token"
-	claudeOAuthClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeCredentialScopes = "user:profile user:inference user:sessions:claude_code " +
-		"user:mcp_servers user:file_upload"
+	claudeRefreshTokenURL = "https://platform.claude.com/v1/oauth/token"
+	claudeOAuthClientID   = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	claudeCredentialLimit = 1 << 20
 )
 

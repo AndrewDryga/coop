@@ -752,20 +752,6 @@ func readGrokCredentials(profileDir string) (map[string]grokSourceCredential, bo
 	return credentials, err == nil
 }
 
-func (grokAgent) StoredCredentialStatus(profileDir string, now time.Time) StoredCredentialStatus {
-	credentials, ok := readGrokCredentials(profileDir)
-	if !ok {
-		return StoredCredentialReauthRequired
-	}
-	for _, credential := range credentials {
-		expiresAt, _ := time.Parse(time.RFC3339Nano, credential.ExpiresAt)
-		if credential.RefreshToken != "" || expiresAt.After(now) {
-			return StoredCredentialReady
-		}
-	}
-	return StoredCredentialReauthRequired
-}
-
 func grokCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
 	credentials, ok := readGrokCredentials(profileDir)
 	if !ok {
