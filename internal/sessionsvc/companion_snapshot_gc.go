@@ -26,10 +26,17 @@ func (s *Service) reclaimCompanionSnapshots(ctx context.Context, result *Storage
 	defer cancel()
 	limits := s.storageLimitsSnapshot()
 	volume, err := forkspace.MeasureFilesystem(s.stateRoot)
-	pressure := err == nil && volume.FreeBytes <= 2*limits.ReserveBytes
+	pressure := err == nil && s.companionSnapshotPressure(volume)
 	count, problems := pruneCompanionSnapshotsSweep(ctx, s.stateRoot, time.Now(), limits.DisposableBudgetBytes, limits.MaxReclaimPerPass, pressure, &s.storage.snapshotSweep)
 	result.SnapshotsPruned += count
 	result.Problems = append(result.Problems, problems...)
+}
+
+// companionSnapshotPressure says the disk is low enough to drop unused warm snapshots before their
+// hour is up. The reserve must come from the measured capacity: the default policy's reserve for
+// an unknown capacity is zero, which would count only a completely full disk.
+func (s *Service) companionSnapshotPressure(volume forkspace.Filesystem) bool {
+	return volume.FreeBytes <= 2*s.storageLimitsFor(volume.CapacityBytes).ReserveBytes
 }
 
 type companionSnapshotSweep struct {

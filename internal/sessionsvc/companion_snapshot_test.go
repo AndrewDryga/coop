@@ -17,6 +17,23 @@ import (
 	"github.com/AndrewDryga/coop/internal/session"
 )
 
+// The sweep read the reserve from the policy for an unknown capacity, which is zero, so on every
+// real worker an unused warm snapshot was dropped early only once the disk was completely full.
+func TestSnapshotPressureUsesTheReserveOfTheMeasuredDisk(t *testing.T) {
+	svc := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), storageTestRepo(t), nil)
+	t.Cleanup(func() { _ = svc.Stop() })
+	svc.storage.mu.Lock()
+	svc.storage.configured = nil // the production default, which no worker command overrides
+	svc.storage.mu.Unlock()
+	const capacity = int64(100 << 30)
+	reserve := DefaultStorageLimits(capacity).ReserveBytes
+	for free, want := range map[int64]bool{2*reserve - 1: true, 2 * reserve: true, 2*reserve + 1: false} {
+		if got := svc.companionSnapshotPressure(forkspace.Filesystem{CapacityBytes: capacity, FreeBytes: free}); got != want {
+			t.Errorf("pressure with %d of %d bytes free (reserve %d) = %v, want %v", free, capacity, reserve, got, want)
+		}
+	}
+}
+
 // Each investigation copied every read-only repository and its history. Repeated
 // sessions exhausted the worker disk even though they read exactly the same bytes.
 func TestCompanionsSharePinnedBytesAcrossFreshnessReceipts(t *testing.T) {
