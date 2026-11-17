@@ -1583,8 +1583,10 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 					ui.Note("    %s", step)
 				}
 				ui.Note("")
-				if unanswered {
+				if unanswered && queuesInsideProject(repo, queues) {
 					// Queues chosen with --tasks may be ones the project's task commands do not list.
+					// coop tasks refuses a queue outside the project, so then the per-task unblock
+					// steps above, which find a fork's queue, are the whole answer.
 					decisions := "coop tasks"
 					for _, queue := range queues {
 						decisions += " --tasks " + shellWord(queue)
@@ -1812,6 +1814,18 @@ func blockedForkAssignments(assignments []tasks.LocatedForkAssignment) []tasks.L
 		}
 	}
 	return blocked
+}
+
+// queuesInsideProject reports whether coop tasks --tasks takes every queue: it refuses one outside
+// the project, as tasks.TaskQueues does.
+func queuesInsideProject(repo string, queues []string) bool {
+	for _, queue := range queues {
+		rel, err := box.RepoRelative(repo, queue)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return false
+		}
+	}
+	return true
 }
 
 // forkDecisionStep says what one task a stopped fork waits on still needs, and the command that gives

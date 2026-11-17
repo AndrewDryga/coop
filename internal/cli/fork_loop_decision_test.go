@@ -421,3 +421,30 @@ func TestTasksUnblockFindsATaskInAForksChosenQueue(t *testing.T) {
 		t.Errorf("unblocked task's answer = %q, %v; want it saved in the fork's chosen queue", answer, err)
 	}
 }
+
+// coop tasks refuses a queue outside the project, so a fork loop on one does not print an
+// "Answer it" command that would only be refused; each task's own unblock step stays.
+func TestForkLoopDecisionStopOmitsTasksCommandForAQueueOutsideTheProject(t *testing.T) {
+	const id = "2026-11-17-fork-decision-outside"
+	repo := initRepo(t)
+	queue := filepath.Join(t.TempDir(), "tasks")
+	seedForkDecisionTaskIn(t, queue, id)
+	if err := os.WriteFile(filepath.Join(repo, "README"), []byte("fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commitForkNetworkPreflightFixture(t, repo)
+	a := forkNetworkPreflightApp(t, repo)
+	var ran []string
+	a.forkLoopRun = parkingForkPass(t, &ran)
+	ws, identity := setUpForkForDecision(t, repo, "outside")
+	code, output, err := runForkLoopOnQueues(t, a, repo, ws, identity, []string{queue})
+	if code != loopDecisionExit || err != nil {
+		t.Fatalf("fork loop = (%d, %v)\n%s", code, err, output)
+	}
+	if strings.Contains(output, "Answer it:") {
+		t.Errorf("fork loop printed a coop tasks command that refuses its queue:\n%s", output)
+	}
+	if !strings.Contains(output, "coop tasks unblock "+id) {
+		t.Errorf("fork loop output lacks the task's unblock step:\n%s", output)
+	}
+}
