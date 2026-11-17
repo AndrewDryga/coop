@@ -18,8 +18,11 @@ func privateWorkerRoot(t *testing.T) string {
 
 func TestInterruptedTransferCleanupPreservesPublishedAndJournaledCustody(t *testing.T) {
 	root := privateWorkerRoot(t)
-	removed := []string{"job-sources/.source-123/repository/object", "host-git-tmp/git-123", "connector/body-tmp/transfer-123"}
-	retained := []string{"job-sources/" + strings.Repeat("a", 64) + "/repository/object", "connector/commands/command.json.body", "connector/body-tmp/unrecognized", "host-git-tmp/git-not-owned"}
+	removed := []string{"job-sources/.source-123/repository/object", "job-sources/.source-pruned-" + strings.Repeat("b", 64) + "/repository/object",
+		"host-git-tmp/git-123", "connector/body-tmp/transfer-123"}
+	retained := []string{"job-sources/" + strings.Repeat("a", 64) + "/repository/object", "connector/commands/command.json.body", "connector/body-tmp/unrecognized", "host-git-tmp/git-not-owned",
+		"job-sources/.source-pruned-" + strings.Repeat("c", 63) + "/repository/object", "job-sources/.source-pruned-" + strings.Repeat("c", 66) + "/repository/object",
+		"job-sources/.source-pruned-" + strings.Repeat("g", 64) + "/repository/object"}
 	for _, path := range append(removed, retained...) {
 		full := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {

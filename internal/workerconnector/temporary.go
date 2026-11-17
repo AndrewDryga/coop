@@ -2,6 +2,7 @@ package workerconnector
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -47,10 +48,14 @@ func ReclaimInterruptedTransfers(stateRoot string) error {
 	for _, item := range []struct {
 		directory, prefix string
 		tree              bool
+		suffix            func(string) bool
 	}{
-		{"job-sources", ".source-", true},
-		{"host-git-tmp", "git-", false},
-		{filepath.Join("connector", "body-tmp"), "transfer-", false},
+		{"job-sources", ".source-", true, scratchNumber},
+		// A copy the worker's cleanup renamed to delete (sessionsvc.removeJobSource), its staging
+		// key after the prefix: a delete cut short is finished here.
+		{"job-sources", ".source-pruned-", true, stagingKey},
+		{"host-git-tmp", "git-", false, scratchNumber},
+		{filepath.Join("connector", "body-tmp"), "transfer-", false, scratchNumber},
 	} {
 		path := stateRoot
 		missing := false
@@ -67,14 +72,26 @@ func ReclaimInterruptedTransfers(stateRoot string) error {
 		if missing {
 			continue
 		}
-		if err := reclaimTransferDirectory(path, item.prefix, item.tree); err != nil {
+		if err := reclaimTransferDirectory(path, item.prefix, item.tree, item.suffix); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func reclaimTransferDirectory(path, prefix string, tree bool) error {
+// scratchNumber matches the random number os.MkdirTemp and os.CreateTemp put after a prefix.
+func scratchNumber(suffix string) bool {
+	number, err := strconv.ParseUint(suffix, 10, 32)
+	return err == nil && strconv.FormatUint(number, 10) == suffix
+}
+
+// stagingKey matches a staged job source's name, a lowercase SHA-256 digest.
+func stagingKey(suffix string) bool {
+	decoded, err := hex.DecodeString(suffix)
+	return err == nil && len(decoded) == 32 && hex.EncodeToString(decoded) == suffix
+}
+
+func reclaimTransferDirectory(path, prefix string, tree bool, valid func(string) bool) error {
 	directory, err := os.Open(path)
 	if err != nil {
 		return err
@@ -84,8 +101,7 @@ func reclaimTransferDirectory(path, prefix string, tree bool) error {
 		entries, readErr := directory.ReadDir(128)
 		for _, entry := range entries {
 			suffix, match := strings.CutPrefix(entry.Name(), prefix)
-			number, err := strconv.ParseUint(suffix, 10, 32)
-			if !match || err != nil || strconv.FormatUint(number, 10) != suffix {
+			if !match || !valid(suffix) {
 				continue
 			}
 			info, err := entry.Info()
