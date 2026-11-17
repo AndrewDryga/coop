@@ -854,11 +854,11 @@ func sessionPreferAsync(r *http.Request) bool {
 }
 
 func (h *sessionHTTPHandler) listSessions(w http.ResponseWriter, r *http.Request) {
-	limit, ok := sessionListQuery(w, r)
+	after, limit, ok := sessionListQuery(w, r)
 	if !ok {
 		return
 	}
-	sessions, err := h.service.ListSessions(r.Context(), limit)
+	sessions, err := h.service.ListSessions(r.Context(), after, limit)
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return
@@ -1540,9 +1540,14 @@ func validSessionHTTPPathID(value string) bool {
 	return value != "" && len(value) <= session.MaxIDBytes && !strings.ContainsAny(value, "/\\\x00")
 }
 
-func sessionListQuery(w http.ResponseWriter, r *http.Request) (int, bool) {
-	if !sessionQueryOnly(w, r, "limit") {
-		return 0, false
+func sessionListQuery(w http.ResponseWriter, r *http.Request) (string, int, bool) {
+	if !sessionQueryOnly(w, r, "after", "limit") {
+		return "", 0, false
+	}
+	after := r.URL.Query().Get("after")
+	if r.URL.Query().Has("after") && !validSessionHTTPPathID(after) {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "after is not a session ID")
+		return "", 0, false
 	}
 	limit := sessionHTTPDefaultMax
 	if r.URL.Query().Has("limit") {
@@ -1550,11 +1555,11 @@ func sessionListQuery(w http.ResponseWriter, r *http.Request) (int, bool) {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed <= 0 || parsed > sessionHTTPMaxList {
 			writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "limit is outside bounds")
-			return 0, false
+			return "", 0, false
 		}
 		limit = parsed
 	}
-	return limit, true
+	return after, limit, true
 }
 
 func sessionCursorQuery(w http.ResponseWriter, r *http.Request) (int64, int, bool) {

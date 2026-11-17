@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -2253,6 +2254,45 @@ func containsEvent(events []Event, want EventType) bool {
 		}
 	}
 	return false
+}
+
+// Session rows are never deleted and the list had no cursor, so past 1000 sessions the newest
+// could not be listed at all.
+func TestListSessionsPagesThroughEverySession(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	const total = 1001
+	created := map[string]bool{}
+	for i := range total {
+		sess, err := store.CreateSession(ctx, fmt.Sprintf("page-%d", i), CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created[sess.ID] = true
+	}
+	seen, after, pages := map[string]bool{}, "", 0
+	for {
+		page, err := store.ListSessions(ctx, after, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, sess := range page {
+			if seen[sess.ID] {
+				t.Fatalf("page %d repeated session %s", pages, sess.ID)
+			}
+			seen[sess.ID] = true
+		}
+		after, pages = page[len(page)-1].ID, pages+1
+	}
+	if pages != 2 || len(seen) != total || !maps.Equal(seen, created) {
+		t.Fatalf("listed %d of %d sessions in %d pages", len(seen), total, pages)
+	}
+	if _, err := store.ListSessions(ctx, "no-such-session", 10); CodeOf(err) != CodeInvalidRequest {
+		t.Fatalf("unknown cursor = %v, want invalid_request", err)
+	}
 }
 
 func openTestStore(t *testing.T, root string) *Store {

@@ -1211,14 +1211,29 @@ func (s *Store) GetSession(ctx context.Context, id string) (Session, error) {
 	return sess, nil
 }
 
-func (s *Store) ListSessions(ctx context.Context, limit int) ([]Session, error) {
+// ListSessions pages through sessions oldest first. after is the ID of the last session of the
+// previous page, empty for the first; sessions are never deleted, so a cursor stays valid.
+func (s *Store) ListSessions(ctx context.Context, after string, limit int) ([]Session, error) {
 	if limit == 0 {
 		limit = 100
 	}
 	if limit < 0 || limit > 1000 {
 		return nil, &Error{Code: CodeInvalidRequest, Detail: "session list limit is outside bounds"}
 	}
-	rows, err := s.db.QueryContext(ctx, sessionSelect+" ORDER BY created_at, id LIMIT ?", limit)
+	query, args := sessionSelect+" ORDER BY created_at, id LIMIT ?", []any{limit}
+	if after != "" {
+		var createdAt int64
+		err := s.db.QueryRowContext(ctx, "SELECT created_at FROM sessions WHERE id = ?", after).Scan(&createdAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, &Error{Code: CodeInvalidRequest, Detail: "after names no session"}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list sessions: %w", err)
+		}
+		query = sessionSelect + " WHERE created_at > ? OR (created_at = ? AND id > ?) ORDER BY created_at, id LIMIT ?"
+		args = []any{createdAt, createdAt, after, limit}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}

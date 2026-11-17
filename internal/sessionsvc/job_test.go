@@ -164,7 +164,7 @@ func TestJobResourceAdmissionRefusesBeforeSessionCreation(t *testing.T) {
 	if _, err := fixture.CreateRemoteSession(context.Background(), "over-limit-job", fixture.request(t, "job:over-limit")); err == nil || !strings.Contains(err.Error(), "worker process ceiling") {
 		t.Fatalf("over-limit job creation = %v", err)
 	}
-	if sessions, err := fixture.Store().ListSessions(context.Background(), 10); err != nil || len(sessions) != 0 {
+	if sessions, err := fixture.Store().ListSessions(context.Background(), "", 10); err != nil || len(sessions) != 0 {
 		t.Fatalf("rejected job created sessions: %+v, %v", sessions, err)
 	}
 }

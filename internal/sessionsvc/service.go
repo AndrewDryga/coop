@@ -2285,8 +2285,8 @@ func (s *Service) prepareSessionExecution(ctx context.Context, bound session.Ses
 	return policy, nil
 }
 
-func (s *Service) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
-	return s.store.ListSessions(ctx, limit)
+func (s *Service) ListSessions(ctx context.Context, after string, limit int) ([]session.Session, error) {
+	return s.store.ListSessions(ctx, after, limit)
 }
 
 // SubmitTurn admits a turn without taking the session's runtime lock: admission is one store

@@ -451,6 +451,41 @@ func TestSessionHTTPCreateFenceMatchesWhateverOrderTheJobKeysCameIn(t *testing.T
 	}
 }
 
+func TestSessionHTTPListContinuesAfterTheLastSessionSeen(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	handler := NewHTTPHandler(service.Service)
+	for _, task := range []string{"first", "second"} {
+		if created := sessionHTTPTestRequest(t, handler, http.MethodPost, "/v1/sessions", service.body(t, task), task, "application/json"); created.Code != http.StatusOK {
+			t.Fatalf("create %s = %d %s", task, created.Code, created.Body.String())
+		}
+	}
+	list := func(query string) (int, []SessionDTO) {
+		response := sessionHTTPTestRequest(t, handler, http.MethodGet, "/v1/sessions"+query, "", "", "")
+		var page []SessionDTO
+		if response.Code == http.StatusOK {
+			if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return response.Code, page
+	}
+	code, first := list("?limit=1")
+	if code != http.StatusOK || len(first) != 1 || first[0].ExternalRef != "first" {
+		t.Fatalf("first page = %d %+v", code, first)
+	}
+	code, second := list("?limit=1&after=" + first[0].ID)
+	if code != http.StatusOK || len(second) != 1 || second[0].ExternalRef != "second" {
+		t.Fatalf("second page = %d %+v", code, second)
+	}
+	if code, rest := list("?after=" + second[0].ID); code != http.StatusOK || len(rest) != 0 {
+		t.Fatalf("page after the last session = %d %+v", code, rest)
+	}
+	if code, _ := list("?after=no-such-session"); code != http.StatusBadRequest {
+		t.Fatalf("unknown cursor = %d, want 400", code)
+	}
+}
+
 // Responder records remote mutation intent before the socket send. If Stop
 // wins in that gap, the owner-only fence must occupy the exact Coop operation
 // key without creating the session or model turn it is trying to stop.
@@ -641,7 +676,7 @@ func TestSessionHTTPTurnBindingIsPrivateAndBoundToTheExactTurn(t *testing.T) {
 			t.Fatalf("unknown field accepted at %s: %d %s", test.path, response.Code, response.Body.String())
 		}
 	}
-	if rows, err := service.ListSessions(context.Background(), 10); err != nil || len(rows) != 1 {
+	if rows, err := service.ListSessions(context.Background(), "", 10); err != nil || len(rows) != 1 {
 		t.Fatalf("a refused create wrote sessions: %v, %v", rows, err)
 	}
 }
