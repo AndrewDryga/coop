@@ -1461,7 +1461,7 @@ func openNetRunEvidence(ref string) (*networkstate.Evidence, error) {
 		if ref != "" {
 			return nil, netUnknownRunErr(ref)
 		}
-		return nil, errors.New("no filtered run has been recorded on this host yet — start one with 'coop run --egress filtered'")
+		return nil, errors.New("no filtered run has been recorded on this host yet — start one with 'coop shell --egress filtered'")
 	}
 	return evidence, err
 }

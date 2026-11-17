@@ -171,3 +171,16 @@ func TestAllowDomainAsksForAnExactHostname(t *testing.T) {
 		}
 	}
 }
+
+// Advice a refusal gives must be a command Coop accepts: a rules file inside the project is refused,
+// and coop run with no command is a missing argument.
+func TestNetworkAdviceNamesCommandsCoopAccepts(t *testing.T) {
+	if ex := networkFlagExample("coop run", "--egress-rules"); !strings.Contains(ex, "--egress-rules ~/") {
+		t.Errorf("--egress-rules example = %q, want a file outside the project", ex)
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	_, err := openNetRunEvidence("")
+	if err == nil || !strings.Contains(err.Error(), "'coop shell --egress filtered'") {
+		t.Errorf("no recorded run = %v, want it to suggest a coop shell that starts", err)
+	}
+}

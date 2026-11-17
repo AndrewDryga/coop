@@ -163,7 +163,7 @@ func networkFlagExample(command, flag string) string {
 	case "--allow-domain":
 		return command + " --allow-domain docs.example.com"
 	case "--egress-rules":
-		return command + " --egress-rules .agent/egress.yaml"
+		return command + " --egress-rules ~/egress.yaml" // a file inside the project is refused
 	default:
 		return command + " --egress filtered"
 	}
