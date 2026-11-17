@@ -336,25 +336,15 @@ func (b *openBroker) waitReadyWithin(timeout time.Duration) error {
 	case line := <-ready:
 		address, err := netip.ParseAddr(line)
 		if err != nil || !address.Is4() {
-			return fmt.Errorf("the MCP credential broker named no usable address%s", b.stderrDetail())
+			return fmt.Errorf("the MCP credential broker named no usable address%s", b.stderr.detail())
 		}
 		b.address = address
 		return nil
 	case <-b.helper.Exited():
-		return fmt.Errorf("the MCP credential broker stopped before it was ready%s", b.stderrDetail())
+		return fmt.Errorf("the MCP credential broker stopped before it was ready%s", b.stderr.detail())
 	case <-timer.C:
-		return fmt.Errorf("the MCP credential broker did not become ready within %s; no agent started%s", timeout, b.stderrDetail())
+		return fmt.Errorf("the MCP credential broker did not become ready within %s; no agent started%s", timeout, b.stderr.detail())
 	}
-}
-
-func (b *openBroker) stderrDetail() string {
-	if b.stderr == nil {
-		return ""
-	}
-	if detail := strings.TrimSpace(b.stderr.String()); detail != "" {
-		return ": " + detail
-	}
-	return ""
 }
 
 // hostArgs binds the name the box's MCP configuration uses to the helper's address.

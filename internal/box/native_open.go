@@ -89,20 +89,28 @@ func startNativeOpen(ctx context.Context, rt runtime.Runtime, run *nativeRun, ne
 		ready <- err == nil && line == "ready\n"
 		_ = output.Close()
 	}()
-	timer := time.NewTimer(openBrokerReadyTimeout)
+	return result, awaitNativeOpenReady(ready, openBrokerReadyTimeout, stderr, func() bool {
+		current, present, err := docker.InspectContainer(ctx, result.ref)
+		return err == nil && present && current.State.Running && current.NetworkMode == network
+	})
+}
+
+// awaitNativeOpenReady waits for the owner's ready line. Its own start fails here too, for example
+// on a published port another box holds, so every failure carries what Docker printed.
+func awaitNativeOpenReady(ready <-chan bool, timeout time.Duration, stderr *tailBuffer, running func() bool) error {
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case ok := <-ready:
 		if !ok {
-			return result, errors.New("native broker did not report readiness")
+			return fmt.Errorf("native broker did not report readiness%s", stderr.detail())
 		}
-		current, present, err := docker.InspectContainer(ctx, result.ref)
-		if err != nil || !present || !current.State.Running || current.NetworkMode != network {
-			return result, errors.New("native broker namespace is not running")
+		if !running() {
+			return fmt.Errorf("native broker namespace is not running%s", stderr.detail())
 		}
-		return result, nil
+		return nil
 	case <-timer.C:
-		return result, errors.New("native broker readiness timed out")
+		return fmt.Errorf("native broker readiness timed out%s", stderr.detail())
 	}
 }
 

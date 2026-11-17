@@ -155,19 +155,12 @@ func startTaskChannel(ctx context.Context, rt runtime.Runtime, image, volume, ru
 		case <-helper.Exited():
 		case <-time.After(2 * time.Second):
 		}
-		return nil, errors.Join(fmt.Errorf("task channel: helper exited before its socket was ready%s", c.stderrDetail()), c.close())
+		return nil, errors.Join(fmt.Errorf("task channel: helper exited before its socket was ready%s", c.stderr.detail()), c.close())
 	case <-timer.C:
-		return nil, errors.Join(fmt.Errorf("task channel: helper did not report ready within %s%s", taskChannelReadyTimeout, c.stderrDetail()), c.close())
+		return nil, errors.Join(fmt.Errorf("task channel: helper did not report ready within %s%s", taskChannelReadyTimeout, c.stderr.detail()), c.close())
 	case <-ctx.Done():
 		return nil, errors.Join(ctx.Err(), c.close())
 	}
-}
-
-func (c *taskChannel) stderrDetail() string {
-	if detail := strings.TrimSpace(c.stderr.String()); detail != "" {
-		return ": " + detail
-	}
-	return ""
 }
 
 // close stops serving, stops the helper (EOF on its stdin, then the interruptible teardown),
@@ -230,6 +223,17 @@ func (t *tailBuffer) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.buf.String()
+}
+
+// detail is the trimmed tail as an error suffix, or "" when nothing was written.
+func (t *tailBuffer) detail() string {
+	if t == nil {
+		return ""
+	}
+	if text := strings.TrimSpace(t.String()); text != "" {
+		return ": " + text
+	}
+	return ""
 }
 
 // writeTaskChannelScript writes the multiplexer for the helper to run, world-readable: the helper
