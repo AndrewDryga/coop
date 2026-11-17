@@ -5956,6 +5956,18 @@ func TestInterruptedWorkFilesReportsRenameTargets(t *testing.T) {
 	}
 }
 
+// A failed git log names git's own cause, not just its exit status.
+func TestTaskTrailerCommitsCarriesGitsDiagnostic(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := initRepo(t)
+	_, err := TaskTrailerCommits(repo, "nope..HEAD", false)
+	if err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("TaskTrailerCommits(bad range) = %v, want git's message naming the bad revision", err)
+	}
+}
+
 // An unstaged edit's porcelain line starts with a space; the hint must still name the whole path
 // when that line comes first.
 func TestInterruptedWorkFilesKeepsALeadingUnstagedPath(t *testing.T) {

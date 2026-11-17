@@ -96,7 +96,7 @@ func TaskTrailerCommits(repo, rangeExpr string, reverse bool) ([]TaskTrailerComm
 	}
 	raw, err := auditCommandOutput(cmd, auditHistoryOutputLimit)
 	if err != nil {
-		return nil, fmt.Errorf("git log: %w", err) // git's own diagnostic went to stderr as it ran
+		return nil, fmt.Errorf("git log: %w", err)
 	}
 	fields := strings.Split(string(raw), "\x00")
 	if len(fields) == 0 || fields[len(fields)-1] != "" || (len(fields)-1)%3 != 0 {
@@ -120,7 +120,28 @@ func TaskTrailerCommits(repo, rangeExpr string, reverse bool) ([]TaskTrailerComm
 	return commits, nil
 }
 
+// auditStderrLimit caps the git diagnostic auditCommandOutput keeps for its error.
+const auditStderrLimit = 4 << 10
+
+// cappedBuffer keeps the first limit bytes written to it and drops the rest, so a chatty command
+// cannot grow it without bound and never blocks on it.
+type cappedBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if room := b.limit - b.Len(); room > 0 {
+		b.Buffer.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
 func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
+	stderr := &cappedBuffer{limit: auditStderrLimit}
+	if cmd.Stderr == nil {
+		cmd.Stderr = stderr
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -143,6 +164,9 @@ func auditCommandOutput(cmd *exec.Cmd, limit int64) ([]byte, error) {
 		return nil, readErr
 	}
 	if waitErr != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return nil, fmt.Errorf("%w: %s", waitErr, detail)
+		}
 		return nil, waitErr
 	}
 	return raw, nil
