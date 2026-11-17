@@ -570,9 +570,6 @@ func (a *app) cmdUpdateCheck() (int, error) {
 		ui.Note("Coop v%s is up to date.", c)
 	case releaseAhead:
 		ui.Note("Coop v%s is newer than the latest release, v%s.", c, l)
-	default:
-		ui.Note("This is a development build: %s.", displayVersion(cur))
-		ui.Note("The latest release is v%s. Self-update does not replace development builds.", l)
 	}
 
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)

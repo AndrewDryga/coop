@@ -223,13 +223,10 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	defer os.RemoveAll(clone)
 	doctorCheckClone(cloneSection, fixture, clone)
 
-	code := a.doctorReportOrphanBoxes(report, repo, withoutProject)
+	a.doctorReportOrphanBoxes(report, repo, withoutProject)
 	root, leftovers, err := box.LeftoverRunFolders(a.cfg, time.Now())
 	reportLeftoverRunFolders(report, root, leftovers, err)
-	if verdict := report.print(); verdict != 0 {
-		code = verdict
-	}
-	return code, nil
+	return report.print(), nil
 }
 
 // doctorHeader says what is being checked, and on what. Naming the default shared image every
@@ -317,17 +314,16 @@ func doctorProject(override string) (repo, withoutProject string, err error) {
 // the pass/fail tally too — an orphan is host hygiene, not a hole in the isolation doctor attacks.
 // A healthy survey prints nothing: there is no finding to report. Outside a project there is no
 // survey, and doctor says so.
-func (a *app) doctorReportOrphanBoxes(report *doctorReport, repo, withoutProject string) int {
+func (a *app) doctorReportOrphanBoxes(report *doctorReport, repo, withoutProject string) {
 	if repo == "" {
 		report.section("Running boxes").add(doctorRow{outcome: doctorNote,
 			label: "Not run in a project, so Coop did not look for its abandoned boxes", reason: withoutProject})
-		return 0
+		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), orphanSweepTimeout)
 	defer cancel()
 	survey, err := box.SurveyOrphanBoxes(ctx, a.rt, repo)
 	reportOrphanSurvey(report, a.rt.Name, survey, err)
-	return 0
 }
 
 // reportOrphanSurvey adds a survey's findings to the report; rtName is the command that removes

@@ -23,9 +23,9 @@ func acpNetworkQualified(cfg *config.Config, target agents.Target) bool {
 // providers use the active profile, exactly as box credential projection does.
 // Keeping concrete accounts here prevents one portable sibling from qualifying
 // a different, host-bound default account.
-func (a *app) acpPresetNetworkTargets(p *preset.Preset) ([]agents.Target, error) {
+func (a *app) acpPresetNetworkTargets(p *preset.Preset) []agents.Target {
 	if p == nil {
-		return nil, nil
+		return nil
 	}
 	var targets []agents.Target
 	seen := map[string]bool{}
@@ -66,7 +66,7 @@ func (a *app) acpPresetNetworkTargets(p *preset.Preset) ([]agents.Target, error)
 			}
 		}
 	}
-	return targets, nil
+	return targets
 }
 
 // This is admission-only scope: inner boxes still mount only their selected lead
@@ -92,10 +92,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 	if len(initial.Accounts) != 0 {
 		anchor(initial)
 	}
-	selectedTargets, err := a.acpPresetNetworkTargets(selected)
-	if err != nil {
-		return nil, err
-	}
+	selectedTargets := a.acpPresetNetworkTargets(selected)
 	for _, target := range selectedTargets {
 		anchor(target)
 	}
@@ -204,11 +201,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 				if err != nil {
 					return nil, err
 				}
-				targets, err := a.acpPresetNetworkTargets(p)
-				if err != nil {
-					return nil, err
-				}
-				scope = append(scope, targets...)
+				scope = append(scope, a.acpPresetNetworkTargets(p)...)
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "⚠ Could not read the saved editor session\n\n      %v\n\n  Starting a new session.\n", err)
@@ -223,10 +216,7 @@ func (a *app) acpNetworkScope(repo string, initial agents.Target, peers []agents
 		if err != nil {
 			continue
 		}
-		targets, err := a.acpPresetNetworkTargets(p)
-		if err != nil {
-			continue
-		}
+		targets := a.acpPresetNetworkTargets(p)
 		qualified := true
 		if len(peers) > 0 {
 			leads, err := expandLadder(a.cfg, p.Lead().Provider, p.LeadTargets)

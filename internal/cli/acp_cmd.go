@@ -1162,11 +1162,7 @@ func (a *app) acpFilteredSpawnScope(lead agents.Target, presetName string) ([]ag
 	if err != nil {
 		return nil, nil, err
 	}
-	closure, err := a.acpPresetNetworkTargets(p)
-	if err != nil {
-		return nil, nil, err
-	}
-	targets = append(targets, closure...)
+	targets = append(targets, a.acpPresetNetworkTargets(p)...)
 	for _, provider := range p.RunnableRoleAgents() {
 		account := a.cfg.ActiveProfile(provider)
 		if provider == lead.Provider {
