@@ -1,8 +1,7 @@
 // Package taskstate holds the canonical names of the task-queue state directories — the one place
-// the cli (which reads and moves tasks) and the scaffold (which creates the dirs on `coop init`)
-// both import, so the two can never disagree. It depends on nothing, so either package can import
-// it without a cycle (cli imports scaffold, so scaffold cannot import cli's constants directly —
-// which is what let scaffold.go drift its own hardcoded copies before).
+// internal/tasks (which reads and moves tasks) and the scaffold (which creates the dirs on `coop
+// init`) both import, so the two can never disagree. It depends on nothing, so either package can
+// import it without a cycle.
 //
 // Each name carries a two-digit sort-key prefix so a plain `ls .agent/tasks` lists the states in
 // lifecycle order (todo → in_progress → blocked → done) instead of alphabetically; done uses "99_"
