@@ -615,7 +615,7 @@ func (s *CompletionWindowSet) Departures() ([]string, error) {
 	}
 	var departed []string
 	for _, window := range s.windows {
-		ids, err := completionWindowDepartures(window.root, window.record)
+		ids, err := window.departures()
 		if err != nil {
 			return nil, err
 		}
@@ -623,6 +623,28 @@ func (s *CompletionWindowSet) Departures() ([]string, error) {
 	}
 	slices.Sort(departed)
 	return slices.Compact(departed), nil
+}
+
+// departures is completionWindowDepartures for the window as the index holds it now. `coop tasks
+// rm` deletes a task from every window's stored baseline under the index lock before it deletes the
+// folder, so a task gone from the stored baseline left by host authority, not out of the window's
+// sight. The index sits in the host-only lease registry no box can write. A window the index no
+// longer holds keeps its own baseline, so a missing task still fails closed.
+func (w completionWindow) departures() (_ []string, err error) {
+	indexFile, index, err := lockCompletionWindowIndex(w.root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, unlockLeaseFile(indexFile)) }()
+	record := w.record
+	if stored, ok := index.Windows[w.id]; ok {
+		record.Baseline = maps.Clone(record.Baseline)
+		maps.DeleteFunc(record.Baseline, func(id string, _ CompletionFingerprint) bool {
+			_, kept := stored.Baseline[id]
+			return !kept
+		})
+	}
+	return completionWindowDepartures(w.root, record)
 }
 
 // BaselineDoneIDs returns every task id that was already archived (in 99_done) when this window's

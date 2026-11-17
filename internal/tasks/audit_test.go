@@ -383,6 +383,53 @@ func TestWorkCompletionWindowAcceptsHostReceiptedForeignArchivedDeparture(t *tes
 	}
 }
 
+// `coop tasks rm` of an archived task during a live window is host authority, not a task leaving the
+// queue: the work and review windows both accept it. The same folder deleted from a box, with the
+// host index untouched, still fails closed.
+func TestLiveCompletionWindowHonorsAHostDeletion(t *testing.T) {
+	for _, review := range []bool{false, true} {
+		for _, host := range []bool{true, false} {
+			root := t.TempDir()
+			assigned := taskWithCompletedChecklist(t, root, StateInProgress, "work-subject")
+			archived := taskWithCompletedChecklist(t, root, StateDone, "pruned-archive")
+			var windows *CompletionWindowSet
+			var err error
+			if review {
+				windows, err = BeginReviewCompletionWindows([]string{root}, []string{"other-subject"})
+			} else {
+				windows, err = BeginWorkCompletionWindows([]string{root}, assigned.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if host {
+				if code, err := tasksFolderRemove(root, []string{archived.ID, "--yes"}); code != 0 || err != nil {
+					t.Fatalf("rm = (%d, %v)", code, err)
+				}
+			} else if err := os.RemoveAll(archived.Dir); err != nil {
+				t.Fatal(err)
+			}
+			if review {
+				_, err = windows.FinishReview()
+			} else {
+				var departed []string
+				departed, err = windows.Departures()
+				if err == nil && len(departed) != 0 {
+					t.Errorf("review=%v host=%v: departures = %v, want none", review, host, departed)
+				}
+				err = errors.Join(err, windows.Close())
+			}
+			left := err != nil && strings.Contains(err.Error(), "left the queue during this completion window")
+			if host && err != nil {
+				t.Errorf("review=%v: a host rm during the window failed it: %v", review, err)
+			}
+			if !host && !left {
+				t.Errorf("review=%v: a box-side delete = %v, want the left-the-queue refusal", review, err)
+			}
+		}
+	}
+}
+
 // TestWorkCompletionWindowBaselineDoneIDs pins BaselineDoneIDs' contract: every task already
 // archived when the window's baseline is captured is named, and nothing else is — this is the
 // host-side "already closed" authority surface internal/loop folds into unbindableTasks' touched set
