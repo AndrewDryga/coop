@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -205,34 +206,48 @@ func gitBlobSize(repo, ref, path string) (int64, error) {
 	return strconv.ParseInt(out, 10, 64)
 }
 
-// addedLifecycleScript returns the name of an npm install/prepare lifecycle script the fork ADDS
-// or changes in package.json (preinstall/install/postinstall/prepare) — npm runs these
-// automatically on `npm install`, so a fork can plant one to execute host code post-merge — or ""
-// when the change touches no such script (an ordinary dependency bump isn't flagged).
+// addedLifecycleScript returns the name of an npm lifecycle script that a bare `npm install` runs
+// which the fork ADDS or changes in package.json — so a fork can plant one to execute host code
+// post-merge — or "" when the change touches no such script (an ordinary dependency bump isn't
+// flagged).
 func addedLifecycleScript(repo, ref, path, newContent string) string {
 	return changedLifecycleScript(forkspace.GitOut(repo, "show", "HEAD:"+path), newContent)
 }
 
+// npmInstallHooks are the scripts a bare `npm install` runs by itself in the project.
+var npmInstallHooks = []string{"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare"}
+
 func changedLifecycleScript(oldContent, newContent string) string {
-	newS := pkgScripts(newContent)
-	oldS := pkgScripts(oldContent)
-	for _, k := range []string{"preinstall", "install", "postinstall", "prepare"} {
-		if v := newS[k]; v != "" && v != oldS[k] {
+	newS := npmHookScripts(newContent)
+	oldS := npmHookScripts(oldContent)
+	for _, k := range npmInstallHooks {
+		if v, ok := newS[k]; ok && v != `""` && v != oldS[k] {
 			return k
 		}
 	}
 	return ""
 }
 
-// pkgScripts parses a package.json's "scripts" map, or nil if it doesn't parse.
-func pkgScripts(content string) map[string]string {
-	var p struct {
-		Scripts map[string]string `json:"scripts"`
-	}
-	if json.Unmarshal([]byte(content), &p) != nil {
+// npmHookScripts reads package.json's install hooks as npm does — the "scripts" key is matched
+// exactly and its last copy wins — as compact raw JSON, so a hook that is not a string still counts
+// as changed. A hook-shaped member can hide neither behind a sibling of another type nor behind a
+// "SCRIPTS" copy, the two shapes that blanked a typed decode. nil when scripts is not an object.
+func npmHookScripts(content string) map[string]string {
+	var top, scripts map[string]json.RawMessage
+	if json.Unmarshal([]byte(content), &top) != nil || json.Unmarshal(top["scripts"], &scripts) != nil {
 		return nil
 	}
-	return p.Scripts
+	hooks := map[string]string{}
+	for _, k := range npmInstallHooks {
+		if v, ok := scripts[k]; ok {
+			var compact bytes.Buffer
+			if json.Compact(&compact, v) != nil {
+				return nil
+			}
+			hooks[k] = compact.String()
+		}
+	}
+	return hooks
 }
 
 // gateFor resolves the fork-merge revalidation gate for repo: an explicit COOP_GATE (env/conf)

