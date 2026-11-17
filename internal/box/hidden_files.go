@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -186,7 +187,10 @@ func withHiddenFilesLock(ctx context.Context, repo string, apply func() error) e
 	if err != nil || !info.Mode().IsRegular() {
 		return errors.Join(errors.New("hidden-file identity lock is not a regular file"), err)
 	}
-	if err := flockWait(ctx, file, unix.LOCK_EX); err != nil {
+	if err := flockWait(ctx, file, unix.LOCK_EX); errors.Is(err, errAccountAuthorityBusy) {
+		// flockWait's busy error speaks of credentials; this lock guards the checkout's hidden files.
+		return fmt.Errorf("another coop launch of %s still holds its hidden-file record — retry", repo)
+	} else if err != nil {
 		return err
 	}
 	defer unix.Flock(int(file.Fd()), unix.LOCK_UN)

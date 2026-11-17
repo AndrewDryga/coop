@@ -1,9 +1,12 @@
 package box
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func writeTree(t *testing.T, root string, files map[string]string) {
@@ -16,6 +19,33 @@ func writeTree(t *testing.T, root string, files map[string]string) {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// expiredWait is a context whose deadline has passed but which is not yet cancelled, so a lock wait
+// gives up through its own deadline check rather than through ctx.Err.
+type expiredWait struct{ context.Context }
+
+func (expiredWait) Deadline() (time.Time, bool) { return time.Now().Add(-time.Second), true }
+
+// A launch that gives up waiting on the hidden-file lock names the checkout, not the credential store.
+func TestAHiddenFilesLockTimeoutNamesTheCheckout(t *testing.T) {
+	pinHome(t)
+	repo := t.TempDir()
+	held := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- withHiddenFilesLock(t.Context(), repo, func() error { close(held); <-release; return nil })
+	}()
+	<-held
+	err := withHiddenFilesLock(expiredWait{t.Context()}, repo, func() error { return nil })
+	close(release)
+	if waitErr := <-done; waitErr != nil {
+		t.Fatal(waitErr)
+	}
+	if err == nil || strings.Contains(err.Error(), "credential") || !strings.Contains(err.Error(), "hidden-file record") || !strings.Contains(err.Error(), repo) {
+		t.Fatalf("a busy hidden-file lock = %v, want a message naming %s and its hidden-file record", err, repo)
 	}
 }
 
