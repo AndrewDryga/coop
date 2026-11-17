@@ -361,7 +361,7 @@ func readCompanionSnapshotReceipt(entry string) (companionSnapshotReceipt, error
 		return receipt, err
 	}
 	if json.Unmarshal(data, &receipt) != nil || receipt.Version != companionSnapshotVersion || receipt.AllocatedBytes < 0 || !validSessionDigest(receipt.Key) || !forkspace.ValidObjectID(receipt.Commit) {
-		return receipt, errors.New("snapshot receipt ownership changed")
+		return receipt, errors.New("snapshot receipt is malformed or unsupported")
 	}
 	if !directory.sameDirectory(receipt.Directory) {
 		return receipt, errSnapshotOwnershipChanged

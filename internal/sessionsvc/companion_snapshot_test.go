@@ -3,6 +3,7 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -687,5 +688,25 @@ func TestSnapshotRecoveryDoesNotAdoptUntrustedReceipts(t *testing.T) {
 				t.Fatal("untrusted cache was hidden in a hold")
 			}
 		})
+	}
+}
+
+// A receipt that does not parse may be rebuilt; a copied cache must refuse. The two used to share
+// the words of the ownership sentinel, so the sweep's problem list could not tell them apart.
+func TestAMalformedSnapshotReceiptIsNotReportedAsChangedOwnership(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "entry")
+	if err := os.Mkdir(entry, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entry, "receipt.json"), []byte(`{"version":0}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = readCompanionSnapshotReceipt(entry)
+	if err == nil || errors.Is(err, errSnapshotOwnershipChanged) || err.Error() != "snapshot receipt is malformed or unsupported" {
+		t.Fatalf("malformed receipt = %v", err)
 	}
 }
