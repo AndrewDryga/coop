@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_loop_review_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/main_test.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-11-07
+updated: 2026-11-17
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -50,7 +50,9 @@ the current scenario scripts), every await helper waits `wait.Deadline` with no 
 and the fixture's marker and release waits wait 60 s. The suite sets `COOP_CONSULT_TIMEOUT=60`; the
 consult timeout case sets the 2 s it tests, and the fixture gives a delegate call scripted to exit
 124 `COOP_DELEGATE_TIMEOUT=2` and every other call 60. Those two timeout cases hold on any host
-because their peers never reply. A shim that sleeps before each git call, or before each fixture
+because their peers never reply. The consult overflow subtests are the exception that does reply
+inside a small bound: they set `COOP_CONSULT_TIMEOUT=10` (`scripted_consult_process_e2e_test.go`),
+which a heavily loaded host has not been measured against. A shim that sleeps before each git call, or before each fixture
 binary start, reproduces the load failures on demand: 150 ms per git call failed the old readiness
 wait and signoff budget, and 500 ms per fixture start failed the old delegate consult.
 
@@ -174,6 +176,7 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-11-17 — named the consult overflow subtests' 10 s bound, the one small bound whose peers reply (audit K4-5; checked internal/cli/scripted_consult_process_e2e_test.go).
 - 2026-11-07 — the survivor check waits up to 2 s for survivors that are only exiting, after one
   gate run failed `TestProviderScriptedDirectMatrix/grok/cancellation` on two `docker` fixture
   processes caught in `?E`; a running survivor is still reported at once (task
