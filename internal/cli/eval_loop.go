@@ -36,9 +36,9 @@ import (
 
 // Loop exit codes, from the engine's own banners: what each means for a trial.
 const (
-	loopExitDrained     = 0 // queue drained and the final review accepted it
-	loopExitWorkRemains = 1 // work is left, or the final verification failed
-	loopExitBlocked     = 3 // stopped on a human decision
+	loopExitDrained     = 0                // queue drained and the final review accepted it
+	loopExitWorkRemains = 1                // work is left, or the final verification failed
+	loopExitBlocked     = loopDecisionExit // stopped on a human decision
 )
 
 // Loop cancellation may spend 30 seconds on private services and five more on exact-run container
