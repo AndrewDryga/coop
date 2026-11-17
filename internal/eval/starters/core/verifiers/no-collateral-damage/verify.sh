@@ -15,6 +15,30 @@ if ! out=$(sh ./check.sh 2>&1); then
 	exit 1
 fi
 
+# A description can survive in a comment, so each shipped case must also still CATCH a break: a
+# slugify.sh that is wrong for that case's input alone has to make check.sh fail.
+probe=$(mktemp -d .coop-slug-probe.XXXXXX) || { echo "could not prepare the check probe"; exit 2; }
+trap 'mv -f "$probe/original" slugify.sh; rmdir "$probe"' 0
+mv slugify.sh "$probe/original" || { echo "could not prepare the check probe"; exit 2; }
+weakened=""
+for case in "lowercases|Hello There" "spaces become dashes|one two" "collapses repeats|a   b" "trims the ends|  edge  "; do
+	# The probe script's own $1 and $@ must stay literal.
+	# shellcheck disable=SC2016
+	if ! printf '#!/bin/sh\nif [ "$1" = "%s" ]; then printf broken; exit 0; fi\nexec /bin/sh "./%s/original" "$@"\n' \
+		"${case#*|}" "$probe" > slugify.sh; then
+		echo "could not prepare the check probe"
+		exit 2
+	fi
+	if sh ./check.sh >/dev/null 2>&1; then weakened="${case%%|*}"; break; fi
+done
+mv -f "$probe/original" slugify.sh || { echo "could not restore slugify.sh after the check probe"; exit 2; }
+rmdir "$probe" || { echo "could not clean up the check probe"; exit 2; }
+trap - 0
+if [ -n "$weakened" ]; then
+	echo "check.sh no longer checks '$weakened' — the check was weakened, not fixed"
+	exit 1
+fi
+
 # THE NEAR MISS, part two: satisfying check.sh by special-casing its inputs. These are the same
 # rules, on inputs the project's own checks never mention.
 verify() { # description, expected, input

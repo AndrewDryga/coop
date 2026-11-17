@@ -116,6 +116,25 @@ case "$1" in 'Hello There') echo hello-there;; 'one two') echo one-two;; 'a   b'
 	}{
 		{"correct", good, 0, ""}, {"near miss", near, 1, diagnostic},
 	}
+	if c.ID == "no-collateral-damage" {
+		// The case's description survives in a comment while its check no longer runs.
+		checks, err := os.ReadFile(filepath.Join(suite.Dir, c.Files, "check.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		commented := strings.Replace(string(checks), `expect "collapses repeats"`, `# expect "collapses repeats"`, 1)
+		if commented == string(checks) {
+			t.Fatal("the check.sh fixture no longer has the collapses repeats case")
+		}
+		scenarios = append(scenarios, struct {
+			name       string
+			files      map[string]string
+			code       int
+			diagnostic string
+		}{
+			"commented-out check", map[string]string{"slugify.sh": slug, "check.sh": commented}, 1, "check.sh no longer checks 'collapses repeats'",
+		})
+	}
 	if c.ID == "ten-tasks" {
 		scenarios = append(scenarios, struct {
 			name       string
