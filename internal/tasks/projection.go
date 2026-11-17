@@ -178,7 +178,7 @@ func walkOpenedProjectionRoot(root *os.Root, visit func(string, *os.Root, string
 			if !info.IsDir() {
 				continue
 			}
-			child, err := current.OpenRoot(name)
+			child, err := openSubrootNoWait(current, name)
 			if err != nil {
 				return err
 			}
@@ -307,7 +307,7 @@ func copyOpenedProjectionEntries(srcRoot, dstRoot *os.Root) error {
 				if err := dst.Mkdir(name, 0o755); err != nil {
 					return err
 				}
-				srcChild, err := src.OpenRoot(name)
+				srcChild, err := openSubrootNoWait(src, name)
 				if err != nil {
 					return err
 				}
@@ -324,7 +324,7 @@ func copyOpenedProjectionEntries(srcRoot, dstRoot *os.Root) error {
 					_ = srcChild.Close()
 					return err
 				}
-				dstChild, err := dst.OpenRoot(name)
+				dstChild, err := openSubrootNoWait(dst, name)
 				if err != nil {
 					_ = srcChild.Close()
 					return err
@@ -376,7 +376,7 @@ func copyOpenedTreeInto(srcRoot, parent *os.Root, name string) error {
 	if err := parent.Mkdir(name, 0o755); err != nil {
 		return err
 	}
-	dstRoot, err := parent.OpenRoot(name)
+	dstRoot, err := openSubrootNoWait(parent, name)
 	if err != nil {
 		return err
 	}
@@ -479,7 +479,7 @@ func MaterializeForkProjection(assignment ForkAssignment) error {
 		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return errors.Join(err, errors.New("temporary task projection is not a real directory"))
 		}
-		tmpRoot, err = parent.OpenRoot(tmpName)
+		tmpRoot, err = openSubrootNoWait(parent, tmpName)
 		if err != nil {
 			return err
 		}

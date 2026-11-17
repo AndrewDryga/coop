@@ -225,7 +225,7 @@ func ensureForkProposalOutbox(authorityRepo string, owner ForkTaskOwner) error {
 		}
 		return errors.New("fork proposal outbox is not a real directory")
 	}
-	opened, err := parent.OpenRoot("proposals")
+	opened, err := openSubrootNoWait(parent, "proposals")
 	if err != nil {
 		return err
 	}
