@@ -20,8 +20,8 @@ corruption). A minute here beats re-learning a gotcha the hard way.
   plumbing) or a rotation/rate-limit path. It returns a conclusion with file:line
   evidence; you act on it.
 - **critic** — one self-contained question when a decision is one-way or
-  security-shaped: state the plan, the constraints, and ask what breaks. Another
-  vendor's blind spots are not yours — when you overrule it, say why in the log.
+  security-shaped: state the plan, the constraints, and ask what breaks. It did not
+  write the plan, so it can see what you no longer do — when you overrule it, say why in the log.
 - **fast** — table-driven test scaffolding, mechanical renames, help-string and
   docs sweeps, repo surveys. Hand it an exact spec and review its diff like a
   stranger's PR; it never commits — you gate and you commit.
