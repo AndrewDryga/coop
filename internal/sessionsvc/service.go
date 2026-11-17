@@ -134,7 +134,9 @@ type EnsureWorkspaceTaskRequest struct {
 
 // EnsureWorkspaceTask projects the exact controller-approved task into a writable session before
 // its first turn. The filesystem projection is deterministic and the session binding is immutable,
-// so a crash between either write and the operation receipt is reconciled by the same request.
+// so a receipt lost after either write is reconciled by a same-key retry in the same process, until
+// the stale reconciler marks the operation uncertain. After that, or a restart, the key replays
+// operation_uncertain; the same request under a new key recovers the binding.
 func (s *Service) EnsureWorkspaceTask(
 	ctx context.Context,
 	key string,
