@@ -3,7 +3,7 @@ name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
 sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/box/mcp_broker.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go]
-updated: 2026-11-04
+updated: 2026-11-17
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
@@ -99,8 +99,11 @@ inspection at all, so it would otherwise print on every start. `coop doctor` is 
 surface: the count and the container ids, outside its pass/fail tally, reaping nothing.
 
 Files get a separate daily sweep (`cli.startTempReap` → `box.ReapOrphanTempEntries` for TMPDIR,
-then `box.ReapOrphanRunfiles` for the private runfiles root): coop-prefixed entries that are over an
-hour old AND mounted by no box (a run's folder must also pass `runFolderUnused`, below). It
+then `box.ReapOrphanRunfiles` for the private runfiles root): entries named by `tempPrefixes` (TMPDIR)
+or the runfiles kinds that are over an hour old AND mounted by no box (a run's folder must also pass
+`runFolderUnused`, below). TMPDIR's list is short on purpose and is not every coop-prefixed name: a
+staged build context (`coop-buildctx-`) and a fork review or isolated-gate clone are removed only by
+their own deferred cleanup, so a killed coop leaves them behind. It
 starts once per process from `runBox` (direct, editor and fork launches) and `collectOrphanBoxes`
 (loop and fork starts, and a build's recycle near its end);
 doctor probes, eval trials and fork merge gates launch boxes without it. It stamps
@@ -263,6 +266,8 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-17 — corrected the TMPDIR sweep's scope: it takes the names in `tempPrefixes`, not every
+  coop-prefixed entry; build contexts and fork clones a killed coop leaves are not swept (audit B3-11).
 - 2026-11-04 — retired the v1 label reader (task 2026-11-04-drop-the-old-host-state-readers): a v1 label is unattributed, reported
   and never reaped, and `parseSupervisorLabel` reads only v2, so its `host` is never empty.
   `legacyLabelsAreLocal` stays for network recovery.

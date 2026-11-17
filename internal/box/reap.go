@@ -26,9 +26,12 @@ import (
 // outlive any threshold. Together they are safe — old AND unmounted.
 const reapMinimumAge = time.Hour
 
-// tempPrefixes are the temp entries coop creates that no box mounts. Anything else in the temp
-// directory belongs to someone else and is never touched. That includes a run folder there: it
-// does not say which daemon its box ran on, so no listing can prove it unused (see runDirPrefix).
+// tempPrefixes are the temp entries this sweep may remove: kinds no box mounts, or older kinds
+// earlier versions left. It is not every name coop creates in the temp directory: a staged build
+// context (coop-buildctx-) and a fork review or gate clone are removed only by their own deferred
+// cleanup, so a killed coop leaves them until the OS clears temp. Anything not listed is never
+// touched. That includes a run folder there: it does not say which daemon its box ran on, so no
+// listing can prove it unused (see runDirPrefix).
 var tempPrefixes = []string{
 	"coop-audit-trees-",
 	// What a killed test binary leaves: teststate's folder.
