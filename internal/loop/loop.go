@@ -612,7 +612,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			agent = c.applyTarget(rot)
 			pfStart, pfHead := time.Now(), forkspace.GitOut(repo, "rev-parse", "HEAD")
 			pfCmd, streaming, agentCommand := iterCmd(agent, loopPreflightPrompt(repo, queues, s))
-			pfCode, _, _, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, nil, false, sink, peers, "preflight", "", nil)
+			pfCode, _, pfRes, pfClassification, windows, runErr := c.runIteration(iterCtx, repo, img, agent, forkName, pfCmd, streaming, agentCommand, hosts, completionWindowReview, nil, nil, false, sink, peers, "preflight", "", nil)
 			if stopsTheRun(runErr) {
 				// Nothing ran in the box, so its completion window has nothing to audit.
 				return errors.Join(runErr, windows.Close())
@@ -620,7 +620,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			if _, err := windows.FinishReview(); err != nil {
 				return fmt.Errorf("pre-flight changed task completion ownership: %w", err)
 			}
-			c.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.Active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, nil)
+			c.recordStage(repo, runid, "preflight", pfClassification.outcome, rot.Active(), pfStart, pfCode, 0, 0, pfHead, hosts, nil, nil, pfRes)
 			prev := rot.Active()
 			if wait, until, limited := rememberPreflightLimit(rot, pfClassification, time.Now()); limited {
 				if wait > 0 {

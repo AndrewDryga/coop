@@ -232,6 +232,51 @@ func TestReviewVerdictUsesOneExactSessionCorrection(t *testing.T) {
 	}
 }
 
+// A review that returned a malformed verdict and is then stopped before its correction still ran
+// and spent tokens: its stage is recorded once. Before, the early return skipped the observer.
+func TestReviewStoppedBeforeCorrectionIsObserved(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".agent/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".gitignore")
+	git("commit", "-qm", "base")
+	task := taskForLease(t, repo, stateDone, "task-a")
+
+	c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true}, runtime.Runtime{Name: "true"}, "test", Host{})
+	c.net = newNetworkLog()
+	c.runID = "stopped-review-test"
+	wake := make(chan struct{})
+	launches := 0
+	c.boxRun = func(spec box.RunSpec) (int, error) {
+		launches++
+		if spec.OnRuntimeLaunch != nil {
+			spec.OnRuntimeLaunch()
+		}
+		verdict := "AUDIT EVIDENCE — task-a — gate: focused tests passed — findings: none\nREVIEW COMPLETE — PASS — reopened: none\ntrailing prose"
+		_, _ = fmt.Fprintf(spec.Stdout, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":%q}]}}\n", verdict)
+		_, _ = fmt.Fprint(spec.Stdout, "{\"type\":\"result\",\"subtype\":\"success\",\"num_turns\":1,\"duration_ms\":1,\"session_id\":\"00000000-0000-4000-8000-000000000002\"}\n")
+		close(wake) // the person stops the loop while the review runs
+		return 0, nil
+	}
+	command := func(_ string, prompt, id string, resume bool) ([]string, bool, bool) {
+		return []string{"claude", "-p", prompt}, true, true
+	}
+	rot := ladder.NewRotation([]agents.Target{{Provider: "claude", Accounts: []string{"test"}}})
+	var observed []string
+	_, err := c.runReviewVerdict(context.Background(), repo, "image", rot, "", "review", "signoff", command,
+		[]string{repo}, []string{task.ID}, "", nil, loopcfg.ReviewWritesTasks, io.Discard, nil, wake,
+		func(run reviewRunResult, _ time.Time, _ string) { observed = append(observed, run.outcome) })
+	if !errors.Is(err, errReviewInterrupted) || launches != 1 {
+		t.Fatalf("stopped review = %v after %d launches, want an interrupt before any correction", err, launches)
+	}
+	if len(observed) != 1 || observed[0] != "interrupted" {
+		t.Fatalf("stopped review observed %v, want one interrupted stage", observed)
+	}
+}
+
 // A writes: repo reviewer may fix source, so its verdict stands over the commits it added on top of
 // the HEAD it reviewed, and the loop names them as the reviewer's. Before, any commit failed the
 // completion audit, so such a review could never pass. The commits still pass the loop's binding

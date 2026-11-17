@@ -586,14 +586,21 @@ func (c *Control) runReviewVerdict(ctx context.Context, repo, img string, rev *l
 		}
 		return run, runErr
 	}
+	// The malformed attempt ran and spent tokens: a return before the correction still records it.
+	stopped := func(run reviewRunResult, err error) (reviewRunResult, error) {
+		if observe != nil {
+			observe(run, start, headBefore)
+		}
+		return run, err
+	}
 	if reviewStopRequested(ctx, wake) {
-		return interruptedReviewResult(run, run.retries), errReviewInterrupted
+		return stopped(interruptedReviewResult(run, run.retries), errReviewInterrupted)
 	}
 	if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
-		return run, fmt.Errorf("%w: review subjects changed before format correction: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		return stopped(run, fmt.Errorf("%w: review subjects changed before format correction: %v", tasks.ErrCompletionWindowAudit, snapshotErr))
 	}
 	if snapshotErr := checkSource(); snapshotErr != nil {
-		return run, snapshotErr
+		return stopped(run, snapshotErr)
 	}
 	ui.Alert("The review result could not be read", fmt.Sprintf("%v\nRequesting one format-only correction in the same reviewer session.", runErr))
 	correction := reviewVerdictCorrection(runErr, run.output, subjects)
@@ -689,14 +696,21 @@ func (c *Control) runCandidateReviewVerdict(ctx context.Context, repo, img strin
 		}
 		return run, runErr
 	}
+	// The malformed attempt ran and spent tokens: a return before the correction still records it.
+	stopped := func(run reviewRunResult, err error) (reviewRunResult, error) {
+		if observe != nil {
+			observe(run, start, headBefore)
+		}
+		return run, err
+	}
 	if reviewStopRequested(ctx, wake) {
-		return interruptedReviewResult(run, run.retries), errReviewInterrupted
+		return stopped(interruptedReviewResult(run, run.retries), errReviewInterrupted)
 	}
 	if snapshotErr := validateReviewSubjects(hosts, subjectSnapshots); snapshotErr != nil {
-		return run, fmt.Errorf("%w: candidate review subjects changed before format correction: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		return stopped(run, fmt.Errorf("%w: candidate review subjects changed before format correction: %v", tasks.ErrCompletionWindowAudit, snapshotErr))
 	}
 	if snapshotErr := validateReviewSource(repo, sourceSnapshot); snapshotErr != nil {
-		return run, fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr)
+		return stopped(run, fmt.Errorf("%w: %v", tasks.ErrCompletionWindowAudit, snapshotErr))
 	}
 	ui.Alert("The candidate review result could not be read", fmt.Sprintf("%v\nRequesting one format-only correction in the same reviewer session.", runErr))
 	correction := reviewVerdictCorrection(runErr, run.output, subjects)
