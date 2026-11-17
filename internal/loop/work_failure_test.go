@@ -37,12 +37,13 @@ func TestCustomWorkerFailuresKeepLoopExitContract(t *testing.T) {
 	for _, tc := range []struct {
 		name, diagnostic, outcome string
 		exit, attempts            int
+		stop                      string // the headline that ends the run
 	}{
-		{"make failure is not usage", "", "process_failure", 2, maxLoopFailures},
-		{"worker failure is not blocked", "", "process_failure", 3, maxLoopFailures},
-		{"authentication failure is not usage", "Not logged in · Please run /login", "authentication", 2, 1},
-		{"output limit is not blocked", "finish_reason: length", "output_limit", 3, maxOutputRetries + 1},
-		{"rate limit is not usage", "rate limit exceeded", "rate_limit", 2, maxLimitWaits + 1},
+		{"make failure is not usage", "", "process_failure", 2, maxLoopFailures, "Stopped after 5 failed attempts"},
+		{"worker failure is not blocked", "", "process_failure", 3, maxLoopFailures, "Stopped after 5 failed attempts"},
+		{"authentication failure is not usage", "Not logged in · Please run /login", "authentication", 2, 1, "No configured agent could sign in"},
+		{"output limit is not blocked", "finish_reason: length", "output_limit", 3, maxOutputRetries + 1, "Stopped after the model reached its response limit 6 times"},
+		{"rate limit is not usage", "rate limit exceeded", "rate_limit", 2, maxLimitWaits + 1, "Stopped after 100 usage-limit waits"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", t.TempDir())
@@ -57,27 +58,33 @@ func TestCustomWorkerFailuresKeepLoopExitContract(t *testing.T) {
 			attempts := 0
 			var code int
 			var runErr error
-			synctest.Test(t, func(t *testing.T) {
-				c.boxRun = func(spec box.RunSpec) (int, error) {
-					attempts++
-					if attempts > tc.attempts || spec.AgentCommand || strings.Join(spec.Cmd, " ") != "make loop-iter" {
-						t.Fatalf("unexpected attempt %d: agent command=%v argv=%q", attempts, spec.AgentCommand, spec.Cmd)
-					}
-					writeTaskFile(t, filepath.Join(repo, "result.txt"), "incomplete work\n")
-					if tc.diagnostic != "" {
-						if _, err := io.WriteString(spec.Stderr, tc.diagnostic+"\n"); err != nil {
-							t.Fatal(err)
+			// Captured outside the bubble: the capture's pipe reader would stop virtual time.
+			output := captureStderr(t, func() {
+				synctest.Test(t, func(t *testing.T) {
+					c.boxRun = func(spec box.RunSpec) (int, error) {
+						attempts++
+						if attempts > tc.attempts || spec.AgentCommand || strings.Join(spec.Cmd, " ") != "make loop-iter" {
+							t.Fatalf("unexpected attempt %d: agent command=%v argv=%q", attempts, spec.AgentCommand, spec.Cmd)
 						}
+						writeTaskFile(t, filepath.Join(repo, "result.txt"), "incomplete work\n")
+						if tc.diagnostic != "" {
+							if _, err := io.WriteString(spec.Stderr, tc.diagnostic+"\n"); err != nil {
+								t.Fatal(err)
+							}
+						}
+						return tc.exit, nil
 					}
-					return tc.exit, nil
-				}
-				code, runErr = c.Run(RunSpec{
-					Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
-					Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}}),
+					code, runErr = c.Run(RunSpec{
+						Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+						Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}}),
+					})
 				})
 			})
 			if code != 1 || runErr == nil || attempts != tc.attempts {
 				t.Errorf("failed worker: exit=%d error=%v attempts=%d; want loop failure 1 after %d attempts", code, runErr, attempts, tc.attempts)
+			}
+			if !strings.Contains(output, "✗ "+tc.stop+"\n") {
+				t.Errorf("the stop does not read %q:\n%s", tc.stop, output)
 			}
 			current, ok, err := tasks.CurrentTask(filepath.Join(repo, tasksRoot), id)
 			if err != nil || !ok || current.State != stateInProgress {

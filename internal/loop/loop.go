@@ -1714,7 +1714,8 @@ reviewAgain:
 					[2]string{"Sign in again:", loginCommand(target)})
 				return 1, ui.Reported(rotationAuthenticationError(rot, target))
 			case actOutputStop:
-				ui.Failure(fmt.Sprintf("Stopped after %d response-limit retries", retries),
+				// retries counts limit hits: the stop comes on the hit after the last allowed retry.
+				ui.Failure(fmt.Sprintf("Stopped after the model reached its response limit %d times", retries),
 					fmt.Sprintf("%s did not finish within the model's response limit.", active),
 					[2]string{"Task:", "coop tasks path " + assigned.Item.ID})
 				return 1, ui.Reported(fmt.Errorf("iteration reached the model output limit %d times", retries))
