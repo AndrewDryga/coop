@@ -3034,7 +3034,7 @@ func printTaskTree(root, heading string, items []Item, waits queueIndex, all boo
 			// Title-first (what a human scans), wrapped across as many lines as it needs so the
 			// whole title is readable. Then only what is exceptional about this task, then the id —
 			// a long machine handle you need only to claim/done — faint, linking to its folder.
-			for _, tl := range wrapWords(t.Title, titleWrapWidth()) {
+			for _, tl := range ui.WrapLines(t.Title, titleWrapWidth()) {
 				fmt.Printf("  %s\n", tl)
 			}
 			if m := listMarkers(p, t, waits); m != "" {

@@ -149,7 +149,7 @@ func backlogFolderList(root string) (int, error) {
 	fmt.Printf("%s · %s\n", p.Bold("Backlog"), ui.Count(len(items), "idea"))
 	for _, t := range items {
 		fmt.Println() // one blank line between items
-		for _, tl := range wrapWords(t.Title, titleWrapWidth()) {
+		for _, tl := range ui.WrapLines(t.Title, titleWrapWidth()) {
 			fmt.Printf("  %s\n", tl)
 		}
 		fmt.Printf("    %s\n", p.Faint(t.ID))

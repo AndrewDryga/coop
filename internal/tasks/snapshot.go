@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -429,7 +430,7 @@ func ReadProjectSnapshot(repo string, roots []string) ProjectSnapshot {
 		return snapshot.Forks[i].Identity.Generation < snapshot.Forks[j].Identity.Generation
 	})
 	sort.Strings(snapshot.Problems)
-	snapshot.Problems = compactSnapshotProblems(snapshot.Problems)
+	snapshot.Problems = slices.Compact(snapshot.Problems)
 	return snapshot
 }
 
@@ -457,19 +458,6 @@ func forkLoopFailure(repo string, identity forkspace.Identity) string {
 		reason = string(r[:loopFailureLimit-1]) + "…"
 	}
 	return reason
-}
-
-func compactSnapshotProblems(problems []string) []string {
-	if len(problems) < 2 {
-		return problems
-	}
-	out := problems[:1]
-	for _, problem := range problems[1:] {
-		if problem != out[len(out)-1] {
-			out = append(out, problem)
-		}
-	}
-	return out
 }
 
 func (snapshot ProjectSnapshot) ActiveExecutions() int {

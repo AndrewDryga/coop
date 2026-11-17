@@ -47,47 +47,6 @@ func sanitizeCell(s string) string {
 	}, s)
 }
 
-// wrapWords greedily word-wraps s into lines no wider than w runes, breaking on whitespace; a
-// single word longer than w is hard-split so a line can never overflow. Always returns at least
-// one line (possibly ""). Like truncate it counts runes, not display cells — fine for the common
-// ASCII title; a wide-script title may wrap a column early.
-func wrapWords(s string, w int) []string {
-	if w < 1 {
-		w = 1
-	}
-	words := strings.Fields(s)
-	if len(words) == 0 {
-		return []string{""}
-	}
-	var lines []string
-	cur, curLen := "", 0
-	for _, word := range words {
-		wr := []rune(word)
-		for len(wr) > w { // hard-split a word longer than the whole budget
-			if curLen > 0 {
-				lines = append(lines, cur)
-				cur, curLen = "", 0
-			}
-			lines = append(lines, string(wr[:w]))
-			wr = wr[w:]
-		}
-		word = string(wr)
-		switch {
-		case curLen == 0:
-			cur, curLen = word, len(wr)
-		case curLen+1+len(wr) <= w:
-			cur, curLen = cur+" "+word, curLen+1+len(wr)
-		default:
-			lines = append(lines, cur)
-			cur, curLen = word, len(wr)
-		}
-	}
-	if curLen > 0 || len(lines) == 0 {
-		lines = append(lines, cur)
-	}
-	return lines
-}
-
 // shellJoin writes argv the way a shell reads it back: a plain argument as is, any other in single
 // quotes, closing and reopening them around each single quote it holds.
 func shellJoin(argv []string) string {
@@ -151,58 +110,10 @@ func padRight(s string, w int) string {
 	return s
 }
 
-// levenshtein returns the edit distance between a and b, for "did you mean" suggestions.
-func levenshtein(a, b string) int {
-	ra, rb := []rune(a), []rune(b)
-	prev := make([]int, len(rb)+1)
-	for j := range prev {
-		prev[j] = j
-	}
-	for i := 1; i <= len(ra); i++ {
-		cur := make([]int, len(rb)+1)
-		cur[0] = i
-		for j := 1; j <= len(rb); j++ {
-			cost := 1
-			if ra[i-1] == rb[j-1] {
-				cost = 0
-			}
-			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
-		}
-		prev = cur
-	}
-	return prev[len(rb)]
-}
-
-// nearestCommand suggests the candidate closest to a mistyped command — see internal/cli/util.go's
-// copy (kept separately for the same reason gitOut is; see git.go) for the full distance-scaling
-// rationale.
-func nearestCommand(input string, candidates []string) (string, bool) {
-	n := len([]rune(input))
-	if n < 3 {
-		return "", false
-	}
-	maxDist := 2
-	if n == 3 {
-		maxDist = 1
-	}
-	best, bestDist := "", -1
-	for _, c := range candidates {
-		if d := levenshtein(input, c); bestDist < 0 || d < bestDist {
-			best, bestDist = c, d
-		}
-	}
-	if bestDist >= 0 && bestDist <= maxDist {
-		return best, true
-	}
-	return "", false
-}
-
 // unknownSubcommandErr refuses a verb a task family does not have, correcting a near miss from that
-// family's own verb list. The BLOCK it renders is assembled once, in internal/ui; only the nearest
-// match is computed here (internal/cli keeps its own copy for the same reason gitOut does; see
-// git.go).
+// family's own verb list.
 func unknownSubcommandErr(family, verb string, valid []string) error {
-	guess, _ := nearestCommand(verb, valid)
+	guess, _ := ui.Nearest(verb, valid)
 	return ui.UnknownCommandPath([]string{family, verb}, guess, false)
 }
 
@@ -211,7 +122,7 @@ func unknownSubcommandErr(family, verb string, valid []string) error {
 // valid is that command's real option list, so a suggestion can never name one it would refuse.
 func unknownOptionErr(option, command string, valid []string) error {
 	option, _, _ = strings.Cut(option, "=") // a value is not part of the name, and may be secret
-	if guess, _ := nearestCommand(option, valid); guess != "" {
+	if guess, _ := ui.Nearest(option, valid); guess != "" {
 		return ui.UnknownOptionNear(option, command, guess)
 	}
 	return ui.UnknownOption(option, command, "")
