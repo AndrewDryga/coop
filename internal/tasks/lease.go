@@ -1021,9 +1021,10 @@ func observeHeldTaskLease(item Item, now time.Time) TaskLeaseObservation {
 	return observeLeaseAt(filepath.Dir(filepath.Dir(item.Dir)), item.ID, now)
 }
 
-// observeLeaseAt is observeHeldTaskLease for task id of the queue at root.
+// observeLeaseAt is observeHeldTaskLease for task id of the queue at root. The probe is shared, so
+// it collides only with a real (exclusive) lease, never with another observer or a receipt read.
 func observeLeaseAt(root, id string, now time.Time) TaskLeaseObservation {
-	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_SH|syscall.LOCK_NB)
 	switch {
 	case err == nil:
 		_ = unlockLeaseFile(authority)

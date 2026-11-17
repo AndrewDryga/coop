@@ -1082,3 +1082,18 @@ func TestLeaseAuthorityConcurrentFreshOpensConverge(t *testing.T) {
 		t.Fatalf("concurrent opens did not create %s", dir)
 	}
 }
+
+// A read-only observer must not look like a lease to another observer: while one probe (or a
+// completion scan's receipt read) holds the lock shared, a second probe still sees the task unleased.
+func TestLeaseObserversDoNotSeeEachOtherAsALease(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, StateInProgress, "observed-twice")
+	probe, err := lockLeaseAuthority(root, task.ID, true, syscall.LOCK_SH|syscall.LOCK_NB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unlockLeaseFile(probe) }()
+	if got := observeLeaseAt(root, task.ID, time.Now()); got.State != leaseUnleased {
+		t.Fatalf("observation during another probe = %+v, want unleased", got)
+	}
+}
