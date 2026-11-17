@@ -101,12 +101,10 @@ func (s sessionSyntax) value(args []string, i int, current string) (string, erro
 	return args[i+1], nil
 }
 
-// refuse refuses an argument none of the command's options claimed.
+// refuse refuses an argument none of the command's options claimed, offering the nearest of the
+// subcommand's own options for a typo.
 func (s sessionSyntax) refuse(arg string) error {
-	if strings.HasPrefix(arg, "-") {
-		return ui.UnknownOption(arg, s.command, "")
-	}
-	return ui.UnexpectedArgument(arg, s.command, s.usage)
+	return extraArgErr(arg, s.command, s.usage, sessionFlags[strings.TrimPrefix(s.command, "coop sessions ")])
 }
 
 func parseSessionDoctorFlags(args []string) (socket string, jsonOutput bool, err error) {

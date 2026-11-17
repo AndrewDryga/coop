@@ -58,10 +58,7 @@ func parseSessionConnectFlags(args []string) (sessionConnectOptions, error) {
 		case "--ca-file":
 			target = &options.CAFile
 		default:
-			if strings.HasPrefix(args[i], "-") {
-				return options, ui.UnknownOption(args[i], command, "")
-			}
-			return options, ui.UnexpectedArgument(args[i], command, usage)
+			return options, extraArgErr(args[i], command, usage, sessionFlags["connect"])
 		}
 		if *target != "" {
 			return options, ui.RepeatedOption(args[i], command)

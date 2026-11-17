@@ -711,3 +711,21 @@ func TestSessionCompactFailureNamesTheProblem(t *testing.T) {
 		}
 	}
 }
+
+// A mistyped option to a sessions subcommand gets the nearest option it has, as every other command
+// offers one.
+func TestSessionsOfferTheNearestOptionForATypo(t *testing.T) {
+	parse := map[string]func([]string) error{
+		"connect":    func(args []string) error { _, err := parseSessionConnectFlags(args); return err },
+		"doctor":     func(args []string) error { _, _, err := parseSessionDoctorFlags(args); return err },
+		"check":      func(args []string) error { _, err := parseSessionCheckFlags(args); return err },
+		"quiescence": func(args []string) error { _, _, err := parseSessionQuiescenceFlags(args); return err },
+		"compact":    func(args []string) error { _, _, err := parseSessionCompactFlags(args); return err },
+	}
+	for sub, typo := range map[string]string{"connect": "--controler", "doctor": "--jsn", "check": "--stat", "quiescence": "--jsn", "compact": "--backp"} {
+		err := parse[sub]([]string{typo})
+		if err == nil || !strings.Contains(err.Error(), "Did you mean") {
+			t.Errorf("sessions %s %s = %v, want the nearest option", sub, typo, err)
+		}
+	}
+}
