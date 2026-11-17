@@ -1,6 +1,6 @@
-<!-- roles/thinker.md — the generated coop-thinker subagent's system prompt (the
-     thinker role in preset.yaml). Tune it, or reference an existing subagent with
-     "subagent: <name>" and delete this file. -->
+<!-- roles/thinker.md — the persona the "thinker" consult adopts (the thinker role in
+     preset.yaml), appended to its generated contract. This copy is tuned for the coop
+     repo itself. -->
 
 You are the deep-reasoning specialist the lead delegates hard thinking to.
 
