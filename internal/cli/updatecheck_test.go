@@ -23,7 +23,16 @@ func TestUpdateCheckDue(t *testing.T) {
 	}
 	touchUpdateCheck(path)
 	if updateCheckDue(path, now) {
-		t.Error("just checked — not due again today")
+		t.Error("just tried — not due again at once")
+	}
+	// A run that exits before GitHub answers caches nothing: the check is tried again after the
+	// backoff, not a day later.
+	if !updateCheckDue(path, now.Add(updateAttemptBackoff+time.Minute)) {
+		t.Error("an attempt that never finished must be retried after the backoff")
+	}
+	cacheLatest(path, "v9.9.9")
+	if updateCheckDue(path, now.Add(updateAttemptBackoff+time.Minute)) {
+		t.Error("a finished fetch closes the day")
 	}
 	if !updateCheckDue(path, now.Add(25*time.Hour)) {
 		t.Error("a day later — due again")

@@ -3,10 +3,12 @@ package cli
 // The once-a-day update-available notice. The first TTY command of a day fires a
 // background fetch of the latest release tag and prints one parting line if it's newer
 // than the running binary (gh's shape: the command never waits on the network — a
-// short-lived command misses the result, and a later run prints it from the cached
-// file). BoxHome/update-check is both the day gate (its mtime) and the cache (its
-// content, the last-fetched tag). Best-effort everywhere: any failure just means no
-// notice. COOP_NO_UPDATE_CHECK opts out; `coop update --check` is the on-demand form.
+// short-lived command misses the result, and the next due run prints it from the cached
+// file). LocalHome/update-check is both the day gate (its mtime) and the cache (its
+// content, the last-fetched tag); only a fetch that finished writes it, so a day whose
+// first commands all exit before GitHub answers tries again rather than skipping a day.
+// update-check.attempt spaces those tries out. Best-effort everywhere: any failure just
+// means no notice. COOP_NO_UPDATE_CHECK opts out; `coop update --check` is the on-demand form.
 
 import (
 	"os"
@@ -32,29 +34,37 @@ func updateCheckPath(cfg *config.Config) string {
 	return filepath.Join(cfg.LocalHome(), "update-check")
 }
 
-// updateCheckDue reports whether the daily check should run: no gate file yet, or the
-// last attempt was over a day ago (its mtime — touched at each attempt, success or not).
+// updateAttemptBackoff keeps coops started together from fetching together; an attempt that
+// never finished is tried again after it, not a day later.
+const updateAttemptBackoff = 10 * time.Minute
+
+func updateAttemptPath(path string) string { return path + ".attempt" }
+
+// updateCheckDue reports whether the daily check should run: the last FINISHED fetch (the
+// cache's mtime) is missing or over a day old, and no attempt started within the backoff.
 func updateCheckDue(path string, now time.Time) bool {
-	fi, err := os.Stat(path)
-	return err != nil || now.Sub(fi.ModTime()) >= 24*time.Hour
+	if fi, err := os.Stat(path); err == nil && now.Sub(fi.ModTime()) < 24*time.Hour {
+		return false
+	}
+	fi, err := os.Stat(updateAttemptPath(path))
+	return err != nil || now.Sub(fi.ModTime()) >= updateAttemptBackoff
 }
 
-// touchUpdateCheck marks an attempt NOW while keeping the previously cached tag readable,
-// so a run that exits before the fetch lands still leaves yesterday's answer in place.
+// touchUpdateCheck marks an attempt NOW, beside the cache, so the previously cached tag and
+// its day gate stay as they were until a fetch lands.
 func touchUpdateCheck(path string) {
+	attempt := updateAttemptPath(path)
 	now := time.Now()
-	if os.Chtimes(path, now, now) == nil {
+	if os.Chtimes(attempt, now, now) == nil {
 		return
 	}
-	if os.MkdirAll(filepath.Dir(path), 0o755) == nil {
-		_ = os.WriteFile(path, nil, 0o644)
+	if os.MkdirAll(filepath.Dir(attempt), 0o755) == nil {
+		_ = os.WriteFile(attempt, nil, 0o644)
 	}
 }
 
 // cacheLatest stores the fetched tag via temp+rename, so a process exiting mid-write
-// can't leave a torn tag for the next run to compare against. No fsync (unlike
-// config.WriteFileAtomic): losing this to a power cut just means the next run re-checks
-// GitHub for the latest release — nothing depends on the cached tag being there.
+// can't leave a torn tag for the next run to compare against, and so stamps the day gate.
 func cacheLatest(path, tag string) {
 	_ = config.WriteFileAtomic(path, []byte(tag+"\n"))
 }
