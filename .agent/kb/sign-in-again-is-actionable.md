@@ -2,7 +2,7 @@
 name: sign-in-again-is-actionable
 description: refreshable OAuth stays usable; "Sign in again" means the stored login cannot recover (a provider-refused grant included) and every command words it the same — run the coop login it names
 subsystem: credentials
-sources: [internal/agent/agent.go, internal/agent/target.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/box/profiles.go, internal/box/account_renewal.go, internal/box/native_account.go, internal/box/native_broker.go, internal/cli/profiles.go, internal/cli/commands.go, internal/cli/modelscache.go, internal/cli/usage.go, internal/cli/rotation.go, internal/sessionsvc/acp.go]
+sources: [internal/agent/agent.go, internal/agent/target.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/box/profiles.go, internal/box/account_renewal.go, internal/box/native_account.go, internal/box/native_broker.go, internal/cli/profiles.go, internal/cli/commands.go, internal/cli/modelscache.go, internal/cli/usage.go, internal/cli/rotation.go, internal/sessionsvc/acp.go, internal/agent/native_credentials.go]
 updated: 2026-11-17
 ---
 `coop credentials` lists an account whose OAuth access token has expired but whose refresh authority
@@ -55,6 +55,7 @@ A healthy row's `refreshed <age>` reads the marker mtime through `box.ProfileTok
 behind provider expiries.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K5-5; checked with grep).
 - 2026-11-17 — the adapter check is `NativeCredentials().Inspect` on the canonical record;
   `StoredCredentialStatus` had no caller and was removed (audit AG-5).
 - 2026-11-03 — a listing taken while a renewal held an account's lock showed `Sign in again` for a

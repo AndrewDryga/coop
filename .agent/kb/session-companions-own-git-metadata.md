@@ -2,8 +2,8 @@
 name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
-sources: [internal/sessionsvc/companion.go, internal/sessionsvc/companion_snapshot.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go]
-updated: 2026-11-04
+sources: [internal/sessionsvc/companion.go, internal/sessionsvc/companion_snapshot.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go, internal/sessionsvc/companion_gc.go]
+updated: 2026-11-17
 ---
 
 # Session companions own their Git metadata
@@ -111,6 +111,7 @@ No filesystem reflink support is required: private state on both Btrfs and ext4 
 and the existing allocated-block accountant counts each payload once.
 
 ## Changelog
+- 2026-11-17 — added the files where the card's named symbols live to sources (audit K5-5; checked with grep).
 - 2026-11-04 — a read-only primary fork without an immutable primary receipt is refused by name instead of kept when it shares no inodes (task 2026-11-04-drop-the-old-session-store-row-readers).
 - 2026-11-04 — linked companions and bounded, shallow or missing history markers are refused now; the owner accepted a code proof and every store on this Mac had none. The empty-submodule check stays, since a running box can produce one.
 - 2026-11-04 — corrected the linked-snapshot line: nothing reaches one, so it is not a rollout path.
