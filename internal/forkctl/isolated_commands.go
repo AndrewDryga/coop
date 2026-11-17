@@ -32,6 +32,10 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 			if !yes && !ui.CanAsk() {
 				return mergeOutcome{}, mergeNeedsConfirmation()
 			}
+			// Before the gate image: --force is refused anyway, so it must not build or pull one first.
+			if force {
+				return mergeOutcome{}, isolatedForceRefusal()
+			}
 			img, err = c.MergeGate(repo)
 			if err != nil {
 				return mergeOutcome{}, err
@@ -217,12 +221,13 @@ func (c *Control) forkReviewIsolated(repo, ws, name string, identity forkspace.I
 		ui.Note("The editor opens that copy, not the agent's workspace. Edits there are never merged.")
 		ui.Note("Deleting the fork removes the copy.%s", removeSooner("it", preview))
 		return c.openInEditor(preview, name)
-	case stat:
-		return 0, nil
 	case tool:
 		if t := gitGlobalOut("diff.tool"); t != "" {
 			return 0, gitInteractive(candidate.dir, "-c", "diff.tool="+t, "-c", "difftool."+t+".cmd="+gitGlobalOut("difftool."+t+".cmd"), "difftool", "HEAD..."+ref)
 		}
+		ui.Note("No global Git diff tool is configured. Showing the diff here.")
+	case stat:
+		return 0, nil
 	case c.cfg.ReviewCmd != "":
 		preview, err := candidate.committedPreview(repo)
 		if err != nil {

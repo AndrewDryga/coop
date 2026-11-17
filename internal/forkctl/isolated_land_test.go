@@ -272,6 +272,53 @@ func TestForkReviewWithGateShowsTheAgentsNotes(t *testing.T) {
 	}
 }
 
+// An isolated review treats --tool as an ordinary one does: it wins over --stat, and with no global
+// diff tool it says so before showing the plain diff.
+func TestIsolatedReviewToolMatchesTheOrdinaryReview(t *testing.T) {
+	repo, ws, identity, c := isolatedTestFork(t)
+	isolatedTestCommit(t, ws, "new.txt", "incoming\n")
+	notes := captureStderr(t, func() {
+		captureStdout(t, func() {
+			if code, err := c.forkReviewIsolated(repo, ws, identity.Name, identity, false, true, false, false); code != 0 || err != nil {
+				t.Fatalf("review --tool = (%d, %v)", code, err)
+			}
+		})
+	})
+	if !strings.Contains(notes, "No global Git diff tool is configured") {
+		t.Fatalf("--tool with no diff tool said nothing:\n%s", notes)
+	}
+	marker := filepath.Join(t.TempDir(), "difftool-ran")
+	git(t, repo, "config", "--global", "diff.tool", "fake")
+	git(t, repo, "config", "--global", "difftool.fake.cmd", "touch "+marker)
+	git(t, repo, "config", "--global", "difftool.prompt", "false")
+	captureStderr(t, func() {
+		captureStdout(t, func() {
+			if code, err := c.forkReviewIsolated(repo, ws, identity.Name, identity, true, true, false, false); code != 0 || err != nil {
+				t.Fatalf("review --stat --tool = (%d, %v)", code, err)
+			}
+		})
+	})
+	if !pathExists(marker) {
+		t.Fatal("--stat won over --tool in an isolated review")
+	}
+}
+
+// An isolated merge refuses --force before it resolves the gate, which may build or pull an image.
+func TestIsolatedMergeRefusesForceBeforeTheGate(t *testing.T) {
+	_, ws, _, c := isolatedTestFork(t)
+	isolatedTestCommit(t, ws, "new.txt", "incoming\n")
+	c.cfg.Gate = []string{"make", "check"}
+	runtimeCalls := 0
+	c.host.EnsureRuntime = func() (runtime.Runtime, error) { runtimeCalls++; return runtime.Runtime{}, nil }
+	code, err := c.ForkMerge([]string{"isolated", "--force", "--yes"})
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "--force cannot bypass") {
+		t.Fatalf("merge --force = (%d, %v), want the force refusal", code, err)
+	}
+	if runtimeCalls != 0 {
+		t.Fatalf("the refused merge resolved its gate runtime %d time(s)", runtimeCalls)
+	}
+}
+
 // A fork that did several tasks shows each task's notes under its own title, oldest log first, and
 // never Coop's template comment. A task whose log holds nothing the worker wrote is left out.
 func TestForkReviewShowsEveryTasksNotesWithoutTheTemplate(t *testing.T) {

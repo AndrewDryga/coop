@@ -392,9 +392,7 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		return finish(landed, intent.SourceHead, intent.PublicationHead, err)
 	}
 	if force {
-		return mergeOutcome{}, ui.CommandFailed("--force cannot bypass an isolated fork's checks",
-			"Coop reads every commit of an isolated fork before it merges, and no option skips that.",
-			[2]string{"", "Run the merge without --force."})
+		return mergeOutcome{}, isolatedForceRefusal()
 	}
 	candidate, err := prepareIsolatedCandidate(repo, name, identity, forkspace.WantsSigning())
 	if err != nil {
@@ -477,4 +475,10 @@ func removeStateRecord(repo, path string) error {
 	}
 	defer state.Close()
 	return state.Remove(filepath.Base(path))
+}
+
+func isolatedForceRefusal() error {
+	return ui.CommandFailed("--force cannot bypass an isolated fork's checks",
+		"Coop reads every commit of an isolated fork before it merges, and no option skips that.",
+		[2]string{"", "Run the merge without --force."})
 }
