@@ -538,6 +538,8 @@ type netExplanation struct {
 	RunID   string            `json:"run_id"`
 	Host    string            `json:"host"`
 	Causes  []netExplainCause `json:"causes"`
+	// lossy: the run's record lost or trimmed refusals, so an absence here proves nothing.
+	lossy bool
 }
 
 type netExplainCause struct {
@@ -598,12 +600,14 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 			runs = append(runs, run.ID)
 		}
 	}
+	lossy := false
 	for _, runID := range runs {
 		explanation, err := netExplainHost(evidence, runID, opts.query)
 		if err != nil {
 			return 1, netRunErr(runID, err)
 		}
 		if len(explanation.Causes) == 0 {
+			lossy = lossy || explanation.lossy
 			continue
 		}
 		if opts.json {
@@ -622,7 +626,8 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	if opts.run != "" {
 		scope = "in run " + networkreport.ShortID(runs[0])
 	}
-	complete := !page.Incomplete && page.Unreadable == 0
+	// A run that trimmed its oldest refusals (or lost records) may have dropped this one.
+	complete := !page.Incomplete && page.Unreadable == 0 && !lossy
 	return 1, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetNoBlock(b, p, opts.query, scope, complete) })
 }
 
@@ -649,7 +654,9 @@ func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExp
 	if err != nil {
 		return netExplanation{}, err
 	}
-	out := netExplanation{Version: networkview.Version, RunID: runID, Host: host}
+	loss := inspection.Observed.Loss
+	out := netExplanation{Version: networkview.Version, RunID: runID, Host: host,
+		lossy: loss.Unknown || loss.Records != 0 || loss.DetailTruncated}
 	type group struct {
 		newest networkview.Denial
 		count  int

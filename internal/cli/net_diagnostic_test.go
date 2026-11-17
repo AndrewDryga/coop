@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -656,5 +657,33 @@ func TestDiagnosticRejectsExplicitEmptyOptions(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// A run that trimmed its oldest refusals may have dropped the one asked about, so "no recorded
+// block" comes with the incomplete-recording warning, never as a clean absence.
+func TestBlockedWarnsWhenTheRunTrimmedItsRefusals(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	record := netRecordRun(t, store, project)
+	snapshot := record.Snapshot
+	snapshot.Sequence, snapshot.Availability, snapshot.Terminal = 1, "available", true
+	snapshot.Loss.DetailTruncated = true
+	ctx := context.Background()
+	record, err := store.AcceptSnapshot(ctx, record.ID, record.Revision, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SealExecution(ctx, record.ID, record.Revision, "exited"); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	got := captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"early.example"}); code != 1 || err != nil {
+			t.Fatalf("coop net blocked early.example = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(got, netIncompleteRecording) || !strings.Contains(got, "No recorded block for early.example") {
+		t.Errorf("a trimmed run's absence read as complete:\n%s", got)
 	}
 }
