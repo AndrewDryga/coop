@@ -20,8 +20,9 @@ import (
 // Each field crosses bounded, with the session's checkout root taken out of it,
 // and whole or not at all: a field that scans as carrying a likely secret is
 // withheld and the event says which field and why, so the controller can say
-// so instead of showing nothing. A field larger than its bound crosses as a
-// marked preview of its text.
+// so instead of showing nothing. Text and titles larger than their bound are
+// cut to it without a mark; a structured tool field larger than its bound
+// crosses as a preview of its text marked truncated.
 const (
 	maximumNarrationTitleBytes = 1 << 10
 	maximumNarrationTextBytes  = 8 << 10
