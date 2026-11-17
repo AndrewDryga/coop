@@ -4,25 +4,178 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-- **A worker low on disk answers checkpoint and restore requests.** When a session worker doesn't
-  have enough free disk above its storage reserve, it now answers a checkpoint or a new restore
-  with `503 storage_unavailable` and records the operation as failed. It used to drop the
-  connection and leave the operation reserved.
-- **A session inside a fork leaves signing to the merge.** `coop claude`, `coop codex` and
-  `coop run` started inside a fork's folder re-signed the fork's new commits on exit. They no
-  longer do, because a fork's commits are signed when you merge it.
-- **Fork and service commands no longer fail while a session changes state.** A command that
-  listed running boxes at the moment an editor or worker session started or finished a turn, or
-  a box exited, could fail with "sandbox activity registry is unreadable". A process killed at
-  that moment could leave the registry unreadable until its leftover file was deleted by hand.
-  Both are now read correctly.
-- **An unattended loop no longer waits forever on a stalled signing step.** When `coop loop`
-  runs without a terminal, the Git command that signs its commits now stops after 15 minutes,
-  like every other Git command coop runs on your computer. It used to have no limit.
-- **Fork review and merge flag changes to Grok's project folder.** A fork that adds or changes
-  files under `.grok/` is now listed with the files that run on your machine, and
-  `coop fork merge` treats it as a risky file, as it already did for `.claude/`, `.codex/` and
-  `.gemini/`.
+- **A session's output schema can no longer read local files on the worker.** The worker used to
+  follow a file reference in a controller's output schema, so a schema could make it read any
+  file its user can and echo the values back in validation errors. Schemas now load nothing from
+  outside themselves.
+- **Text attachments no longer show up as untracked files in a writable session.** Since 13.2.1 a
+  writable session kept its attachments inside the fork, so review refused the session, discard
+  read it as dirty and checkpoints copied the file. Every session now keeps them in private
+  session state, and attachments 13.2.1 left in a writable fork move there on the next launch.
+- **A few commands exit with the right code.** `coop context` exits 1, not 2, when
+  `.agent/project.yaml` cannot be read. `coop presets init` exits 1 when it cannot write the
+  preset, and the `coop sessions` commands exit 1 when there is no home folder to find their data
+  in. `coop eval run` exits 2, not 1, for `--loop-config` on an agent suite or a `--timeout`
+  shorter than a case's budget.
+- **Session API answers say what went wrong.** A failed `POST /v1/sessions/{id}/prepare` now
+  answers 503 to retry later, 409 to fix the session, or 500 for an agent fault, with the same
+  code a failed turn would carry; a full warm pool answers `warm_limit_reached`. It used to be a
+  bare 500. Checkpoint capture and restore answer 409 `invalid_session_state` with the reason
+  for a workspace they refuse (conflicts, changed submodules, too many untracked files, a pending
+  restore) and 400 for a malformed restore request. A worker low on disk answers a checkpoint or
+  a new restore with 503 `storage_unavailable` and records the operation as failed, instead of
+  dropping the connection.
+- **Session requests page and retry cleanly.** `GET /v1/sessions` takes an `after=<session_id>`
+  cursor, so a client can list past the first 1000 sessions; an unknown cursor is 400. Retrying a
+  request with the same key after a client timeout now runs it instead of replaying "context
+  canceled". Fencing a session create works when the job's JSON keys are not in sorted order.
+- **Remote workers keep their disk and sources in order.** A worker low on disk removes unused
+  warm repository snapshots early, as documented, not only once the disk is full. It finishes
+  deleting a job source whose cleanup a crash cut short, and refuses a job whose frozen source no
+  longer matches its repository instead of downloading the whole history on every retry. A
+  worker whose certificate renewal fails keeps working until the certificate ends and retries
+  each minute. A checkpoint keeps untracked task files outside the session's bound task, and a
+  closed session in an LFS repository no longer counts as holding uncommitted work because its
+  LFS files were downloaded. Stopping `coop sessions connect` also stops its background
+  repository downloads. Agents in a filtered worker job are no longer told to edit
+  `project.yaml` to reach more hosts.
+- **Long editor sessions keep working.** A session no longer fails every turn once its replayed
+  history passes 4 MiB. A turn that repeats one of its five images no longer fails, and embedded
+  image resources no longer count toward the transcript limit. A turn with more than 512 tool
+  calls is no longer stopped as quiet while its latest tool runs, and a long turn keeps sending
+  `provider.alive` after its activity narration runs out. When the agent process dies while
+  writing, the turn reports the process failure instead of a malformed ACP frame. An editor that
+  re-applies a saved Account "Auto" choice at session start no longer restarts the box.
+- **The loop's screen and summary are accurate.** The live bar no longer wraps and leaves stale
+  rows when a task title has CJK characters or emoji, and blank lines no longer disappear while
+  it is shown. Long Codex attempts no longer print each tool call twice after the first 256.
+  The closing Usage includes the cost and tokens Claude reports for a failed attempt, the custom
+  pre-flight agent, and reviews stopped before a format correction. A loop that ran no final
+  review no longer ends with "All tasks passed final review", and the Continue line quotes a
+  target whose model holds shell characters, so it pastes cleanly in zsh. The first Ctrl-C no
+  longer lets the Mac fall asleep while the current attempt finishes.
+- **Loop reviews and pre-flight behave.** A review that may edit the repository no longer fails
+  to start once the task backlog and archive grow large. A fork's candidate review fills the
+  `{loop.*}` variables in `signoff.prompt` instead of sending them as literal text. When the
+  final review's round limit parks a task, an earlier answered decision stays in its `log.md`.
+  Pre-flight no longer strands a fork's answered task in todo; it tells you to run
+  `coop tasks unblock`. `coop loop` no longer warns at start about archived tasks with two
+  commits that no review can reopen, and a fork loop on a queue outside the project no longer
+  suggests a `coop tasks` command that refuses that queue. When `coop loop` runs without a
+  terminal, the Git command that signs its commits stops after 15 minutes instead of waiting
+  forever.
+- **Usage limits and rate limits are read correctly.** `coop loop` waits until the reset date
+  Codex states for a limit on another day, instead of probing and giving up. "Try again in
+  345ms" now waits seconds; it used to wait almost six hours. Consult, delegate, loop and eval
+  prompts that start with a dash or read `help` reach Codex as prompts instead of failing as
+  unknown options.
+- **`coop usage` and `coop models` report plainly.** The first `coop usage` on a machine with many
+  transcripts finishes faster. Claude totals are no longer marked "partial" because a transcript
+  holds an error or limit notice, and a signed-in Gemini account is no longer told to sign in
+  again when renewal fails because you are offline or the provider is down. After Ctrl-C, a
+  lookup that never started is reported as stopped, not timed out, and
+  `coop usage <agent>@<account>` drops its redundant note about missing price estimates.
+  `coop models` names a stopped runtime as Docker or Apple container, as other commands do.
+- **Tasks and decisions commands handle the edge cases.** The `/sweep` Stop hook no longer holds a
+  sweep on tasks a fork or a running `coop loop` owns, and `coop tasks queues --held` lists them.
+  `coop tasks rm` of an archived task no longer fails a loop or review running at the same time,
+  and `coop tasks rm --all-done` no longer slows down quadratically on a large archive.
+  `coop tasks done` no longer fails with "did not release within 5s" when your own lease
+  holder's command ignores SIGTERM. `coop tasks lease <id> -- <command>` no longer takes the
+  command's own `--tasks` flag as its queue. `coop tasks claim <id> --force=false` is refused
+  instead of taking over the claim. A host process killed while saving a fork's proposed task no
+  longer blocks that fork's imports and discards.
+- **Task messages point at commands that work.** `coop tasks park` on a fork's task names the fork
+  and, for a blocked question, offers `coop tasks unblock` instead of a release that is refused.
+  `coop tasks lint` says to block the task or write its Resolution instead of suggesting a
+  refused unblock. When `coop tasks done <id> --from-fork` finds an open checklist, the retry it
+  suggests keeps `--from-fork`. `coop tasks watch` tells you to run `coop login` when a fork's
+  loop stopped because its account no longer signs in. An answer written after the placeholder
+  comment on a decision's Resolution line now counts.
+- **Fork review and merge catch more risky changes.** They now flag a change to the Dockerfile or
+  Compose file your `project.yaml` names, wherever it lives, and files under `.grok/`, as they
+  already did for `.claude/`, `.codex/` and `.gemini/`. An install script or a queued task is
+  caught even when the fork spells the path in different letter case. npm install scripts are
+  caught next to a non-string script, behind an upper-case `"SCRIPTS"` key, and in `prepublish`,
+  `preprepare` and `postprepare`. Merging an isolated fork now refuses changes to a `.coopignore`
+  and tasks added to your queue, as an ordinary merge already did.
+- **Forks merge, sign and clean up correctly.** Merging an isolated fork signs its commits when you
+  sign commits, also when your branch has not moved since the fork started. `coop fork merge
+  --all` no longer deletes forks with no new commits when one fork is isolated. `coop fork
+  review` no longer copies tags a fork created into your repository, and `--gate` shows the
+  agent's notes again. `coop fork rm` and a merge without a gate stop the fork's service
+  containers and volumes. A fork removed in the middle of an interrupted merge no longer leaves
+  that merge's rebase for the next fork of the same name. `coop claude`, `coop codex` and
+  `coop run` started inside a fork's folder no longer re-sign its commits on exit; the merge
+  signs them. Reviews, merges and fork listings run their host git commands faster, and merging
+  an isolated fork with many Git LFS files is faster.
+- **Launches fail less and say why.** Boxes and forks honor global Git ignores in Git's default
+  `~/.config/git/ignore` even when `core.excludesfile` is not set. A project with an unreadable
+  hidden folder no longer fails every launch after a hidden file such as `.env` is replaced, and
+  a secret file a box moved stays hidden after the host restarts. Joined runtime options such as
+  `-w/srv/app` or `-hdevbox` in `COOP_RUN_ARGS` are no longer refused as a bundled `-v`, and a
+  provider API key written as `-eKEY=VALUE` is refused like the spaced form. A filesystem
+  controller folder left without its record by a crash or a full disk no longer blocks every
+  kernel-protected launch. Commands that list running boxes no longer fail with "sandbox activity
+  registry is unreadable" while a session changes state, and a process killed at that moment no
+  longer leaves the registry unreadable until its leftover file is deleted by hand. Launches
+  without kernel filesystem protection start faster in large checkouts.
+- **Box messages name the real cause.** Refusals and warnings name the right box kind and count.
+  Mount refusals no longer call every box "anchored". A launch that times out waiting for another
+  launch of the same checkout says so, instead of reporting a busy credential transaction.
+  Switching the Docker context while a box checks its services no longer makes it judge them on
+  the wrong daemon. Interrupting `coop sign`, or the signing after a box exits, no longer leaves a
+  temporary checkout and worktree entry behind. The in-box gate slot helper says a gate waits on
+  its project's slots, not the host's.
+- **Filtered networking is faster and reports more.** A filtered launch on a host with many past
+  runs starts faster. A filtered launch or editor session that starts while another box renews
+  the same account waits for it instead of failing or dropping the account. `coop net blocked`
+  and the run's report show HTTPS requests and downloads refused under a native sign-in, and
+  `coop net blocked` warns when a run dropped older refusals instead of saying "No recorded
+  block". Two refusals now suggest commands that work: an `--egress-rules` file outside the
+  project, and `coop shell` to record a first filtered run. A run that ends as the host gains a
+  network address no longer reports a false protection failure, and a loop whose network raised
+  alerts but blocked nothing no longer reports "Traffic to 0 remote addresses was blocked". With
+  `--debug-on-fail`, the debug shell's blocked addresses print when the shell ends, under its own
+  name. A filtered `coop build` or `coop update` with `COOP_IMAGE` set says to unset it instead
+  of running host setup in a loop.
+- **Services and serve ports are clearer.** A Compose port published to `localhost` is refused up
+  front with advice to write `127.0.0.1`. When services fail to start, the warning shows
+  Compose's own error and exit status, and a failed filtered start shows that run's own output.
+  A serve port added during an editor session says to restart the session instead of reporting
+  a busy host port. A signed-in open box prints its serve port links and warns when a host port
+  is busy; its first start says it is building Coop's credential broker, not the MCP broker, when
+  no MCP server is set, and a broker that fails to start includes Docker's reason. Agents in a
+  filtered box, and the main agent of a run with peers or a preset, read which serve ports
+  reached the host and which services run with them.
+- **Consult, delegate and init are more reliable.** `coop-consult` with no timeout set retries or
+  falls back when a peer is killed, instead of reporting "no reply within 0s". `coop-delegate`
+  fails when every target of a role already failed for good, instead of exiting 0 with no work
+  done. `coop init` no longer corrupts a `project.yaml` whose subprojects list uses another
+  indent, and no longer adds a second `pgdata` or `redisdata` volume to a Compose file that has
+  one. The commit format gate it scaffolds checks renamed files and works in paths with a space.
+  New projects' AGENTS.md tells box agents to file discovered work with `tasks_propose`, and
+  `/sweep` reads the rules index and opens only the cards a task touches.
+- **Evals stop and explain cleanly.** Ctrl-C during `coop eval run` stops its trial boxes and
+  loops, cleans up, and leaves the run marked unfinished. `coop eval run` and `coop eval init`
+  name a missing target, preset or folder in plain words. `coop eval compare` counts each case's
+  trials the same way as each run's ("1 timed out; 1 pending").
+- **The CLI shows names safely and completes more.** `coop build`, `coop check-secrets` and
+  `coop context` escape control characters in paths and file names, so a name cannot redraw the
+  report, and an invisible variation selector after punctuation is now shown, so a look-alike
+  name no longer passes for the real one. Shell completion offers the network options of
+  `coop loop`, `acp`, `run` and `shell`, `coop update`'s options, and task ids after
+  `coop tasks lease` and `park`. A mistyped option to a `coop sessions` subcommand is answered
+  with the nearest one, and an extra word after `coop acp` or `coop fork <name> acp` shows the
+  help page's usage line. `coop doctor` cleans up test projects an interrupted run left behind.
+  The daily update notice retries after ten minutes when a short command ended before GitHub
+  answered, instead of skipping the day.
+- **Help and guides cover more.** The loop guide says gate slots are shared per project and that
+  a custom `work.command` turns off the loop's reviews and verify. The upgrade notes and
+  configuration reference explain how filtered boxes reach project services. `coop help up` and
+  the box guide say that declining a first secret-file approval starts the services with the
+  file hidden, and `coop help fork acp` says a session without a target starts the fork's saved
+  target.
 
 ## 13.2.1
 
