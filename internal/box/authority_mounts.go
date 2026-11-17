@@ -399,7 +399,16 @@ func validateAuthorityMounts(ctx context.Context, spec RunSpec, options []string
 		}
 		allowedSourceTrees = append(allowedSourceTrees, canonical)
 	}
-	sources := append([]authorityBind(nil), plan.binds...)
+	// Hidden-file covers repeat one read-only decoy source per target, up to a thousand times; every
+	// check below reads only the source and its writability, so check each pair once.
+	var sources []authorityBind
+	seen := map[authorityBind]bool{}
+	for _, bind := range plan.binds {
+		if !seen[bind] {
+			seen[bind] = true
+			sources = append(sources, bind)
+		}
+	}
 	for _, bind := range sources {
 		canonical, err := resolveAuthorityPath(bind.source)
 		if err != nil {
