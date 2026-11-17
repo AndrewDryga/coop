@@ -274,6 +274,14 @@ func TestLoopContinueCommandPreservesExplicitQueues(t *testing.T) {
 	if got, err := loopContinueCommand(agents.Target{}, false, "", nil, nil, nil, networkFlags{}); err != nil || got != "coop loop" {
 		t.Fatalf("default continuation = %q (%v)", got, err)
 	}
+	// zsh refuses an unquoted [1m] with "no matches found", so a model with brackets is quoted.
+	bracketed, err := agents.ParseTarget("claude:sonnet[1m]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loopContinueCommand(bracketed, true, "", nil, nil, nil, networkFlags{}); err != nil || got != "coop loop 'claude:sonnet[1m]'" {
+		t.Fatalf("bracketed-model continuation = %q (%v)", got, err)
+	}
 }
 
 // A pasted Continue line resumes under the same network policy: a resume that dropped an

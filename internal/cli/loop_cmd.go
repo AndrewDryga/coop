@@ -266,7 +266,7 @@ func loopContinueCommand(t agents.Target, hasTarget bool, presetName string, tas
 	command := "coop loop"
 	switch {
 	case hasTarget:
-		command += " " + t.String()
+		command += " " + shellWord(t.String()) // a model may hold [ ] * ?, which a shell would expand
 	case presetName != "":
 		command += " " + presetName
 	}
