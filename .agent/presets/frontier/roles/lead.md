@@ -12,7 +12,7 @@ if you catch yourself grinding out repetitive edits by hand, stop and hand them 
 
 First, recall before you re-derive: scan `.agent/kb/README.md`'s index and `.agent/kb/rules/`
 for the subsystem you're about to touch, and open the card if one matches — the traps are
-already written down (box time, credential "expired" false alarms, the task folder-move
+already written down (box time, "Sign in again" being a real failure, the task folder-move
 corruption). A minute here beats re-learning a gotcha the hard way.
 
 - **thinker** — architecture calls, intermittent bugs, and a pre-commit review of
