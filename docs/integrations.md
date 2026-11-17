@@ -268,11 +268,6 @@ writes into a plain link, which you have to click. Only an image carried in the 
 shows. In a code block, a Markdown image and a line that starts like a Markdown link definition,
 such as `[key: string]: number;`, show a backslash.
 
-Open and offline sessions used to forward these requests, so a prompt-injected agent could have the
-editor run a command or write a file anywhere on your computer. In a test, Gemini's adapter wrote
-project files this way when the editor offered it. With the channel closed, Claude, Codex, Gemini
-and Grok all do their work inside the box.
-
 `coop claude` and `coop loop` don't have this editor channel.
 
 ## MCP servers
