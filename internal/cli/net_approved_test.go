@@ -37,9 +37,6 @@ func TestNetLeafHelpRoutesBothSpellings(t *testing.T) {
 			t.Errorf("coop help %s printed:\n%s", strings.Join(path, " "), printed)
 		}
 	}
-	if !selfContained("net") || !selfContained("net blocked") {
-		t.Error("every net page ends itself; the family page is the leaf pages' pointer")
-	}
 }
 
 // --------------------------------------------------------------- access ----

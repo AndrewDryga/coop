@@ -575,7 +575,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		// ("sessions connect"), in the same commandHelp map as their family, so the manual and
 		// `coop help <family> <leaf>` can never disagree about which page a leaf has.
 		if leaf := strings.Join(path, " "); commandHelp[leaf] != "" {
-			printTopicHelp(leaf, commandHelp[leaf])
+			printHelpPage(commandHelp[leaf])
 			return 0, nil
 		}
 	}
@@ -583,7 +583,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 	// key, so `coop help tasks release` and `coop tasks release --help` reach the leaf page.
 	if len(path) > 1 {
 		if page := commandHelp[cmd+" "+path[1]]; page != "" {
-			printTopicHelp(cmd+" "+path[1], page)
+			printHelpPage(page)
 			return 0, nil
 		}
 	}
@@ -598,7 +598,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		case "rm":
 			leaf = "credentials rm"
 		}
-		printTopicHelp(leaf, commandHelp[leaf])
+		printHelpPage(commandHelp[leaf])
 		return 0, nil
 	}
 	// `coop help fork <name> acp` names a fork BETWEEN the family and its command, so fork's leaf
@@ -606,7 +606,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 	// called "acp".
 	if cmd == "fork" && len(path) > 1 {
 		if leaf := cmd + " " + path[len(path)-1]; commandHelp[leaf] != "" {
-			printTopicHelp(leaf, commandHelp[leaf])
+			printHelpPage(commandHelp[leaf])
 			return 0, nil
 		}
 	}
@@ -636,7 +636,7 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		printHelp(cfg)
 		return 0, nil
 	case commandHelp[cmd] != "":
-		printTopicHelp(cmd, commandHelp[cmd])
+		printHelpPage(commandHelp[cmd])
 		return 0, nil
 	}
 	// `coop help claude`, `coop claude:opus/high@work --help` — coop's OWN page for that provider:

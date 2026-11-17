@@ -73,6 +73,7 @@ still ride on review, so `check: none` stays.
 
 ## Changelog
 - 2026-11-17 — the dossier's one renderer is `forkBriefAt`; the `forkBrief` wrapper is gone (audit FC-19).
+- 2026-11-17 — removed `selfContainedHelp`, `selfContained` and `printCommandHelp`: every page ends itself, so `printHelpPage` is the one printer and the all-commands footer is gone from the code (audit find C2-18).
 - 2026-11-03 — the network flags read three ways ("load network rules", `--allow-domain <name>`,
   "add this file's network rules for the run") and `--peer` four. Added the shared-flag bullet:
   run, shell, the four agent pages, acp, fork, fork acp and loop now embed the same rows, and

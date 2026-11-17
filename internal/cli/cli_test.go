@@ -333,7 +333,7 @@ func TestStdoutViewsNoANSI(t *testing.T) {
 	}
 	a := modelsApp(t)
 	views := map[string]func(){
-		"commandHelp": func() { printCommandHelp(commandHelp["tasks"]) },
+		"commandHelp": func() { printHelpPage(commandHelp["tasks"]) },
 		"models":      func() { _, _ = a.cmdModels(nil) },
 		"profiles":    func() { _, _ = a.cmdCredentials(nil) },
 	}

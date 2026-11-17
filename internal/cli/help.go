@@ -47,7 +47,7 @@ func printHelp(cfg *config.Config) { fmt.Print(helpText(cfg)) }
 // subcommand. See .agent/kb/rules/bare-subcommand-shows-help.md.
 func groupHelp(cmd string) (int, error) {
 	if h, ok := commandHelp[cmd]; ok {
-		printTopicHelp(cmd, h)
+		printHelpPage(h)
 		return 0, nil
 	}
 	return 2, ui.UnknownCommand("coop "+cmd, "", "coop help")
@@ -2218,16 +2218,9 @@ WHAT IT COMPLETES
   Commands, options, agents, models, accounts, presets, forks, and task IDs.`,
 }
 
-// printCommandHelp prints one subcommand's focused help: synopsis line bolded, body as-is,
-// then a pointer to the full command list.
-func printCommandHelp(text string) {
-	printHelpPage(text)
-	fmt.Println("\nRun 'coop help' for all commands.")
-}
-
-// printHelpPage prints a page that ENDS ITSELF: synopsis line bolded, body as-is, and no
-// all-commands footer. A page that closes with its own pointer ("coop help presets") has already
-// told the reader where to go next; the generic footer would be a second, weaker answer.
+// printHelpPage is the ONE way a static page reaches the terminal, so `coop presets --help`,
+// `coop help presets` and a bare group can never disagree: synopsis line bolded, body as-is. Every
+// page ENDS ITSELF with its own pointer ("coop help presets"), so there is no all-commands footer.
 func printHelpPage(text string) {
 	p := ui.For(os.Stdout) // stdout view — keep pipes clean
 	if i := strings.IndexByte(text, '\n'); i >= 0 {
@@ -2235,40 +2228,6 @@ func printHelpPage(text string) {
 	} else {
 		fmt.Println(p.Bold(text))
 	}
-}
-
-// selfContainedHelp are the commandHelp pages that end with their own pointer, so they print
-// without the all-commands footer. Membership travels with the page's last line. A whole family is
-// listed when every one of its pages ends itself — the family page points at its per-command pages,
-// and each command page ends with its examples or the command that follows it.
-var selfContainedHelp = map[string]bool{
-	"presets": true, "models": true, "init": true, "approve": true, "net": true, "eval": true,
-	"login": true, "credentials": true, "usage": true,
-	"tasks": true, "backlog": true, "context": true, "loop": true, "fork": true,
-	"shell": true, "acp": true, "sign": true, "prompt": true, "version": true,
-	"completion": true, "sessions": true,
-	"up": true, "down": true, "doctor": true, "check-secrets": true, "build": true, "update": true,
-	"setup": true,
-}
-
-// selfContained reports whether cmd's page ends itself. A `<family> <command>` page inherits its
-// family's answer, so a new leaf page in a listed family needs no second registration.
-func selfContained(cmd string) bool {
-	if selfContainedHelp[cmd] {
-		return true
-	}
-	family, _, ok := strings.Cut(cmd, " ")
-	return ok && selfContainedHelp[family]
-}
-
-// printTopicHelp is the ONE way a static page reaches the terminal, so `coop presets --help`,
-// `coop help presets` and a bare group can never disagree about the footer.
-func printTopicHelp(cmd, text string) {
-	if selfContained(cmd) {
-		printHelpPage(text)
-		return
-	}
-	printCommandHelp(text)
 }
 
 // tildeify shortens a path under the home dir to ~/… for readable help.

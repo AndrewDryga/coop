@@ -59,13 +59,3 @@ func TestForkHelpExampleNamesAreNotCoopWords(t *testing.T) {
 		}
 	}
 }
-
-// Every page this design redesigned ends with its own next step, so none of them gets the generic
-// "Run 'coop help' for all commands." footer.
-func TestApprovedWorkflowHelpPagesEndThemselves(t *testing.T) {
-	for _, key := range []string{"backlog", "backlog add", "context", "loop", "fork", "fork ls", "fork merge"} {
-		if !selfContained(key) {
-			t.Errorf("%q must print without the all-commands footer", key)
-		}
-	}
-}
