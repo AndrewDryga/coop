@@ -49,7 +49,8 @@ test-minimal-path: require-git-lfs ## Run unit tests with only TEST_HOST_PROGRAM
 	CGO_ENABLED=0 PATH="$$bin" "$$bin/go" test -count=1 -p 4 -timeout 20m ./...
 
 cover: require-git-lfs ## Run unit tests with a coverage summary
-	@go test -cover ./...
+	@# The same bounds as test: fresh results, four packages at a time, a hung package fails.
+	@go test -count=1 -p 4 -timeout 20m -cover ./...
 
 mod-check: ## Verify module metadata is tidy without changing qualified sources
 	@go mod tidy -diff
