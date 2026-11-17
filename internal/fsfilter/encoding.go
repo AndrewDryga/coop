@@ -51,7 +51,8 @@ func WriteKernelPolicies(w io.Writer, policies []Policy, unicodeData []byte) err
 		return errors.New("filesystem policy exceeds admission bounds")
 	}
 	// The bundled image owns this table. Reject truncated or unbounded input
-	// before emitting a header; the loader validates each mapping as it seeds.
+	// before emitting a header. The owner range-checks each row and discards it:
+	// the controller seeds its frozen runes map from unicode.bin itself.
 	if len(unicodeData) == 0 || len(unicodeData)%48 != 0 || len(unicodeData)/48 > 20000 {
 		return errors.New("invalid filesystem Unicode table")
 	}
