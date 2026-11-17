@@ -354,7 +354,20 @@ func PrepareIsolatedLFSCheckout(ctx context.Context, repository, before, publica
 		return err
 	}
 	defer root.Close()
+	// One diff names every path the publication changes; each observation is a fresh snapshot of
+	// the repository's metadata, so looking up every LFS file one by one cost seconds on a large tree.
+	diff, err := ObserveGit(ctx, repository, "diff-tree", "-r", "-z", "--no-renames", "--name-only", before, publication, "--")
+	if err != nil {
+		return err
+	}
+	changed := map[string]bool{}
+	for _, path := range bytes.Split(diff, []byte{0}) {
+		changed[string(path)] = true
+	}
 	return VisitLFSPointers(ctx, repository, before, func(pointer LFSPointer) error {
+		if !changed[pointer.Path] {
+			return nil
+		}
 		old, err := ObserveGit(ctx, repository, "ls-tree", "-z", before, "--", pointer.Path)
 		if err != nil {
 			return err

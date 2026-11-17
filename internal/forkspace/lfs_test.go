@@ -258,3 +258,36 @@ func TestLFSRefusesUnsupportedPointersInsteadOfLeavingThemAsPayload(t *testing.T
 func lfsObjectPath(oid string) string {
 	return filepath.Join(".git", lfsMetadataObjectPath(oid))
 }
+
+// Only LFS files the publication changes go back to their pointers; an unchanged one stays
+// hydrated, and is never looked up one path at a time.
+func TestLFSPublicationRestoresOnlyChangedPointers(t *testing.T) {
+	source, before, files := lfsFixture(t)
+	gitIn(t, source, "rm", "-q", "empty.bin")
+	gitIn(t, source, "commit", "-qm", "drop empty")
+	publication, err := gitOutputContext(context.Background(), source, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	if err := GitClonePinnedContext(ctx, source, workspace, publication); err != nil {
+		t.Fatal(err)
+	}
+	if err := GitDetach(ctx, workspace, before); err != nil {
+		t.Fatal(err)
+	}
+	if err := HydrateLFS(ctx, workspace, before, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareIsolatedLFSCheckout(ctx, workspace, before, publication); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(workspace, "nested/large.bin")); err != nil || !bytes.Equal(data, files["nested/large.bin"]) {
+		t.Fatalf("an unchanged LFS file lost its content: %d bytes, %v", len(data), err)
+	}
+	if data, err := os.ReadFile(filepath.Join(workspace, "empty.bin")); err != nil || !bytes.HasPrefix(data, []byte("version https://git-lfs.github.com/spec/v1\n")) {
+		t.Fatalf("a changed LFS file was not put back as its pointer: %q, %v", data, err)
+	}
+}
