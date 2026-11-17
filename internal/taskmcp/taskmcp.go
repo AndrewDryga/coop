@@ -1,8 +1,8 @@
 // Package taskmcp is the coop-owned MCP server an in-box agent reaches its task queue through.
 // It speaks newline-delimited JSON-RPC 2.0 (initialize, tools/list, tools/call) over any
-// io.ReadWriter — hand-rolled like internal/acpproxy, no SDK — and exposes exactly eight typed
-// task tools over internal/tasks, so the box never needs the coop binary, a docker socket, or a
-// network route to change task state.
+// io.ReadWriter — hand-rolled like internal/acpproxy, no SDK — and exposes nine typed task tools
+// (ten in an interactive session) over internal/tasks, so the box never needs the coop binary, a
+// docker socket, or a network route to change task state.
 //
 // The server is built host-side from an explicit Authority — never ambient config — and every
 // tool works on every task in those queues. Lease refusals protect tasks another live process

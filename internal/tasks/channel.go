@@ -13,9 +13,9 @@ import (
 )
 
 // The host-side face of the in-box task channel (internal/taskmcp). Every mutation a box can
-// request through its eight task tools lands here, on the same validation, file discipline, and
-// collision rules the CLI uses, so a call from the box can never write a queue the host would not
-// have written itself.
+// request through its task tools (nine in a loop box, ten in a session) lands here, on the same
+// validation, file discipline, and collision rules the CLI uses, so a call from the box can never
+// write a queue the host would not have written itself.
 //
 // The box can also replace any folder inside the workspace it mounts while the tools run, and a
 // queue reached by name follows a folder swapped for a link to another project. So the channel

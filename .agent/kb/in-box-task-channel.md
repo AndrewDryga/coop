@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: a loop work box or an interactive agent box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/completion_record.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go]
-updated: 2026-11-06
+updated: 2026-11-17
 ---
 
 A loop work box is told to change task state through the `coop-tasks` MCP server (nine tools:
@@ -15,7 +15,7 @@ internal/loop/review.go). The host catches a hand move after the run instead: a 
 moved to done without holding its lease goes back to `10_in_progress/`
 (`rejectUnownedCompletions` in internal/tasks/audit.go). The coop binary is still absent from the
 box (doctor still asserts it) — the server is the ONLY host control surface a box gets, and it
-exposes eight verbs (ten in an interactive session, below), nothing shell/exec/file.
+exposes nine verbs (ten in an interactive session, below), nothing shell/exec/file.
 
 **Interactive sessions get the same server, with nothing assigned.** An editor's `coop acp` inner
 child and a `coop <agent>` box in a plain checkout whose project has a task queue set `TaskTools`
@@ -239,6 +239,7 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-17 — the tool count says nine (ten in a session) everywhere; it said eight in two places.
 - 2026-11-06 — a session a forced claim displaced gets the CLI's takeover message from every box task
   tool (`takenOver` in `boxClaimRefusal`) (task 2026-11-06-stop-a-displaced-process-from-blocking-or-releas).
 - 2026-11-06 — the host's `coop tasks done` refuses template text in Done so far/Traps with the check
