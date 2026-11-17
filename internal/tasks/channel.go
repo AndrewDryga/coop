@@ -219,6 +219,9 @@ func ReadTaskState(taskDir string) (TaskStateFields, error) {
 // the file stays parseable by completion normalization (one line per label) whatever the agent
 // wrote before.
 func WriteTaskState(taskDir, title string, fields TaskStateFields) error {
+	if err := checkTaskStateFields(fields); err != nil {
+		return err
+	}
 	root, err := OpenTaskMetadataRoot(taskDir)
 	if err != nil {
 		return err
@@ -230,11 +233,34 @@ func WriteTaskState(taskDir, title string, fields TaskStateFields) error {
 	return AtomicWriteTaskFile(root, "state.md", []byte(body))
 }
 
+// checkTaskStateFields refuses a value with a later line that starts with one of state.md's own
+// labels: ReadTaskState would read it as a second field and refuse every later update.
+func checkTaskStateFields(fields TaskStateFields) error {
+	labels := []string{taskStateStatus, taskStateDone, taskStateNext, taskStateTraps}
+	for _, value := range []string{fields.Status, fields.DoneSoFar, fields.NextAction, fields.Traps} {
+		lines := strings.Split(value, "\n")
+		for _, line := range lines[1:] {
+			for _, label := range labels {
+				if strings.HasPrefix(line, label) {
+					return fmt.Errorf("state.md value has a line starting with %s, which would read as a second field; reword the line %q", label, line)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // CompleteTaskWithClosure records a truthful no-change conclusion while moving the task. A failed
 // record or move restores the original task metadata and lifecycle location.
 func CompleteTaskWithClosure(root string, item Item, closure TaskClosure) error {
 	fields, err := ReadTaskState(item.Dir)
 	if err != nil {
+		return err
+	}
+	fields.Status = "complete — " + strings.ReplaceAll(closure.Outcome, "_", " ")
+	fields.DoneSoFar = closure.Reason + "\nEvidence: " + closure.Evidence
+	fields.NextAction = "none"
+	if err := checkTaskStateFields(fields); err != nil {
 		return err
 	}
 	metadata, err := snapshotTaskMetadata(item.Dir, "log.md", "state.md")
@@ -258,9 +284,6 @@ func CompleteTaskWithClosure(root string, item Item, closure TaskClosure) error 
 	if err := AppendTaskLogEntry(dir, entry); err != nil {
 		return rollback(err)
 	}
-	fields.Status = "complete — " + strings.ReplaceAll(closure.Outcome, "_", " ")
-	fields.DoneSoFar = closure.Reason + "\nEvidence: " + closure.Evidence
-	fields.NextAction = "none"
 	if err := WriteTaskState(dir, item.Title, fields); err != nil {
 		return rollback(err)
 	}

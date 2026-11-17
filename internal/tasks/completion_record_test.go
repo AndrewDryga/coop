@@ -57,6 +57,39 @@ func TestDoneRefusesAStateRecordStillHoldingTheTemplate(t *testing.T) {
 	}
 }
 
+// A value whose later line starts with one of state.md's labels would read back as a second field,
+// and every later update would be refused. The write is refused instead and the file is unchanged;
+// a no-change closure is refused the same way before the task moves.
+func TestWriteTaskStateRefusesALineThatReadsAsAField(t *testing.T) {
+	root := t.TempDir()
+	if code, err := tasksFolderAdd(root, []string{"Fix login retries", "--context", "c", "--acceptance", "a", "--approach", "p", "--subtask", "s"}, StateInProgress, "tasks add"); code != 0 || err != nil {
+		t.Fatalf("add = (%d, %v)", code, err)
+	}
+	item := mustReadTaskTree(t, root)[0]
+	before := readFileString(filepath.Join(item.Dir, "state.md"))
+	fields, err := ReadTaskState(item.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields.DoneSoFar = "x\n**Traps:** y"
+	if err := WriteTaskState(item.Dir, item.Title, fields); err == nil || !strings.Contains(err.Error(), "**Traps:**") {
+		t.Fatalf("WriteTaskState = %v, want the label line refused", err)
+	}
+	if got := readFileString(filepath.Join(item.Dir, "state.md")); got != before {
+		t.Fatalf("state.md changed:\n%s", got)
+	}
+	if _, err := ReadTaskState(item.Dir); err != nil {
+		t.Fatalf("state.md no longer reads: %v", err)
+	}
+	closure := TaskClosure{Outcome: "already_satisfied", Reason: "r", Evidence: "e\n**Status:** done"}
+	if err := CompleteTaskWithClosure(root, item, closure); err == nil {
+		t.Fatal("closure with a label line was accepted")
+	}
+	if current, ok := mustCurrentTask(t, root, item.ID); !ok || current.State != StateInProgress {
+		t.Fatalf("refused closure moved the task: %+v", current)
+	}
+}
+
 func TestStateTemplateFields(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
