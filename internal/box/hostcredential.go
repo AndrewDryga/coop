@@ -36,19 +36,24 @@ func SaveHostCredential(cfg *config.Config, ag agents.Agent, profile string, sec
 	}
 	stage.SetActiveProfile(ag.Name(), profile)
 	home := stage.AgentDir(ag.Name())
+	if err := stageHostCredential(home, spec, secret); err != nil {
+		// Nothing was published; only a failed publication keeps (and names) the stage.
+		return errors.Join(err, RemoveNativeSignInStage(cfg, root))
+	}
+	if err := ImportNativeSignIn(context.Background(), cfg, ag.Name(), profile, home); err != nil {
+		return fmt.Errorf("credential publication failed; sign-in output retained at %s: %w", root, err)
+	}
+	return RemoveNativeSignInStage(cfg, root)
+}
+
+func stageHostCredential(home string, spec agents.HostCredentialSpec, secret []byte) error {
 	if err := config.EnsurePrivateDir(home); err != nil {
 		return err
 	}
 	if err := spec.Activate(home); err != nil {
 		return err
 	}
-	if err := config.WriteFileAtomic(filepath.Join(home, spec.File), secret); err != nil {
-		return err
-	}
-	if err := ImportNativeSignIn(context.Background(), cfg, ag.Name(), profile, home); err != nil {
-		return fmt.Errorf("credential publication failed; sign-in output retained at %s: %w", root, err)
-	}
-	return os.RemoveAll(root)
+	return config.WriteFileAtomic(filepath.Join(home, spec.File), secret)
 }
 
 // LoadHostCredential returns one selected account's adapter-declared env credential. Missing is a

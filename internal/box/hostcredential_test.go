@@ -2,6 +2,7 @@ package box
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,4 +170,36 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// failingActivation is Gemini with a host credential whose activation fails.
+type failingActivation struct{ agents.Agent }
+
+func (f failingActivation) HostCredential() agents.HostCredentialSpec {
+	spec := f.Agent.HostCredential()
+	spec.Activate = func(string) error { return errors.New("activation failed") }
+	return spec
+}
+
+// An API-key sign-in that fails before publication leaves no .sign-in-* folder in the settings
+// folder; one that succeeds leaves none either.
+func TestSaveHostCredentialRemovesItsStage(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	gemini, _ := agents.Get("gemini")
+	stages := func() []string {
+		matches, _ := filepath.Glob(filepath.Join(cfg.ConfigDir, nativeSignInStagePrefix+"*"))
+		return matches
+	}
+	if err := SaveHostCredential(cfg, failingActivation{gemini}, "personal", []byte("key")); err == nil || !strings.Contains(err.Error(), "activation failed") {
+		t.Fatalf("a failed activation = %v", err)
+	}
+	if left := stages(); len(left) != 0 {
+		t.Fatalf("a failed sign-in left its stage: %v", left)
+	}
+	if err := SaveHostCredential(cfg, gemini, "personal", []byte("key")); err != nil {
+		t.Fatal(err)
+	}
+	if left := stages(); len(left) != 0 {
+		t.Fatalf("a finished sign-in left its stage: %v", left)
+	}
 }
