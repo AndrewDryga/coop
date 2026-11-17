@@ -400,7 +400,12 @@ func ReapOrphanNetworks(ctx context.Context, rt runtime.Runtime) (int, error) {
 	for _, id := range ids {
 		project, err := rt.NetworkLabel(ctx, id, composeProjectLabel)
 		if err != nil {
-			return 0, err
+			// A compose down or another sweep can remove a listed network before this read. Only a
+			// relisting that no longer shows it proves it gone; anything else still fails the sweep.
+			if still, listErr := rt.NetworkIDs(ctx, "label="+composeProjectLabel); listErr != nil || slices.Contains(still, id) {
+				return 0, err
+			}
+			continue
 		}
 		if coopComposeProjectName.MatchString(project) {
 			ours = append(ours, id)

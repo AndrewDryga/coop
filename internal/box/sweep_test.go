@@ -107,6 +107,12 @@ network)
 		done
 		;;
 	inspect)
+		# A network marked "vanish" is removed by someone else just before this inspect reads it.
+		if grep -qF '"vanish":"yes"' "$COOP_TEST_NETWORKS/$5" 2>/dev/null; then
+			rm -f "$COOP_TEST_NETWORKS/$5"
+			echo "Error response from daemon: network $5 not found" >&2
+			exit 1
+		fi
 		key=$(printf '%s' "$4" | sed 's/.*"\(.*\)".*/\1/')
 		[ "$4" = '{{.Name}}' ] && key=name
 		sed -n "s/.*\"$key\":\"\([^\"]*\)\".*/\1/p" "$COOP_TEST_NETWORKS/$5"
@@ -752,6 +758,27 @@ func TestReapOrphanNetworksKeepsANetworkWhoseContainersAreOnlyCreated(t *testing
 	}
 	if got, want := remainingFakeNetworks(t), []string{"prepared"}; !slices.Equal(got, want) {
 		t.Fatalf("remaining networks = %v, want %v", got, want)
+	}
+}
+
+// A network another process removes between the listing and its label read is gone, not a reason
+// to give up on every other network: the sweep relists and goes on.
+func TestReapOrphanNetworksSkipsANetworkRemovedMidSweep(t *testing.T) {
+	rt, _ := fakeRuntime(t)
+	addFakeNetwork(t, "unused", "coop-emisar-a922f3c5_default", "coop-emisar-a922f3c5")
+	data, err := json.Marshal(map[string]string{"name": "coop-portal-b1c2d3e4_default", composeProjectLabel: "coop-portal-b1c2d3e4", "vanish": "yes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("COOP_TEST_NETWORKS"), "a-vanishing"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n, err := ReapOrphanNetworks(context.Background(), rt)
+	if err != nil || n != 1 {
+		t.Fatalf("ReapOrphanNetworks = (%d, %v), want (1, nil)", n, err)
+	}
+	if got := remainingFakeNetworks(t); len(got) != 0 {
+		t.Fatalf("remaining networks = %v, want none", got)
 	}
 }
 
