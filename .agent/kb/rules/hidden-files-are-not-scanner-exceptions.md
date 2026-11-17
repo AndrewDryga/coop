@@ -3,8 +3,8 @@ name: hidden-files-are-not-scanner-exceptions
 description: .coopignore hides files from agents; only exact reviewed .coopsecretsignore findings dismiss scanner warnings
 scope: security
 sources: [internal/cli/checksecrets.go, internal/cli/checksecrets_test.go, internal/box/secrets.go, internal/secretscan/exceptions.go, internal/secretscan/exceptions_test.go]
-check: none
-updated: 2026-09-11
+check: "go test ./internal/cli -run TestCheckSecretsReportsNameShadowedCommitCandidates"
+updated: 2026-11-17
 ---
 
 # Separate box hiding from scanner exceptions
@@ -28,6 +28,9 @@ through fork merges, checkpoints, or session output.
 
 ## Changelog
 
+- 2026-11-17 — a8b281ef (2026-09-13) fixed the S9 violation: check-secrets scans commit
+  candidates `.coopignore` hides, and TestCheckSecretsReportsNameShadowedCommitCandidates now fails
+  unless a hidden `silenced.pem` is reported. That test is the rule's check (audit R2-3).
 - 2026-09-11 — recorded the approved S9 design. Swept the five source files above: box hiding
   and exact-finding exceptions are separate helpers, but checksecrets.go skips `.coopignore`
   matches and TestCheckSecretsReportsNameShadowedCommitCandidates requires that silence.
