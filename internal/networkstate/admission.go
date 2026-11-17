@@ -43,7 +43,10 @@ type AdmissionPreview struct {
 	// A launch tells the person so; it grants nothing.
 	Default bool
 	// Pending is non-nil when the request needs review before a launch. It is
-	// never a reason to widen anything: Admit fails on the same condition.
+	// never a reason to widen anything: the launch path refuses on it before it
+	// admits. Admit itself does not check it — it enforces a withdrawal, the
+	// project directory and that the requests stay inside the approved envelope
+	// — so a new caller must refuse on Pending too.
 	Pending *PendingApproval
 }
 
