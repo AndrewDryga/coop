@@ -202,13 +202,6 @@ func keepDecoysOutside(decoys map[string][]serviceDecoy, approved []string) (map
 	return kept, sortedKeys(hidden)
 }
 
-// writeServiceShadowOverride writes the override that mounts an empty decoy over every planned
-// target. The override itself is per-start (dir is the private snapshot dir, gone when the command
-// returns), but its decoy SOURCES are not: `compose up -d` leaves the sidecars running long after
-// coop exits, and a bind whose source coop deleted is a mount the container can no longer trust —
-// on a restart the runtime resolves it to whatever it invents. So the decoys live in coop's own
-// state directory, created once and shared: they are empty and read-only, so sharing them costs
-// nothing. (The primary box's decoy stays a temp file: that container dies inside the same Run.)
 // serviceDecoyPaths returns the shared empty file and empty directory sidecars mount in place of a
 // hidden path, creating them if this host has none yet. Anything unexpected at either path (a
 // non-empty file, a file where the directory belongs) is replaced rather than trusted.
@@ -246,6 +239,13 @@ func serviceDecoyPaths() (file, dir string, err error) {
 	return file, dir, nil
 }
 
+// writeServiceShadowOverride writes the override that mounts an empty decoy over every planned
+// target. The override itself is per-start (dir is the private snapshot dir, gone when the command
+// returns), but its decoy SOURCES are not: `compose up -d` leaves the sidecars running long after
+// coop exits, and a bind whose source coop deleted is a mount the container can no longer trust —
+// on a restart the runtime resolves it to whatever it invents. So the decoys live in coop's own
+// state directory, created once and shared: they are empty and read-only, so sharing them costs
+// nothing. (The primary box's decoy stays a temp file: that container dies inside the same Run.)
 func writeServiceShadowOverride(repo string, decoys map[string][]serviceDecoy, dir string) (string, bool, error) {
 	if len(decoys) == 0 {
 		return "", false, nil

@@ -237,8 +237,9 @@ type RunSpec struct {
 	networkSmoke *networkSmokeLaunch
 
 	// Ctx, when non-nil, makes the run cancelable: the container runs in its own process group
-	// and canceling Ctx tears it down (SIGTERM→SIGKILL). The loop sets this so a second Ctrl-C
-	// stops the current iteration now; every other caller leaves it nil — the plain, today's run.
+	// and canceling Ctx tears it down (SIGTERM→SIGKILL). The loop sets it so a second Ctrl-C stops
+	// the current iteration now; ACP and fork sessions, evals, builds and fork merge gates set it too.
+	// A nil Ctx is a plain run (a filtered one still makes its own, to tear down on a signal).
 	Ctx context.Context
 
 	// OnRuntimeLaunch, when set, is called exactly once at the runtime-launch boundary: after
@@ -520,8 +521,8 @@ func preflightCompositionArtifactExposure(cfg *config.Config, rt runtime.Runtime
 // see the OnRuntimeLaunch boundary these same names describe). A canceled Ctx aborts HERE, at the
 // next boundary, naming the phase it would have started — never mid-syscall: a wedged `compose up`
 // or `network inspect` runs via plain exec with no context of its own, so there is no lever to pull
-// inside one. A nil Ctx (every caller but the loop) or a live, uncanceled one always returns nil:
-// zero behavior change unless a caller both sets Ctx AND cancels it.
+// inside one. A nil Ctx or a live, uncanceled one always returns nil: zero behavior change unless
+// a caller both sets Ctx AND cancels it.
 func ctxStep(ctx context.Context, step string) error {
 	if ctx == nil {
 		return nil
@@ -1755,7 +1756,8 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	// agent, ACP, loop, and fork — funnels through box.Run, so this one call covers
 	// them all. Gated like the network join below (on the services net, online, compose-capable
 	// runtime) plus COOP_AUTO_UP. Idempotent; progress goes to stderr (never stdout, which may
-	// carry ACP/JSON) and only when not Quiet; a failure warns but never blocks the session.
+	// carry ACP/JSON) and only when not Quiet. A failure warns and the session continues, except a
+	// loop's refused file and a review or controller stack, which stop the launch.
 	var servicePorts []ServicePort
 	serviceCtx := spec.Ctx
 	if serviceCtx == nil {

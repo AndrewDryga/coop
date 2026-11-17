@@ -38,7 +38,7 @@ type OrphanBox struct {
 // OrphanSurvey is one scan of the coop boxes a runtime can see, classified for a single workspace.
 type OrphanSurvey struct {
 	Checked      int         // every coop box seen, running or stopped
-	Orphans      []OrphanBox // in THIS workspace's scope AND provably dead: the only reapable boxes
+	Orphans      []OrphanBox // in THIS workspace's scope (or a session-service run's) AND provably dead: the only reapable boxes
 	Brokers      []OrphanBox // credential broker helpers orphaned the same way, with or without their box
 	Unattributed []string    // box ids coop cannot attribute (no supervisor label, or one it can't read)
 	// OtherHost lists this workspace's containers (boxes, their brokers and its runs' services) that
@@ -60,7 +60,9 @@ type OrphanSurvey struct {
 // supervisor's pid is gone, or that pid has been reused by a different process. Everything else is
 // left alone — a live supervisor, an identity the kernel won't confirm, a box from another workspace
 // or from another host or PID namespace sharing the runtime, and a box launched before this label
-// existed. Never age, never image, never name.
+// existed. Never age, never image, never name. The one exception to the workspace scope is a
+// session-service run's box or broker: its remote fork's workspace is often gone before any sweep,
+// so it is judged from any workspace, by the same proof.
 //
 // A broker is judged the same way, on its own label, because it can outlive its box: when its coop
 // is killed the box goes with --rm, while the native broker has no --rm and stays, stopped and
@@ -157,8 +159,8 @@ func surveyOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace, host 
 // the user started, so the line a launch prints counts boxes only.
 //
 // It removes by the orphan's own LabelHost value — the same exact-label reap `coop fork stop` uses
-// — so the removal can only ever reach containers that carry the dead supervisor's identity AND
-// this workspace's scope, even if the runtime's view changed since the survey.
+// — so the removal can only ever reach containers that carry the dead supervisor's identity, and
+// with it that supervisor's scope, even if the runtime's view changed since the survey.
 func ReapOrphanBoxes(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	survey, err := SurveyOrphanBoxes(ctx, rt, workspace)
 	if err != nil {
