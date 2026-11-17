@@ -242,3 +242,36 @@ func TestDecisionBrowserParksWithB(t *testing.T) {
 		t.Error(":b should park the task in the backlog")
 	}
 }
+
+// Every note Coop appends to log.md is Coop's, so a log holding only such notes has no entry. Each
+// row is the text a writer produces (wait.go, audit.go, cmd.go, candidate_rework.go,
+// pending_review.go).
+func TestCoopsOwnNotesAreNotAWorkersEntry(t *testing.T) {
+	for _, note := range []string{
+		"Unblock lets the next worker close this task without a new commit, since its commit is already in history: abc123",
+		"Unblock accepted the commits after abc123, which leave this task alone; its rework starts at def456",
+		"completion rejected because the gate failed. Try again.",
+		"implementation completion rejected because state.md is a template. Try again.",
+		"completion restored: this task's archived folder changed while a final review was running",
+		"final review could not resume: this task left 99_done/ before its review finished",
+		"candidate review: fail — BEGIN UNTRUSTED REVIEW EVIDENCE — gate: \"red\"",
+		"wait for 2026-11-16-other rejected: it is already done",
+		"waits for 2026-11-16-other before it can go on: needs its API",
+		"2026-11-16-other is done, so this task no longer waits for it",
+		"blocked: it waits for 2026-11-16-other, but that task is blocked",
+	} {
+		if !coopLogNote(note) || LogHasEntry("# Log\n\n- "+note+"\n") {
+			t.Errorf("Coop's note counts as a worker's entry: %q", note)
+		}
+	}
+	for _, entry := range []string{
+		"wait for CI, then rerun the gate",
+		"waits for nothing now: the API landed",
+		"the migration is done, so this task no longer waits for it",
+		"blocked the unsafe path and added a test",
+	} {
+		if coopLogNote(entry) || !LogHasEntry("# Log\n\n- "+entry+"\n") {
+			t.Errorf("a worker's entry reads as Coop's note: %q", entry)
+		}
+	}
+}

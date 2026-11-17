@@ -71,6 +71,16 @@ var (
 		"Previous decision before completion repair was exhausted:", "Closed with coop tasks done --force",
 		"Completed with coop tasks done --from-fork",
 		"a commit in task ", "loop stopped ",
+		"Unblock lets the next worker close this task", "Unblock accepted the commits after ",
+		"completion rejected because ", "implementation completion rejected because ",
+		"completion restored: ", "final review could not resume: ", "candidate review: fail",
+		"blocked: it waits for ",
+	}
+	// coopLogNotesAbout carry a task id between or before their fixed words.
+	coopLogNotesAbout = [][2]string{
+		{"wait for ", " rejected: "},
+		{"waits for ", " before it can go on: "},
+		{"", " is done, so this task no longer waits for it"},
 	}
 	coopLogNoteLines = []string{"Unblocked", "Blocked for a decision in decision.md"}
 	// coopLogHeadings head the entries Coop writes under a heading: a decision a new question
@@ -82,7 +92,21 @@ func coopLogNote(text string) bool {
 	if slices.Contains(coopLogNoteLines, text) {
 		return true
 	}
-	return slices.ContainsFunc(coopLogNotes, func(prefix string) bool { return strings.HasPrefix(text, prefix) })
+	if slices.ContainsFunc(coopLogNotes, func(prefix string) bool { return strings.HasPrefix(text, prefix) }) {
+		return true
+	}
+	return slices.ContainsFunc(coopLogNotesAbout, func(words [2]string) bool {
+		rest, ok := strings.CutPrefix(text, words[0])
+		if !ok {
+			return false
+		}
+		if words[0] == "" {
+			id, found := strings.CutSuffix(rest, words[1])
+			return found && id != "" && !strings.ContainsAny(id, " \t")
+		}
+		id, _, found := strings.Cut(rest, words[1])
+		return found && id != "" && !strings.ContainsAny(id, " \t")
+	})
 }
 
 // LogHasEntry reports whether a log.md holds an entry past Coop's template (its HTML comment and
