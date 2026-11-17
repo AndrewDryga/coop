@@ -113,7 +113,7 @@ func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func()
 				// This round-trip happens after exact agent absence. A guard that
 				// already terminated cannot produce the causal readiness reply.
 				if _, err := f.docker.ExecRead(ctx, guard, 4096, "/usr/local/bin/coop-net", "probe"); err == nil {
-					networkErr = errors.Join(networkErr, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+					networkErr = errors.Join(networkErr, f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 						return f.store.RecordObserverAfterWorkload(ctx, r.ID, r.Revision)
 					}))
 				}
@@ -183,7 +183,7 @@ func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func()
 			volumes.Wait()
 			networkErr = errors.Join(networkErr, ipcErr, observationsErr)
 			ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-			networkErr = errors.Join(networkErr, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+			networkErr = errors.Join(networkErr, f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 				return evidence.CleanupArtifacts(ctx, r.ID, r.Revision)
 			}))
 			cancel()
@@ -204,7 +204,7 @@ func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func()
 	}
 	if !retainEvidence {
 		ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
-		result = errors.Join(result, f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+		result = errors.Join(result, f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 			return f.store.SealExecution(ctx, r.ID, r.Revision, workload)
 		}))
 		cancel()
@@ -256,7 +256,7 @@ func (f *filteredExecution) confirmGone(evidence *networkstate.Evidence, role st
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 	defer cancel()
-	_ = f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+	_ = f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name)
 	})
 }
@@ -347,7 +347,7 @@ func (f *filteredExecution) removeResource(evidence *networkstate.Evidence, role
 			return err
 		}
 	}
-	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+	return f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 		return evidence.ConfirmResourceGone(ctx, r.ID, r.Revision, r.DaemonID, role, ref.Name)
 	})
 }

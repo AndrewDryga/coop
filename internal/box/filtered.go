@@ -575,7 +575,7 @@ func (f *filteredExecution) createRef(role string) runtime.DockerRef {
 
 // Reread before each CAS: a failed rename/fsync may have published the previous
 // revision. No runtime operation happens while the registry lock is held.
-func (f *filteredExecution) update(ctx context.Context, change func(networkstate.Execution) (networkstate.Execution, error)) error {
+func (f *filteredExecution) update(change func(networkstate.Execution) (networkstate.Execution, error)) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	current, err := f.store.Execution(f.record.ID)
@@ -591,7 +591,7 @@ func (f *filteredExecution) update(ctx context.Context, change func(networkstate
 }
 
 func (f *filteredExecution) accept(ctx context.Context, snapshot networkview.Snapshot) error {
-	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+	return f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 		return f.store.AcceptSnapshot(ctx, r.ID, r.Revision, snapshot)
 	})
 }

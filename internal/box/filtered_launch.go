@@ -100,7 +100,7 @@ func (f *filteredExecution) markUnfinished(role string) error {
 	// The create's own context has usually run out by now.
 	ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 	defer cancel()
-	return f.update(ctx, func(r networkstate.Execution) (networkstate.Execution, error) {
+	return f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 		return f.store.RecordUnfinishedCreate(ctx, r.ID, r.Revision, role, time.Now())
 	})
 }
@@ -471,7 +471,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 		f.mu.Lock()
 		f.mainStarted = true
 		f.mu.Unlock()
-		return f.update(run, func(r networkstate.Execution) (networkstate.Execution, error) {
+		return f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 			return f.store.RecordWorkloadStarted(run, r.ID, r.Revision)
 		})
 	})
@@ -622,7 +622,7 @@ func (f *filteredExecution) reconcileTopology(ctx context.Context) error {
 	// refuses.
 	record, stop := context.WithTimeout(context.WithoutCancel(ctx), filteredTopologyTimeout)
 	defer stop()
-	_ = f.update(record, func(r networkstate.Execution) (networkstate.Execution, error) {
+	_ = f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 		return f.store.RecordProtected(record, r.ID, r.Revision, grown)
 	})
 	return nil

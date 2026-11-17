@@ -340,9 +340,6 @@ func (f *filteredExecution) validateMountsContext(ctx context.Context, options, 
 	if err := f.store.CheckExposure(directoryRoots); err != nil {
 		return err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
 	defer cancel()
 	if err := f.checkNamedVolumeExposure(ctx, volumes); err != nil {
