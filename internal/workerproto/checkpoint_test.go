@@ -40,7 +40,16 @@ func TestWorkspaceCheckpointRejectsUnknownUnboundedOrInconsistentState(t *testin
 
 	cases := map[string]func(map[string]any){
 		"unknown field": func(value map[string]any) { value["worker_path"] = "/private/workspace" },
-		"wrong version": func(value map[string]any) { value["version"] = float64(2) },
+		// The bundle carries the current media type, so only the version check can refuse these.
+		"unknown version": func(value map[string]any) {
+			value["version"] = float64(3)
+			value["bundle"].(map[string]any)["media_type"] = WorkspaceCheckpointBundleMediaType
+		},
+		"zero version": func(value map[string]any) {
+			value["version"] = float64(0)
+			value["bundle"].(map[string]any)["media_type"] = WorkspaceCheckpointBundleMediaType
+		},
+		"v1 media type at version 2": func(value map[string]any) { value["version"] = float64(2) },
 		"oversized bundle": func(value map[string]any) {
 			value["bundle"].(map[string]any)["byte_size"] = float64(MaxWorkspaceCheckpointBundleBytes + 1)
 		},
