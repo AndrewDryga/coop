@@ -1096,7 +1096,7 @@ func tasksFolderMoveWith(root string, args []string, newState, verb, pastVerb st
 		noteLandedFork(landed)
 		WarnTaskBulk(root, dir)
 	default:
-		ui.OK("%s %s", pastVerb, t.ID)
+		ui.OK("%s %s", pastVerb, ui.SafeInline(t.ID))
 	}
 	return 0, nil
 }
@@ -1157,7 +1157,7 @@ func printClaimResult(t Item, actor ClaimActor, note string) {
 	if note != "" {
 		ui.Note("  %s", note)
 	}
-	ui.Note("  %s", t.ID)
+	ui.Note("  %s", ui.SafeInline(t.ID))
 }
 
 // tasksFolderRelease is the explicit hand-back for a claim (the counterpart to claim): it returns
@@ -1426,7 +1426,7 @@ func tasksFolderPark(root string, args []string) (int, error) {
 	} else {
 		ui.Note("\n  It's in the backlog now.")
 	}
-	ui.Note("  Bring it back: coop backlog promote %s", t.ID)
+	ui.Note("  Bring it back: coop backlog promote %s", ui.SafeInline(t.ID))
 	return 0, nil
 }
 
@@ -3028,7 +3028,7 @@ func printTaskTree(root, heading string, items []Item, waits queueIndex, all boo
 			if m := listMarkers(p, t, waits); m != "" {
 				fmt.Printf("    %s\n", m)
 			}
-			fmt.Printf("    %s\n", p.Link(fileURI(t.Dir), p.Faint(t.ID)))
+			fmt.Printf("    %s\n", p.Link(fileURI(t.Dir), p.Faint(ui.SafeInline(t.ID))))
 		}
 		if capped {
 			fmt.Printf("  %s\n", p.Dim(fmt.Sprintf("Showing %d of %d completed tasks. See all: coop tasks ls --done --all", doneListCap, total)))
@@ -3177,7 +3177,7 @@ func listMarkers(p ui.Palette, t Item, waits queueIndex) string {
 		parts = append(parts, prog)
 	}
 	if answeredDecision(t) {
-		parts = append(parts, p.Yellow("Answered · finish it: coop tasks unblock "+t.ID))
+		parts = append(parts, p.Yellow("Answered · finish it: coop tasks unblock "+ui.SafeInline(t.ID)))
 	} else if t.State == StateBlocked {
 		parts = append(parts, p.Red("Needs your answer"))
 	}
@@ -3270,7 +3270,7 @@ func queueDecisions(project, root string, interactive bool, merges []readyMerge)
 	}
 	fmt.Printf("%s%s\n", p.Bold("Questions waiting for your answer"), p.Dim(fmt.Sprintf(" · %d", len(decisions))))
 	for _, t := range decisions {
-		decisionID := t.ID // the handle unblock takes, then the fork that asked
+		decisionID := ui.SafeInline(t.ID) // the handle unblock takes, then the fork that asked
 		if fork := taskForkName(root, t); fork != "" {
 			decisionID += " · in fork " + fork
 		}
@@ -3336,7 +3336,7 @@ func printAnsweredDecisions(p ui.Palette, answered []Item, gap bool) {
 		answer, _ := recordedAnswer(filepath.Join(t.Dir, "decision.md"))
 		fmt.Printf("\n  %s\n", sanitizeCell(t.Title))
 		fmt.Printf("    %s %s\n", p.Dim("Answer:"), sanitizeCell(answer))
-		fmt.Printf("    Finish it: coop tasks unblock %s\n", t.ID)
+		fmt.Printf("    Finish it: coop tasks unblock %s\n", ui.SafeInline(t.ID))
 	}
 }
 

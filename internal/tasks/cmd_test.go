@@ -2315,3 +2315,23 @@ func readFileString(path string) string {
 	}
 	return string(data)
 }
+
+// A box names task folders, so a name never reaches the terminal as written: the listing and the
+// decisions list escape it the way refusals and lint do.
+func TestListingsEscapeATaskFolderName(t *testing.T) {
+	root := t.TempDir()
+	id := "fix\x1b[2Jlogin"
+	writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# Fix login\n")
+	writeTaskFile(t, filepath.Join(root, StateBlocked, id+"-b", "task.md"), "# Pick storage\n")
+	writeTaskFile(t, filepath.Join(root, StateBlocked, id+"-b", "decision.md"), "# Decision: Which store?\n\n**Recommendation:** SQLite\n")
+	list := captureStdout(t, func() { _, _ = tasksFolderList(root, false) })
+	decisions := captureStdout(t, func() { _, _ = tasksFolderDecisions("", root, nil) })
+	for name, out := range map[string]string{"tasks ls": list, "tasks decisions": decisions} {
+		if !strings.Contains(out, "login") {
+			t.Fatalf("%s did not list the task:\n%q", name, out)
+		}
+		if strings.Contains(out, "\x1b[2J") {
+			t.Errorf("%s printed the folder name's control sequence:\n%q", name, out)
+		}
+	}
+}
