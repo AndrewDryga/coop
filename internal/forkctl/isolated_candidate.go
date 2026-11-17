@@ -152,11 +152,11 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 	if err = forkspace.CheckoutIndependent(ctx, dir, branch, "candidate"); err != nil {
 		return isolatedCandidate{}, err
 	}
-	args := []string{}
+	args := []string{"rebase", "--onto", parent.Head, base, "candidate"}
 	if sign {
-		args = append(args, forkspace.TrustedSignArgs()...)
+		// -f: a pick whose parent is already HEAD is otherwise kept as it was, unsigned.
+		args = append(forkspace.TrustedSignArgs(), "rebase", "-f", "--gpg-sign", "--onto", parent.Head, base, "candidate")
 	}
-	args = append(args, "rebase", "--onto", parent.Head, base, "candidate")
 	command, commandErr := forkspace.GitCommandWithEnv(ctx, dir, forkspace.IndependentGitEnv(), args...)
 	if commandErr != nil {
 		return isolatedCandidate{}, commandErr

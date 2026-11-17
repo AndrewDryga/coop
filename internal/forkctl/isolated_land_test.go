@@ -619,6 +619,31 @@ func TestIsolatedPrivateRebaseFailureGivesSafeSourceGuidance(t *testing.T) {
 	}
 }
 
+// With the parent unmoved, a plain rebase keeps every source commit as it is, so signing must
+// force the rewrite: otherwise the box's unsigned commits land on a signing person's branch.
+func TestIsolatedPublicationSignsCommitsWhenTheParentHasNotMoved(t *testing.T) {
+	repo, ws, identity, c := isolatedTestFork(t)
+	isolatedTestCommit(t, ws, "new.txt", "incoming\n")
+	signer := filepath.Join(t.TempDir(), "fake-gpg")
+	script := "#!/bin/sh\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 0\\n' >&2\n" +
+		"printf -- '-----BEGIN PGP SIGNATURE-----\\nfake\\n-----END PGP SIGNATURE-----\\n'\n"
+	if err := os.WriteFile(signer, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "config", "--global", "commit.gpgsign", "true")
+	git(t, repo, "config", "--global", "gpg.program", signer)
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); err != nil || !landed {
+		t.Fatalf("signed publication = %v, %v", landed, err)
+	}
+	commit, err := observed(repo, "cat-file", "commit", "HEAD")
+	if err != nil || !strings.Contains(commit, "gpgsig ") {
+		t.Fatalf("the published commit is not signed (%v):\n%s", err, commit)
+	}
+	if !isolatedSourcePublished(repo, ws, identity) {
+		t.Fatal("the signed publication is not recorded as the source's publication")
+	}
+}
+
 func TestIsolatedPublicationPreservesNativeCRLFCheckout(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		t.Run(fmt.Sprint("existing=", existing), func(t *testing.T) {
