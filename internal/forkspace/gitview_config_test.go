@@ -145,8 +145,25 @@ func TestGitViewProjectsAChangedConfigForTheNextCommand(t *testing.T) {
 	if got := remotes(); got != "" {
 		t.Fatalf("remotes = %q, want none", got)
 	}
+	view, _, err := openGitView(t.Context(), repo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewConfig := func() os.FileInfo {
+		t.Helper()
+		info, err := os.Lstat(filepath.Join(view.dir, "config"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	before := viewConfig()
 	if got := remotes(); got != "" {
 		t.Fatalf("remotes from the unchanged config = %q, want none", got)
+	}
+	// An unchanged projection is not written again: each write is an fsync before a command.
+	if !os.SameFile(before, viewConfig()) {
+		t.Fatal("the unchanged view config was rewritten")
 	}
 	run("remote", "add", "upstream", "https://example.invalid/repo.git")
 	if got := remotes(); got != "upstream" {

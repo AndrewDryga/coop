@@ -732,13 +732,28 @@ func (v *gitView) refresh(ctx context.Context) error {
 		}
 		v.configSource, v.config, v.projected = source, config, true
 	}
-	if err := config.WriteFileAtomic(filepath.Join(v.dir, "config"), v.config); err != nil {
-		return err
+	// Written only when the view's file differs: another process sharing the view may have left
+	// its own projection, and an unchanged write would cost an fsync before every command.
+	viewConfig := filepath.Join(v.dir, "config")
+	if !viewFileHolds(viewConfig, v.config) {
+		if err := config.WriteFileAtomic(viewConfig, v.config); err != nil {
+			return err
+		}
 	}
 	if v.operationInFlight() {
 		return nil
 	}
 	return v.reconcileHead()
+}
+
+// viewFileHolds reports whether path is a regular file, not a link, holding exactly data.
+func viewFileHolds(path string, data []byte) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(data)) {
+		return false
+	}
+	current, _, err := readGitMetadata(path, int64(len(data)))
+	return err == nil && bytes.Equal(current, data)
 }
 
 // reconcileHead keeps the view's HEAD and the real one the same file's worth of truth. They
