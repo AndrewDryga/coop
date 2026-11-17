@@ -2,7 +2,9 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
+	"io/fs"
 	"strings"
 	"syscall"
 	"testing"
@@ -45,7 +47,8 @@ func TestApprovedSessionCompactFailures(t *testing.T) {
 		{"72-compact-active-service", sessionsvc.CompactionResult{},
 			errors.New("another session daemon owns this state root")},
 		{"72-compact-existing-backup", sessionsvc.CompactionResult{},
-			errors.New(backup + " already exists.")},
+			// What backupSQLiteDatabase returns: its O_EXCL open's error, wrapped.
+			fmt.Errorf("create new session backup: %w", &fs.PathError{Op: "open", Path: backup, Err: syscall.EEXIST})},
 		{"72-compact-backup-inside-state", sessionsvc.CompactionResult{}, sessionsvc.ErrBackupInsideState},
 		{"72-compact-unfinished", retained,
 			errors.Join(sessionsvc.ErrCompactionUnfinished, errors.New("database or disk is full"))},

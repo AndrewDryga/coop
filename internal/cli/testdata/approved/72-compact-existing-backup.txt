@@ -1,6 +1,7 @@
 
 ✗ Could not compact session data
 
-      /path/to/session-backup.sqlite already exists.
+      The backup file already exists.
+      create new session backup: open /path/to/session-backup.sqlite: file exists
 
   Choose a new backup path.

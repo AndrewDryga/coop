@@ -354,9 +354,6 @@ func sessionCompactFailure(result sessionsvc.CompactionResult, err error) error 
 		return ui.CommandFailed("Could not compact session data",
 			"The session service is using this data directory.",
 			[2]string{"", "Stop the service, then run the command again."})
-	case strings.Contains(detail, "already exists"):
-		return ui.CommandFailed("Could not compact session data", detail,
-			[2]string{"", "Choose a new backup path."})
 	case errors.Is(err, fs.ErrExist):
 		return ui.CommandFailed("Could not compact session data", "The backup file already exists.\n"+detail,
 			[2]string{"", "Choose a new backup path."})
