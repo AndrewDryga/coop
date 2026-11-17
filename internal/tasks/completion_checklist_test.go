@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -88,6 +89,42 @@ func TestDoneRefusalShowsOpenItemsAndWhereToTickThem(t *testing.T) {
 	}
 }
 
+// Loop start names a second binding only where it can still cost a review: a task that will still
+// complete, a done task a pending review may reopen, and a done task bound after one (its reopen
+// replays that history). Old archived history, which nothing reopens, stays quiet.
+func TestExtraBindingsNamesOnlyTasksAReviewCanReach(t *testing.T) {
+	repo, git := gitRepo(t)
+	bind := func(id string) { git("commit", "-q", "--allow-empty", "-m", "Work\n\nCoop-Task: "+id) }
+	bind("archived")
+	bind("archived")
+	bind("subject")
+	bind("bound-after")
+	bind("bound-after")
+	bind("doing")
+	bind("doing")
+	snapshot := map[string]string{
+		"archived": StateDone, "subject": StateDone, "bound-after": StateDone, "doing": StateInProgress,
+	}
+	ids := func(subjects ...string) []string {
+		var out []string
+		for _, e := range ExtraBindings(repo, snapshot, subjects) {
+			out = append(out, e.TaskID)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		subjects, want []string
+	}{
+		{nil, []string{"doing"}},
+		{[]string{"subject"}, []string{"bound-after", "doing"}},
+		{[]string{"archived"}, []string{"archived", "bound-after", "doing"}},
+	} {
+		if got := ids(c.subjects...); !slices.Equal(got, c.want) {
+			t.Errorf("review subjects %v: listed %v, want %v", c.subjects, got, c.want)
+		}
+	}
+}
+
 // A follow-up commit carrying the task's own trailer is refused when the task is closed, not later,
 // when a final review's reopen of it (or of an older task) fails on the second binding. Dropping the
 // follow-up's trailer lets the same close through, and the loop's startup names the task too.
@@ -104,9 +141,12 @@ func TestDoneRefusesASecondBinding(t *testing.T) {
 	taskWithCompletedChecklist(t, root, StateInProgress, "bound-once")
 	git("commit", "-q", "--allow-empty", "-m", "Other work\n\nCoop-Task: bound-once")
 
-	extra, err := ExtraBindings(repo, []string{root})
-	if err != nil || len(extra) != 1 || extra[0].TaskID != id || extra[0].Found != 2 {
-		t.Fatalf("startup report = %+v, %v; want only %s with 2 commits", extra, err, id)
+	snapshot, err := QueueSnapshot([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extra := ExtraBindings(repo, snapshot, nil); len(extra) != 1 || extra[0].TaskID != id || extra[0].Found != 2 {
+		t.Fatalf("startup report = %+v; want only %s with 2 commits", extra, id)
 	}
 	code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo})
 	var usage *ui.UsageError

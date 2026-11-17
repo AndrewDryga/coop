@@ -673,7 +673,8 @@ func TestAuditReworkRejectionNamesAForgedBinding(t *testing.T) {
 }
 
 // The loop names a task with a second binding when it starts, before any review: a final review
-// cannot reopen that task, so its verdict would be lost.
+// cannot reopen that task, so its verdict would be lost. An archived task with two old bindings and
+// no review that can reach it is not named: nothing can fix published history.
 func TestLoopStartNamesATaskWithTwoBindings(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
@@ -682,11 +683,14 @@ func TestLoopStartNamesATaskWithTwoBindings(t *testing.T) {
 	writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
 	git("add", ".gitignore")
 	git("commit", "-m", "base")
+	git("commit", "--allow-empty", "-m", "Old work\n\nCoop-Task: archived")
+	git("commit", "--allow-empty", "-m", "Old follow up\n\nCoop-Task: archived")
 	git("commit", "--allow-empty", "-m", "Ship it\n\nCoop-Task: shipped")
 	first := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
 	git("commit", "--allow-empty", "-m", "Follow up\n\nCoop-Task: shipped")
 	second := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
-	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateDone, "shipped", "task.md"), "# Shipped\n- [x] verified\n")
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateDone, "archived", "task.md"), "# Archived\n- [x] verified\n")
+	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "shipped", "task.md"), "# Shipped\n- [ ] more\n")
 	writeTaskFile(t, filepath.Join(repo, tasksRoot, stateTodo, "next", "task.md"), "# Next\n- [ ] work\n")
 	cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
 	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
@@ -705,6 +709,9 @@ func TestLoopStartNamesATaskWithTwoBindings(t *testing.T) {
 		if !strings.Contains(flat, want) {
 			t.Errorf("startup omitted %q:\n%s", want, output)
 		}
+	}
+	if strings.Contains(flat, "Task archived") {
+		t.Errorf("startup named an archived task no review can reach:\n%s", output)
 	}
 }
 

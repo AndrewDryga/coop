@@ -618,30 +618,53 @@ func extraBindings(repo, id string, shas []string) *ExtraBindingsError {
 	return &ExtraBindingsError{TaskID: id, Found: len(shas), Commits: describeTaskCommits(repo, shas)}
 }
 
-// ExtraBindings lists, sorted, the queued tasks with more than one commit reachable from HEAD
-// carrying their Coop-Task trailer — the refusal each would get at completion. The loop names them
-// before a final review spends a run on a verdict the host could not apply. A history Coop cannot
-// walk lists nothing here; the checks that need it fail closed on their own.
-func ExtraBindings(repo string, hosts []string) ([]*ExtraBindingsError, error) {
-	snapshot, err := QueueSnapshot(hosts)
-	if err != nil {
-		return nil, err
-	}
+// ExtraBindings lists, sorted, the tasks with more than one commit reachable from HEAD carrying
+// their Coop-Task trailer whose second binding can still cost a final review: a task that will still
+// complete (any state but done), and a done task that a review may reopen (one of reviewSubjects) or
+// whose binding a subject's reopen would replay (one descending from a subject's commit, which
+// CaptureAuditReopen refuses on a second binding). An archived task with two old bindings is left
+// out: nothing reopens it, and published history cannot drop the trailer. The loop names them before
+// a final review spends a run on a verdict the host could not apply. A history Coop cannot walk lists
+// nothing here; the checks that need it fail closed on their own.
+func ExtraBindings(repo string, snapshot map[string]string, reviewSubjects []string) []*ExtraBindingsError {
 	head := forkspace.GitOut(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	if head == "" {
-		return nil, nil
+		return nil
 	}
 	bindings, ok := rawTaskBindings(repo, head)
 	if !ok {
-		return nil, nil
+		return nil
+	}
+	var subjectCommits []string
+	for _, id := range reviewSubjects {
+		subjectCommits = append(subjectCommits, bindings[id]...)
 	}
 	var extra []*ExtraBindingsError
 	for _, id := range slices.Sorted(maps.Keys(snapshot)) {
-		if shas := bindings[id]; len(shas) > 1 {
+		shas := bindings[id]
+		if len(shas) < 2 {
+			continue
+		}
+		if snapshot[id] != StateDone || slices.Contains(reviewSubjects, id) || descendsFromAny(repo, shas, subjectCommits) {
 			extra = append(extra, extraBindings(repo, id, shas))
 		}
 	}
-	return extra, nil
+	return extra
+}
+
+// descendsFromAny reports whether one of shas has one of the ancestors as a proper ancestor.
+func descendsFromAny(repo string, shas, ancestors []string) bool {
+	for _, ancestor := range ancestors {
+		for _, sha := range shas {
+			if sha == ancestor {
+				continue
+			}
+			if _, err := forkspace.GitOutErr(repo, "merge-base", "--is-ancestor", ancestor, sha); err == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // moveTrustedTaskFromDone invalidates completion evidence under the same task authority lock before
@@ -1214,17 +1237,13 @@ func crashCompletionCandidate(root string, task Item) bool {
 // handoff un-completing finished work — and nothing else surfaces it: the loop just re-picks the
 // task, and the resume recipe is only safe while the commit is still HEAD. Reporting it at startup
 // turns a silent trap into something a human can confirm or close. Sorted; read-only.
-func AlreadyCommittedInProgress(repo string, hosts []string) ([]struct {
+func AlreadyCommittedInProgress(repo string, snapshot map[string]string) []struct {
 	ID, Commit string
 	Depth      int
-}, error) {
+} {
 	var out []struct {
 		ID, Commit string
 		Depth      int
-	}
-	snapshot, err := QueueSnapshot(hosts)
-	if err != nil {
-		return nil, err
 	}
 	for id, st := range snapshot {
 		if st != StateInProgress {
@@ -1249,7 +1268,7 @@ func AlreadyCommittedInProgress(repo string, hosts []string) ([]struct {
 	}) int {
 		return strings.Compare(a.ID, b.ID)
 	})
-	return out, nil
+	return out
 }
 
 type semanticHistoryCommit struct {

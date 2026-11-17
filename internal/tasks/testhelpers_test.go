@@ -112,11 +112,11 @@ func mustAlreadyCommittedInProgress(t testing.TB, repo string, hosts []string) [
 	Depth      int
 } {
 	t.Helper()
-	items, err := AlreadyCommittedInProgress(repo, hosts)
+	snapshot, err := QueueSnapshot(hosts)
 	if err != nil {
-		t.Fatalf("AlreadyCommittedInProgress: %v", err)
+		t.Fatalf("QueueSnapshot: %v", err)
 	}
-	return items
+	return AlreadyCommittedInProgress(repo, snapshot)
 }
 
 func mustNonArchivedDuplicateTaskIDs(t testing.TB, hosts []string) []string {

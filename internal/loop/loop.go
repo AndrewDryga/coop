@@ -648,22 +648,19 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// An in_progress task whose commit is already in history means a previous run died between the
 	// commit and the folder move. Say so before working it: the resume recipe only stays safe while
 	// that commit is HEAD, and left unnoticed these sat in the queue for days.
-	committed, err := tasks.AlreadyCommittedInProgress(repo, hosts)
+	snapshot, err := tasks.QueueSnapshot(hosts)
 	if err != nil {
 		return 1, err
 	}
-	for _, t := range committed {
+	for _, t := range tasks.AlreadyCommittedInProgress(repo, snapshot) {
 		ui.Alert("This in-progress task already has a commit",
 			alreadyCommittedCause(taskTitle(hosts, t.ID), t.Commit),
 			[2]string{"Task:", "coop tasks path " + t.ID})
 	}
 	// A final review can reopen a task only while it has one binding, so a second one is named now,
-	// not after a review's verdict is lost to it.
-	extra, err := tasks.ExtraBindings(repo, hosts)
-	if err != nil {
-		return 1, err
-	}
-	for _, e := range extra {
+	// not after a review's verdict is lost to it. Archived work counts only where this run's review
+	// (pending, or imported below) can still reach it.
+	for _, e := range tasks.ExtraBindings(repo, snapshot, slices.Concat(pendingReview.IDs(), spec.ReviewTasks)) {
 		ui.Alert("This task has more than one commit", extraBindingsCause(e),
 			[2]string{"Task:", "coop tasks path " + e.TaskID})
 	}
