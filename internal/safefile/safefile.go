@@ -20,6 +20,10 @@ import (
 // OpenRoot pins a real directory at path. Callers that deliberately accept a symlink spelling for
 // the selected root must resolve that spelling first; descendants are always strict.
 func OpenRoot(path string) (*os.File, error) {
+	// A trailing "/" or "/." makes lstat and open resolve the last component even if it is a link.
+	if path != "" {
+		path = filepath.Clean(path)
+	}
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, err

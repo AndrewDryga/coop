@@ -58,8 +58,13 @@ func TestOpenRootRejectsLinkAndPinsDirectory(t *testing.T) {
 	if err := os.Symlink(original, alias); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenRoot(alias); err == nil {
-		t.Fatal("symlink root was accepted")
+	// A trailing slash or "/." makes lstat and open resolve the final link, so those spellings
+	// must be refused as the link itself is.
+	for _, spelling := range []string{alias, alias + "/", alias + "/."} {
+		if root, err := OpenRoot(spelling); err == nil {
+			_ = root.Close()
+			t.Fatalf("symlink root %q was accepted", spelling)
+		}
 	}
 	root, err := OpenRoot(original)
 	if err != nil {
