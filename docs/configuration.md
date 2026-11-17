@@ -85,7 +85,7 @@ working, that answer is lost and needs a retry.
 | Variable | Default | What it does |
 |---|---|---|
 | `COOP_GATE` | unset | The check command, such as `make check`, that runs in the box during a local fork merge or during review with `--gate`. Controller-job reviews use the check in the submitted job instead. |
-| `COOP_EDITOR` | detected | The editor for `coop fork review --open`. |
+| `COOP_EDITOR` | detected | The editor for `coop fork open` and `coop fork review --open`. |
 | `COOP_REVIEW_CMD` | unset | A full override for `coop fork review`, run with `sh -c`. |
 | `COOP_TASKS` | derived | The task queue directories for `coop tasks` and the loop, separated by spaces. Each must be inside the project. If unset, co:op uses the queues listed in `.agent/project.yaml` for a [monorepo](loop.md#monorepos), or `.agent/tasks` otherwise. For one run, `--tasks` replaces this choice and doesn't add to it. |
 | `COOP_CAFFEINATE` | `1` | On a Mac, uses `caffeinate` to prevent idle sleep while the loop runs. `0` or `false` turns it off. |
@@ -141,8 +141,9 @@ Records that belong to one machine, such as each run's generated files, image re
 caches, ACP traces, network approvals and Git views, live in `$XDG_STATE_HOME/coop`, or in
 `~/.local/state/coop` when `XDG_STATE_HOME` isn't set. They never need syncing. Of an account, only
 `agents/<agent>/credentials/<account>/authority.json` needs to sync. Its other files are journals and
-locks for one machine. With Dropbox, put these rules in `rules.dropboxignore` at the Dropbox root, and
-`coop doctor` notes that the folder syncs by them.
+locks for one machine. With Dropbox, write rules in `rules.dropboxignore` at the Dropbox root that
+keep those files on each machine and let `authority.json` sync. `coop doctor` notes when that file
+has rules for the folder, but it doesn't check them.
 
 Some records stay in `~/.local/state/coop` whatever `XDG_STATE_HOME` says. Every co:op process on
 this machine has to find the same ones, including a process your editor starts without your shell's
@@ -271,5 +272,6 @@ views are:
 - `coop tasks watch --json` is the standard snapshot of the project's tasks and activity.
 - `coop fork ls --json` lists workspace URLs and fork status.
 
-`coop context`, the `coop net` views and `coop sessions doctor` also accept `--json`.
+`coop context`, the `coop net` views, `coop sessions doctor` and `coop sessions quiescence` also accept
+`--json`.
 `coop net export` always writes JSON.
