@@ -21,6 +21,6 @@ type Host struct {
 	// AccountsFor lists an agent's signed-in accounts in rotation order (internal/cli/rotation.go).
 	AccountsFor func(cfg *config.Config, agent string) []string
 	// WriteModelsCache persists a freshly-observed model list to the per-agent cache `coop models`
-	// reads (internal/cli/modelscache.go). Best-effort — the control ignores its error, same as today.
+	// reads (internal/cli/modelscache.go). Best-effort — the control ignores its error.
 	WriteModelsCache func(cfg *config.Config, agent string, models []agents.Model) error
 }

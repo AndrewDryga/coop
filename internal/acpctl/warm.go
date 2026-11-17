@@ -10,7 +10,7 @@ import (
 // swaps to a hot adapter (paying only the proxy's replay) instead of cold-booting a container + node
 // adapter (~5s). It lives entirely behind cmdACPSupervise's factory: the factory checks it out for a
 // plain provider switch and cold-spawns otherwise, so the acpproxy contract is untouched and a miss
-// degrades to today's behavior. `spawn` is injected — the real one execs a `coop acp` inner for the
+// falls back to a cold spawn. `spawn` is injected — the real one execs a `coop acp` inner for the
 // provider's default target; tests pass a fake.
 //
 // The pool owns boxes, not the mutex: Child.Stop and Child.SetActive are injected callbacks that

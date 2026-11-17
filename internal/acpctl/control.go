@@ -76,7 +76,7 @@ type Control struct {
 	cfg             *config.Config              // for expanding a selected preset's model ladder into rotation targets
 	onInitialized   func()                      // deferred work to start once the editor has its initialize answer
 	onTurnEnd       func()                      // work to start whenever the last running turn ends
-	host            Host                        // injected seams (rotation/models-cache/wait policy) — internal/cli owns the real implementations
+	host            Host                        // injected seams (ladder expansion, accounts, models cache) — internal/cli owns the real implementations
 	repo            string                      // repo root, to load a preset selected from the toolbar
 	lead            string                      // the CURRENT lead agent — re-derived on a provider switch (see retarget)
 	model           string                      // coop's resolved model for the lead ("" → leave the adapter's default)

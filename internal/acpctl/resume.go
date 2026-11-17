@@ -10,9 +10,8 @@ import (
 
 // ResumeState is the whole handoff a `coop acp` supervisor carries across a SIGHUP re-exec: the
 // proxy's session state + the controller's selection. JSON-serialized to a 0600 temp file whose path
-// rides COOP_ACP_RESUME_STATE into the re-exec'd process. Moved from internal/cli/commands.go: it
-// has no app/box coupling of its own, and its two mover test files (resume_test.go) exercise it
-// directly.
+// rides COOP_ACP_RESUME_STATE into the re-exec'd process. It has no app/box coupling of its own,
+// so resume_test.go exercises it directly.
 type ResumeState struct {
 	Proxy acpproxy.Snapshot `json:"proxy"`
 	Ctrl  Snapshot          `json:"ctrl"`
