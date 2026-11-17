@@ -337,8 +337,9 @@ func gateBody(langs []string, exitCode string) string {
 func preCommitHook(langs []string) string {
 	return `#!/bin/bash
 # coop pre-commit gate — runs for every committer (agent or human) via
-# core.hooksPath=.githooks, so Codex/Gemini and a plain git commit can't bypass the format
-# check the way they bypass Claude-only hooks. Fast by design. Skip once: git commit --no-verify.
+# core.hooksPath=.githooks, so Codex and a plain git commit can't bypass the format check the
+# way they bypass Claude-only hooks (Gemini CLI turns hooks off for its own commands). Fast by
+# design. Skip once: git commit --no-verify.
 set -f          # the file lists below are word-split on purpose; don't also glob-expand a name
 IFS=$'\n'       # …and split only on newlines, so a staged filename with a space stays one path
 staged=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null) || exit 0

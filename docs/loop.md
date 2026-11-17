@@ -107,9 +107,10 @@ on, without holding other sessions open. `coop init` sets it up in new projects.
 an older co:op needs [a manual update](../MIGRATING.md#the-sweep-stop-hook-in-older-repos).
 
 `init` installs a fast commit check for Claude. For other committers, it installs a Git pre-commit
-check at `.githooks/pre-commit` and sets `core.hooksPath`, so the format check runs for everyone,
-including Codex, Gemini and a plain `git commit`. Git tracks the hook files, but `core.hooksPath`
-is local, so run `coop init` in each new clone to enable them there.
+check at `.githooks/pre-commit` and sets `core.hooksPath`, so the format check runs for Codex and a
+plain `git commit` too. Gemini CLI turns Git hooks off for its commands (below), so its commits skip
+it. Git tracks the hook files, but `core.hooksPath` is local, so run `coop init` in each new clone
+to enable them there.
 
 The tracked `.githooks/prepare-commit-msg` hook also calls co:op's box-attribution hook when that
 hook is mounted. On a normal host, the tracked hook does nothing.
