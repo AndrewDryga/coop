@@ -14,6 +14,13 @@ func TestEarliestMistakeIsTheOneNamed(t *testing.T) {
 		t.Errorf("eval run with nothing = %v, want the missing suite named before the timeout", err)
 	}
 	a := &app{cfg: &config.Config{}}
+	// A missing argument is named in words, as every other command names it.
+	if code, err := a.evalRun([]string{"core", "--timeout", "10m"}); code != 2 || err == nil || !strings.Contains(err.Error(), `Missing target or preset for "coop eval run"`) {
+		t.Errorf("eval run without a target = (%d, %v)", code, err)
+	}
+	if code, err := a.evalInit(nil); code != 2 || err == nil || !strings.Contains(err.Error(), `Missing folder for "coop eval init"`) {
+		t.Errorf("eval init without a folder = (%d, %v)", code, err)
+	}
 	if code, err := a.cmdACP([]string{"--nosuch"}); code != 2 || err == nil || !strings.Contains(err.Error(), `Unknown option "--nosuch"`) {
 		t.Errorf("acp --nosuch = (%d, %v), want an unknown option, not an unknown preset", code, err)
 	}

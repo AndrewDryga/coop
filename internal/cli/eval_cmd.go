@@ -129,11 +129,8 @@ func (a *app) evalRun(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
-	if suitePath == "" {
-		return 2, ui.MissingArgument("<suite>", "coop eval run", "coop eval run <suite> <target|preset>... --timeout 60m")
-	}
-	if len(positionals) == 0 {
-		return 2, ui.MissingArgument("<target|preset>", "coop eval run", "coop eval run "+suitePath+" <target|preset>... --timeout 60m")
+	if len(positionals) == 0 { // the parser already refused a missing suite
+		return 2, ui.MissingArgument("target or preset", "coop eval run", "coop eval run "+suitePath+" <target|preset>... --timeout 60m")
 	}
 	ctx, cancel := evalDeadline(started, opts.Timeout)
 	defer cancel()
@@ -567,7 +564,7 @@ func (a *app) evalInit(args []string) (int, error) {
 		}
 	}
 	if len(args) == 0 {
-		return 2, ui.MissingArgument("<dir>", "coop eval init", "coop eval init ./evals/my-suite")
+		return 2, ui.MissingArgument("folder", "coop eval init", "coop eval init ./evals/my-suite")
 	}
 	dir := args[0]
 	manifest := filepath.Join(dir, "suite.yaml")
