@@ -1645,6 +1645,27 @@ func TestChangedLifecycleScriptReadsScriptsAsNpmDoes(t *testing.T) {
 	}
 }
 
+// A batch fork whose commits landed but whose bookkeeping failed is reported as merged, not as a
+// fork that could not merge while it is also listed under "Merged:".
+func TestForkMergeAllReportsALandedForkWithUnfinishedRecordsAsMerged(t *testing.T) {
+	repo, _, _, identity, c := prepareForkTaskCandidateMode(t, "records", false, true, nil)
+	c.cfg.RepoOverride = repo
+	c.afterLandFastForward = func() error { return errors.New("injected failure after the branch moved") }
+	var code int
+	var err error
+	var stderr string
+	out := captureStdout(t, func() {
+		stderr = captureStderr(t, func() { code, err = c.forkMergeAll(repo, []string{identity.Name}, "", false, true) })
+	})
+	out += stderr
+	if code != 1 || err == nil {
+		t.Fatalf("ForkMerge(--all) = (%d, %v), want the bookkeeping failure", code, err)
+	}
+	if !strings.Contains(out, "Merged fork "+identity.Name+", but its records did not finish") || strings.Contains(out, "Could not merge fork") {
+		t.Fatalf("a landed fork was reported as not merged (%d, %v):\n%s", code, err, out)
+	}
+}
+
 // A case-insensitive disk opens .AGENT/tasks/… as the real queue and sub/PACKAGE.JSON as the file npm
 // reads, so PolicyScan judges those spellings as the real ones.
 func TestPolicyScanFoldsTheSpellingOfQueueAndPackagePaths(t *testing.T) {

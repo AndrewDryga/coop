@@ -1316,7 +1316,10 @@ func (c *Control) forkMergeAll(repo string, names []string, img string, force, y
 			// A refusal with a plain form of its own keeps it here, with what the batch did and left.
 			headline, cause := "Could not merge fork "+n, err.Error()
 			var rows [][2]string
-			if block := mergeRefusal(err); block != nil {
+			if result.landed {
+				// Its commits are in the branch; only the bookkeeping after them failed.
+				headline = "Merged fork " + n + ", but its records did not finish"
+			} else if block := mergeRefusal(err); block != nil {
 				headline, cause, rows = block.Headline, block.Cause, block.Rows
 			}
 			lines := []string{"Merged: " + mergedList(landed) + "."}
