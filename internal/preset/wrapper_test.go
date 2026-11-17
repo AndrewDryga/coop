@@ -491,6 +491,38 @@ func TestDelegateWrapperFallsBackInsideARunLedger(t *testing.T) {
 	}
 }
 
+// A call whose every target is skipped did no work, so it must not exit 0 as if it had.
+func TestDelegateWrapperFailsWhenNoUsableTargetIsLeft(t *testing.T) {
+	h := runLedgerHarness(t)
+	calls := filepath.Join(h.dir, "calls")
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=grok")
+	h.stub("grok", refusedLogin(t, "grok", "grok-rejected-login", calls))
+	if out, code := h.run("fast", "task"); code == 0 {
+		t.Fatalf("refused login on the only target = exit 0, want a failure:\n%s", out)
+	}
+	out, code := h.run("fast", "task")
+	if code == 0 || !strings.Contains(out, "no usable target left") {
+		t.Fatalf("second call with the only target quarantined = exit %d, want a failure naming no usable target:\n%s", code, out)
+	}
+	if strings.Contains(out, "finished on") {
+		t.Fatalf("a call that ran nothing reported a finish:\n%s", out)
+	}
+	if got, _ := os.ReadFile(calls); string(got) != "grok\n" {
+		t.Fatalf("calls = %q, want the quarantined target launched once", got)
+	}
+
+	h = runLedgerHarness(t)
+	h.env = append(h.env, "COOP_DELEGATE_FAST_TARGETS=codex grok")
+	h.stub("codex", "echo 'rate limit exceeded' >&2; exit 8")
+	h.stub("grok", refusedLogin(t, "grok", "grok-rejected-login", filepath.Join(h.dir, "calls")))
+	if out, code := h.run("fast", "task"); code == 0 {
+		t.Fatalf("rate limit then refused login = exit 0, want a failure:\n%s", out)
+	}
+	if out, code := h.run("fast", "task"); code == 0 || !strings.Contains(out, "no usable target left") {
+		t.Fatalf("rate limit then a quarantined target = exit %d, want a failure naming no usable target:\n%s", code, out)
+	}
+}
+
 func TestDelegateWrapperReportsAllUnmountedTargetsBeforeDispatch(t *testing.T) {
 	h := newDelegateHarness(t)
 	for index, entry := range h.env {

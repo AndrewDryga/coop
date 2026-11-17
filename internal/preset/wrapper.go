@@ -595,4 +595,7 @@ for target do
 	fi
 	echo "[coop-delegate $role: $target ${why#was } — trying fallback $((index + 1))/$total]" >&2
 done
+# Only a skipped last target ends the loop: nothing ran this call, so it must not read as done.
+echo "[coop-delegate $role: no usable target left — the remaining targets already failed permanently in this run]" >&2
+exit 1
 `
