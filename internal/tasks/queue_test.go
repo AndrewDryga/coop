@@ -165,12 +165,30 @@ func TestTaskQueues(t *testing.T) {
 
 func TestTasksQueuesRejectsArguments(t *testing.T) {
 	cfg := &config.Config{RepoOverride: t.TempDir(), TasksFiles: []string{".agent/tasks"}}
-	for _, args := range [][]string{{"queues", "extra"}, {"queues", "--bogus"}} {
+	for _, args := range [][]string{{"queues", "extra"}, {"queues", "--bogus"}, {"queues", "--held", "extra"}, {"queues", "--held", "--held"}} {
 		code, err := CmdTasks(Host{}, cfg, args)
 		var usage *ui.UsageError
 		if code != 2 || !errors.As(err, &usage) {
 			t.Errorf("CmdTasks(%v) = %d, %v; want usage error", args, code, err)
 		}
+	}
+	root := filepath.Join(cfg.RepoOverride, ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(root, StateInProgress, "free", "task.md"), "# Free\n")
+	leased := taskForLease(t, root, StateInProgress, "leased")
+	lease, _, err := TryTaskLease(root, leased, testLeaseOwner())
+	if err != nil || lease == nil {
+		t.Fatalf("lease = %v", err)
+	}
+	defer lease.Release()
+	var code int
+	out := captureStdout(t, func() { code, err = CmdTasks(Host{}, cfg, []string{"queues", "--held"}) })
+	// The same spelling `coop tasks queues` gives the queue, which is the one the guard compares.
+	want, err := filepath.EvalSymlinks(leased.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 || out != want+"\n" {
+		t.Fatalf("queues --held = %d, %q; want only %s", code, out, want)
 	}
 }
 

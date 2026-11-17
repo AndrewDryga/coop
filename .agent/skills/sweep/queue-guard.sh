@@ -2,13 +2,13 @@
 # Claude activates this hook only while /sweep is active. Queue state is authoritative on every
 # Stop attempt: the model can release itself by finishing or blocking each actionable task.
 #
-# Actionable means: every folder in 00_todo/, and every folder in 10_in_progress/ EXCEPT one whose
-# claim names another agent's live process. A claim is bound to the claiming agent's pid
-# (`coop tasks claim`; `coop tasks ls` prints "claimed by codex (PID N)"), and the loop never adopts a
-# task whose claimant is alive — so neither may a sweep finish it (it would overwrite that agent's
-# uncommitted work) nor block it (it would park someone else's in-flight task). A dead claimant, an
-# unbound claim, or a claim held by this very agent (the pid sits in this hook's own ancestry) stays
-# actionable. Without `coop` on PATH the hook counts everything.
+# Actionable means: every folder in 00_todo/, and every folder in 10_in_progress/ EXCEPT one someone
+# else holds: a fork's assignment, a live lease (a running `coop loop`), or another agent's live
+# claim. `coop tasks queues --held` lists those folders. A sweep may neither finish such a task (it
+# would overwrite that work) nor block it (it would park someone else's in-flight task). A dead
+# claimant, an unbound claim, or a claim held by this very agent (coop finds its pid in its own
+# ancestry) stays actionable. Without `coop` on PATH, or when it cannot list held tasks, the hook
+# counts everything.
 
 queue_paths() {
   if command -v coop >/dev/null 2>&1; then
@@ -19,38 +19,18 @@ queue_paths() {
   find "$CLAUDE_PROJECT_DIR" -type d -path '*/.agent/tasks' -prune -print
 }
 
-# The pids above this hook: the sweeping agent and its parents. A claim held by one of them is ours.
-ancestry() {
-  p=$$
-  while [ "${p:-0}" -gt 1 ]; do
-    printf ' %s' "$p"
-    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
-    [ -n "$p" ] || break
-  done
-  printf ' '
-}
-
-# claimant_pids prints "<task id> <pid>" per in-progress task whose claim is process-bound, from
-# the one listing coop prints for every configured queue. A task prints its claim on the line above
-# its ID ("0/1 subtasks · claimed by codex (PID 123)"). A claim made on another system ("(PID 123 on
-# Linux)") names a PID this host cannot check, so it is left out and its task counts. Empty when
-# coop is unavailable.
-claimant_pids() {
+# held_tasks prints the in-progress task folders someone else holds, one per line. Empty when coop
+# is unavailable or cannot tell, so every task then counts.
+held_tasks() {
   command -v coop >/dev/null 2>&1 || return 0
-  listing=$(cd "$CLAUDE_PROJECT_DIR" && coop tasks ls --in-progress </dev/null 2>/dev/null) || return 0
-  printf '%s\n' "$listing" | awk '
-    match($0, /claimed by [^(]*\(PID [0-9]+\)/) {
-      pid = substr($0, RSTART, RLENGTH); sub(/.*\(PID /, "", pid); sub(/\)$/, "", pid); next
-    }
-    pid != "" { if (NF == 1) print $1, pid; pid = "" }'
+  (cd "$CLAUDE_PROJECT_DIR" && coop tasks queues --held </dev/null 2>/dev/null) || return 0
 }
 
 paths=$(queue_paths) || {
   echo "Sweep queue guard could not discover task queues; refusing to stop. Fix the reported error and retry." >&2
   exit 2
 }
-own=$(ancestry)
-claims=$(claimant_pids)
+held=$(held_tasks)
 left=0
 foreign=0
 while IFS= read -r q; do
@@ -72,11 +52,11 @@ while IFS= read -r q; do
     while IFS= read -r task; do
       [ -n "$task" ] || continue
       if [ "$state" = 10_in_progress ]; then
-        pid=$(printf '%s\n' "$claims" | awk -v id="$(basename "$task")" '$1 == id { print $2; exit }')
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ "${own#* "$pid" }" = "$own" ]; then
-          foreign=$((foreign + 1)) # another agent's live claim: not ours to finish or block
-          continue
-        fi
+        case $'\n'"$held"$'\n' in
+          *$'\n'"$task"$'\n'*)
+            foreign=$((foreign + 1)) # a fork, a running loop or another live agent holds it
+            continue ;;
+        esac
       fi
       left=$((left + 1))
     done <<< "$tasks"
@@ -84,7 +64,7 @@ while IFS= read -r q; do
 done <<< "$paths"
 if [ "${left:-0}" -gt 0 ]; then
   note=""
-  [ "$foreign" -gt 0 ] && note=" ($foreign in progress under another live agent's claim were left alone.)"
+  [ "$foreign" -gt 0 ] && note=" ($foreign in progress that a fork, a running loop or another live agent holds were left alone.)"
   echo "$left actionable task(s) remain in 00_todo or 10_in_progress across the repo's queues. Keep sweeping: finish or block every task before stopping.$note" >&2
   exit 2
 fi

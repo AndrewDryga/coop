@@ -4,7 +4,7 @@ description: "a shell guard checks every command's status and fails CLOSED on am
 scope: agent-workflow
 sources: [.agent/skills/sweep/queue-guard.sh, internal/scaffold/templates/skills/sweep/queue-guard.sh, internal/scaffold/queue_guard_test.go, internal/tasks/sweep_guard_test.go, .claude/hooks/commit-gate.sh, install.sh, install_test.go, Makefile]
 check: "go test ./internal/scaffold -run TestSweepQueueGuard"
-updated: 2026-11-08
+updated: 2026-11-17
 ---
 
 # A shell guard fails closed, and says which way it fails
@@ -52,6 +52,12 @@ Related: [[fix-the-bug-not-the-feature]] (a guard that keeps firing is fixed at 
 loosening it) and [[static-bounded-supervision]].
 
 ## Changelog
+- 2026-11-17 — the guard scraped the human `coop tasks ls` listing for claims, so a fork's task and a
+  running loop's lease still counted as actionable and held a sweep it could not satisfy. It now
+  reads `coop tasks queues --held`, which applies the ownership rules in Go (fork, live lease,
+  another live agent's claim; coop checks its own ancestry for the sweeping agent's claim). A coop
+  that cannot list held tasks leaves the list empty, so every task counts (still closed). The
+  listing test is now TestSweepQueueGuardReadsHeldTasks, beside TestHeldTaskFoldersApplyClaimsOwnershipRules.
 - 2026-11-07 — the sweep queue guard parsed claims with a pattern for an old `coop tasks ls` layout, so
   it counted every claimed task (it still failed closed, but held a sweep on another live agent's
   work). It now pairs each `claimed by X (PID N)` line with the ID below it. A claim from another system

@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/processidentity"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -384,16 +386,32 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 		return TasksWatch(host, repo, rels, jsonOutput)
 	}
 	if sub == "queues" {
-		if len(rest) > 1 {
-			if strings.HasPrefix(rest[1], "-") {
-				return 2, ui.UnknownOption(rest[1], "coop tasks queues", "")
+		extra := rest[1:]
+		held := len(extra) > 0 && extra[0] == "--held"
+		if held {
+			extra = extra[1:]
+		}
+		if len(extra) > 0 {
+			if strings.HasPrefix(extra[0], "-") {
+				return 2, unknownOptionErr(extra[0], "coop tasks queues", []string{"--held"})
 			}
-			return 2, ui.UnexpectedArgument(rest[1], "coop tasks queues", "coop tasks queues")
+			return 2, ui.UnexpectedArgument(extra[0], "coop tasks queues", "coop tasks queues [--held]")
+		}
+		var roots []string
+		for _, rel := range rels {
+			roots = append(roots, filepath.Join(repo, rel))
 		}
 		// Print each configured queue's absolute path, one per line — a stable primitive for scripts
-		// and the sweep queue guard, which counts actionable tasks across every queue.
-		for _, rel := range rels {
-			fmt.Println(filepath.Join(repo, rel))
+		// and the sweep queue guard, which counts actionable tasks across every queue. --held prints
+		// the in-progress task folders the guard must leave alone instead.
+		if held {
+			var err error
+			if roots, err = heldTaskFolders(roots, processAncestry()); err != nil {
+				return 1, err
+			}
+		}
+		for _, root := range roots {
+			fmt.Println(root)
 		}
 		return 0, nil
 	}
@@ -941,4 +959,50 @@ func noQueueConfigured(command string) error {
 			{"Help:", ui.HelpCommand(command)},
 		},
 	}
+}
+
+// heldTaskFolders lists the in-progress task folders in roots that someone else holds, for the
+// sweep queue guard (`coop tasks queues --held`): a fork's assignment, another live process's
+// claim, or a held lease. A claim by a process in own (this command's ancestry, so the agent the
+// guard runs for) is not held: that agent finishes or blocks its own task. A person's claim, a claim
+// whose process has stopped, and one made on another system (a pid this host cannot check) leave
+// the task to the sweep.
+func heldTaskFolders(roots []string, own []int) ([]string, error) {
+	var held []string
+	for _, root := range roots {
+		items, err := ReadTaskTree(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if item.State != StateInProgress {
+				continue
+			}
+			record, owned, err := ReadTaskOwnerRecord(root, item.ID)
+			if err != nil {
+				return nil, err
+			}
+			switch {
+			case owned && record.Kind == TaskOwnerFork:
+			case owned && record.Kind == TaskOwnerHuman && record.ActorPID != 0 && !claimantElsewhere(record) && ownerProcessLive(record):
+				if slices.Contains(own, record.ActorPID) {
+					continue
+				}
+			case observeTaskLease(item, time.Now()).State != leaseUnleased:
+			default:
+				continue
+			}
+			held = append(held, item.Dir)
+		}
+	}
+	return held, nil
+}
+
+// processAncestry is this process's parent chain, nearest first.
+func processAncestry() []int {
+	var pids []int
+	for pid := os.Getppid(); pid > 1 && len(pids) < 64; pid = processidentity.Parent(pid) {
+		pids = append(pids, pid)
+	}
+	return pids
 }

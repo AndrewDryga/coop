@@ -292,7 +292,8 @@ each member. Members share the root's AGENTS.md, `.agent/skills/`, `.agent/kb/` 
 can also commit its own `.agent/kb/rules/` when it needs additional rules.
 
 Use `coop tasks queues` when a script, such as the sweep queue guard, needs the resolved queue
-paths.
+paths. `coop tasks queues --held` prints the in-progress task folders a fork, a running loop or
+another live agent holds, which a sweep must leave alone.
 
 ## Parallel forks
 

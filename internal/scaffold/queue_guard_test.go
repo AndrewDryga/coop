@@ -76,7 +76,8 @@ func TestSweepQueueGuard(t *testing.T) {
 		}
 	}
 	called := filepath.Join(proj, "coop-called")
-	write(filepath.Join("bin", "coop"), "#!/bin/bash\nprintf called > \"$COOP_CALLED\"\n[ \"$1\" = tasks ] && [ \"$2\" = queues ] || exit 1\nprintf '%s\\n' \"$COOP_QUEUES\"\n")
+	write(filepath.Join("bin", "coop"), "#!/bin/bash\nprintf called > \"$COOP_CALLED\"\n[ \"$1\" = tasks ] && [ \"$2\" = queues ] || exit 1\n"+
+		"if [ \"$3\" = --held ]; then printf '%s' \"$COOP_HELD\"; else printf '%s\\n' \"$COOP_QUEUES\"; fi\n")
 
 	toolBin := filepath.Join(proj, "tools")
 	if err := os.MkdirAll(toolBin, 0o755); err != nil {
@@ -92,11 +93,12 @@ func TestSweepQueueGuard(t *testing.T) {
 		}
 	}
 
+	held := ""
 	run := func(t *testing.T, path, queues string) (int, string) {
 		t.Helper()
 		cmd := exec.Command("bash", filepath.Join(proj, "queue-guard.sh"))
 		cmd.Env = append(os.Environ(), "CLAUDE_PROJECT_DIR="+proj, "PATH="+path,
-			"COOP_CALLED="+called, "COOP_QUEUES="+queues)
+			"COOP_CALLED="+called, "COOP_QUEUES="+queues, "COOP_HELD="+held)
 		cmd.Stdin = strings.NewReader(`{"stop_hook_active":true}`)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -137,6 +139,34 @@ func TestSweepQueueGuard(t *testing.T) {
 			}
 		})
 	}
+
+	// A fork's assignment and a running loop's lease stay in 10_in_progress/, but the sweep can neither
+	// finish nor block them: coop lists them as held, and the guard leaves them alone.
+	t.Run("held in progress tasks", func(t *testing.T) {
+		forkOwned := filepath.Join(rootQueue, "10_in_progress", "fork-assigned")
+		leased := filepath.Join(serviceQueue, "10_in_progress", "loop-leased")
+		free := filepath.Join(rootQueue, "10_in_progress", "unowned")
+		for _, dir := range []string{forkOwned, leased, free} {
+			write(filepath.Join(strings.TrimPrefix(dir, proj+string(filepath.Separator)), "task.md"), "id: x\n")
+		}
+		held = forkOwned + "\n" + leased + "\n"
+		defer func() { held = "" }()
+		if code, stderr := run(t, hostPath, configured); code != 2 || !strings.Contains(stderr, "1 actionable task(s)") ||
+			!strings.Contains(stderr, "2 in progress that a fork, a running loop or another live agent holds") {
+			t.Errorf("exit=%d stderr=%q, want only the unowned task to hold the sweep", code, stderr)
+		}
+		if err := os.RemoveAll(free); err != nil {
+			t.Fatal(err)
+		}
+		if code, stderr := run(t, hostPath, configured); code != 0 {
+			t.Errorf("only held tasks left: exit=%d stderr=%q, want release", code, stderr)
+		}
+		for _, dir := range []string{forkOwned, leased} {
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
 
 	write(filepath.Join(".agent", "tasks", "00_todo", "x", "task.md"), "id: x\n")
 	write(filepath.Join("service", ".agent", "tasks", "10_in_progress", "y", "task.md"), "id: y\n")

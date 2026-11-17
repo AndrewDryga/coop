@@ -1210,12 +1210,16 @@ EXAMPLES
 
 	"tasks queues": `coop tasks queues: print task queue paths
 
-Usage: coop tasks queues [--tasks <path>]...
+Usage: coop tasks queues [--held] [--tasks <path>]...
 
   Prints one absolute path per line. By default, includes the project's queues.
 
+OPTIONS
+  --held  print in-progress tasks a fork, a loop or another agent holds
+
 EXAMPLES
-  coop tasks queues`,
+  coop tasks queues
+  coop tasks queues --held`,
 
 	"tasks decisions": `coop tasks decisions: show questions waiting for your answer
 
