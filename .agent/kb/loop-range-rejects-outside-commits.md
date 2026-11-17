@@ -2,8 +2,8 @@
 name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
-sources: [internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go]
-updated: 2026-11-06
+sources: [internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/forkctl/isolated_land.go, internal/tasks/lease.go, internal/tasks/completion.go, internal/config/private.go]
+updated: 2026-11-17
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -129,8 +129,8 @@ kill between the agent's commit and its folder move leaves the task in the state
 ## The worst source of a foreign commit is a second loop
 
 A human committing mid-iteration is the obvious case; the expensive one is **two `coop loop`
-processes sharing a checkout**. Each works a *different* task, so the per-task lease in
-`internal/tasks/completion.go` never fires — it only stops two loops claiming the SAME task. Both commit,
+processes sharing a checkout**. Each works a *different* task, so the per-task lease
+(`TryTaskLease`, `internal/tasks/lease.go`) never fires — it only stops two loops claiming the SAME task. Both commit,
 each one's range then contains the other's `Coop-Task` binding, and **both** completions are
 rejected. Observed 2026-08-03: `7769ead7` (10:21:41) and `33cb8a41` (10:27:05), two different
 tasks, both rejected and reopened after they were finished.
@@ -173,9 +173,10 @@ Because the box run itself is deliberately excluded, EVERY host-side path that m
 worktree's ref outside a box has to take this same lock, or it could land inside another controller's
 window and make it refuse work that was actually fine (coop tripping its own compare-and-swap):
 `signUnpushed`'s `update-ref` (the loop's per-cycle signing sweep, `coop sign`, and a `coop run`
-session's exit-time signing all funnel through it), `fastForwardParent`'s `merge --ff-only` (`coop
+session's exit-time signing all funnel through it), `(*Control).FastForwardParent`'s `merge --ff-only` (`coop
 fork merge` landing onto the parent — the fork's OWN rebase stays unlocked, since that happens in the
-fork's isolated worktree, a different lock key entirely), and the host-authorized completion of
+fork's isolated worktree, a different lock key entirely), the fork land's approved phase
+(`internal/forkctl/land.go`) and the isolated land (`internal/forkctl/isolated_land.go`), and the host-authorized completion of
 audit-reopened work reached via `coop tasks done` and fork-merge's queue reconciliation
 (`CompleteTrustedTask`'s reopened branch has the identical read-`HEAD`-then-consume-later shape as the
 loop's own completion, just driven by a human instead of a box). Like `lockLoopCheckout`, it is a
@@ -192,6 +193,7 @@ loop holds its iteration lease before entering the short ref window; host comple
 authority before attempting task-completion authority.
 
 ## Changelog
+- 2026-11-17 — real names: (*Control).FastForwardParent, TryTaskLease in lease.go; the land and isolated land paths take the ref-authority lock too; sources gain the files the card names (audit K3-6, K3-7; checked every LockRefAuthority caller).
 - 2026-11-06 — claim and unblock name a task's existing binding (task
   2026-11-06-catch-a-second-coop-task-binding-before-a-task-c).
 - 2026-11-06 — audit-rework attempts get the attempt binding scan; a review reopen no longer needs

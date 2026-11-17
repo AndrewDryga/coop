@@ -12,9 +12,9 @@ import (
 // LockRefAuthority makes the short validate→finalize→consume window exclusive PER WORKTREE: from the
 // moment a completion's HEAD is trusted through the moment task authority is actually consumed for
 // it (a receipt, an audit-reopen generation), nothing else may move that ref. An interactive `coop
-// run`, a host-side signing rewrite (signUnpushed), a fork land (fastForwardParent), a host-driven
-// completion of audit-reopened work (completeTrustedTask via `coop tasks done`), or a human commit
-// can move HEAD. Coop's own mutators take this same lock for their ref-touching moments, so Coop
+// run`, a host-side signing rewrite (signUnpushed), a fork land (FastForwardParent, the land and
+// isolated land paths), a host-driven completion of audit-reopened work (completeTrustedTask via
+// `coop tasks done`), or a human commit can move HEAD. Coop's own mutators take this same lock for their ref-touching moments, so Coop
 // cannot trigger its own refusal. It is keyed like lockLoopCheckout by resolved worktree path,
 // letting parallel forks remain independent (isolate the state, don't serialize the workers).
 func LockRefAuthority(cfg *config.Config, repo string) (func(), error) {

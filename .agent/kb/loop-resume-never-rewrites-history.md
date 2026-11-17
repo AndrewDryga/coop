@@ -22,7 +22,7 @@ observed twice in emisar on 2026-08-01:
    `Coop-Recovery` trailer.
 
 Step 4 is safe ONLY while that commit is still HEAD. Deeper it is a trap, which is why
-`resumePrefixFor` now gates the recipe on `boundTaskCommitIsHead`:
+`tasks.ResumePrefixFor` now gates the recipe on `boundTaskCommitIsHead`:
 
 - Amending a commit N back reparents all N descendants. At N=286 that rewrote the entire branch.
 - The rewrite can never pass anyway: every reparented descendant becomes "in range", and those carry
@@ -82,7 +82,7 @@ said — **"not started" for a task that had run ~13 hours**, while four modifie
 card sat uncommitted in the shared checkout.
 
 So `state.md` is a best-effort snapshot, never evidence: it is written by the very process that got
-killed. The tree is the evidence. `resumePrefixFor` now handles this case — no bound commit + a
+killed. The tree is the evidence. `tasks.ResumePrefixFor` now handles this case — no bound commit + a
 resumed (`10_in_progress`) task + a dirty tree yields `uncommittedResumeLine`, which names the
 changed paths and makes `git diff` the first step, explicitly telling the agent not to trust
 state.md over the tree and to commit only its own paths (never `git add -A`, since a shared checkout
@@ -145,6 +145,7 @@ checked nothing" would again diff to nothing. For the same reason a history that
 parent (a root commit, an unreadable log) leaves the variable unset rather than falling back to HEAD.
 
 ## Changelog
+- 2026-11-17 — the body names the exported tasks.ResumePrefixFor (audit K3-6; checked internal/tasks/audit.go).
 - 2026-11-17 — the drain default now lives in the box supervisor's `descendantTimeout`, not
   image.go's shell; sources repointed.
 - 2026-11-06 — only an answer given to `coop tasks unblock` spends the committed-block note, the
