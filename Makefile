@@ -247,17 +247,23 @@ check: export GOFLAGS := $(strip $(shell go env GOFLAGS) -trimpath)
 check: ## Full free gate: the static owner, then the test owners side by side (CI also runs check-unit)
 	@$(GATE_SLOT) $(MAKE) --no-print-directory full-gate
 
+# Each gate run logs into a folder of its own: two gates can run at once in one checkout (a host
+# agent and a loop box), and a shared folder let one truncate or delete the other's logs.
+# Folders older than a day are from finished runs, since a test owner times out long before that.
 full-gate: trim-gate-cache check-static
-	@rm -rf .agent/gate && mkdir -p .agent/gate && echo '== $(GATE_TEST_OWNERS) side by side; logs in .agent/gate'
-	@$(MAKE) --no-print-directory -j4 $(addprefix gate-,$(GATE_TEST_OWNERS))
+	@mkdir -p .agent/gate && find .agent/gate -mindepth 1 -maxdepth 1 -mmin +1440 -exec rm -rf {} + && \
+	run=$$(mktemp -d .agent/gate/run.XXXXXX) && echo "== $(GATE_TEST_OWNERS) side by side; logs in $$run" && \
+	$(MAKE) --no-print-directory -j4 GATE_LOGS="$$run" $(addprefix gate-,$(GATE_TEST_OWNERS))
 
 # One test owner of the local gate, its output in a log of its own, so owners running side by side
 # never interleave: a pass is one line, a failure is the log's tail.
+GATE_LOGS ?= .agent/gate
 gate-%: FORCE
-	@mkdir -p .agent/gate; start=$$(date +%s); if $(MAKE) --no-print-directory $* > .agent/gate/$*.log 2>&1; then \
-	  echo "elapsed $$(( $$(date +%s) - start )) s" >> .agent/gate/$*.log; echo 'ok   $*'; \
+	@mkdir -p "$(GATE_LOGS)"; log="$(GATE_LOGS)/$*.log"; start=$$(date +%s); \
+	if $(MAKE) --no-print-directory $* > "$$log" 2>&1; then \
+	  echo "elapsed $$(( $$(date +%s) - start )) s" >> "$$log"; echo 'ok   $*'; \
 	else \
-	  tail -n 60 .agent/gate/$*.log; echo 'FAIL $* (full log: .agent/gate/$*.log)'; exit 1; \
+	  tail -n 60 "$$log"; echo "FAIL $* (full log: $$log)"; exit 1; \
 	fi
 
 FORCE:

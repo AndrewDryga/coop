@@ -59,7 +59,8 @@ Run `make check` once, when your code change is complete, not after every small 
 continue while it runs, but a check that's still pending isn't a pass.
 
 `make check` runs the static owner first, then the test owners side by side, each writing its own
-log under `.agent/gate/`. A pass prints one line, and a failure prints the log's tail.
+log into that run's folder under `.agent/gate/`. A pass prints one line, and a failure prints the
+log's tail and path.
 
 Only two `make check` runs at once for the project and its forks: the gate holds a slot in
 `~/.cache`, which is the project's shared cache volume in a coop box. On the host it takes one of the
