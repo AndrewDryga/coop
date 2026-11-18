@@ -20,7 +20,7 @@ func TestClaudeFailureCauseNativeExample(t *testing.T) {
 	for _, width := range []int{0, 38, 80} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			var out, tail bytes.Buffer
-			d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+			d := newStreamDecoder(&out, &tail, "")
 			if width > 0 {
 				d.setDisplayWidth(func() int { return width })
 			}
@@ -60,7 +60,7 @@ func TestClaudeToolFailureDiagnostic(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out, tail, classification bytes.Buffer
-			d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+			d := newStreamDecoder(&out, &tail, "")
 			d.diagnostic = &classification
 			d.tool.set("tool", tc.label)
 			content, err := json.Marshal(tc.content)

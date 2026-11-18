@@ -18,7 +18,7 @@ func TestBashPurposeDisplay(t *testing.T) {
 		{"export MIX_ENV=dev", "export MIX_ENV=dev"},
 	} {
 		var out, tail bytes.Buffer
-		d := newStreamDecoder(&out, &tail, "claude", "", "")
+		d := newStreamDecoder(&out, &tail, "")
 		got := d.streamBashToolLine("export MIX_ENV=dev", tc.description)
 		if got != "⚙ Bash "+tc.want {
 			t.Errorf("description %q: %q, want %q", tc.description, got, tc.want)
@@ -34,7 +34,7 @@ func TestBashPurposeWidthsAndFailureIdentity(t *testing.T) {
 	for _, width := range []int{0, 20, 38, 40, 80, 120} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			var out, tail bytes.Buffer
-			d := newStreamDecoder(&out, &tail, "claude", "", "")
+			d := newStreamDecoder(&out, &tail, "")
 			if width > 0 {
 				d.setDisplayWidth(func() int { return width })
 			}
@@ -78,7 +78,7 @@ func TestBashPurposeWidthsAndFailureIdentity(t *testing.T) {
 func TestBashPurposePreservesSpecialLabels(t *testing.T) {
 	for _, command := range []string{"coop-consult thinker --fresh review", "coop-delegate fast task", "mkdir -p .agent/tasks/00_todo/2026-09-12-a-task"} {
 		var out, tail bytes.Buffer
-		d := newStreamDecoder(&out, &tail, "claude", "", "")
+		d := newStreamDecoder(&out, &tail, "")
 		input, _ := json.Marshal(toolInput{Command: command, Description: "DESCRIPTION_MUST_NOT_REPLACE_CLASSIFICATION"})
 		event := fmt.Sprintf("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"special\",\"name\":\"Bash\",\"input\":%s}]}}\n", input)
 		_, _ = d.Write([]byte(event))
@@ -91,7 +91,7 @@ func TestBashPurposePreservesSpecialLabels(t *testing.T) {
 
 func TestBashPurposeResizeAndSuccessfulResult(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "", "")
+	d := newStreamDecoder(&out, &tail, "")
 	width := 80
 	d.setDisplayWidth(func() int { return width })
 	input, _ := json.Marshal(toolInput{Command: "T=task/tmp; identify before.png after.png", Description: "Check screenshot dimensions"})

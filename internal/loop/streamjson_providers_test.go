@@ -112,7 +112,7 @@ func TestProviderAssistantNarrationNeverBecomesTerminalDiagnostic(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
 			var out, tail, diagnostic bytes.Buffer
-			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, &diagnostic, "", "", "", nil)
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, &diagnostic, "", "", nil)
 			_, _ = decoder.Write([]byte(tc.event + "\n"))
 			decoder.flush()
 			if !strings.Contains(tail.String(), tc.text) {
@@ -160,7 +160,7 @@ func TestProviderStreamLiveDisplayResamplesTerminalWidth(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model", nil)
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "model", nil)
 			width, samples := 180, 0
 			decoder.setDisplayWidth(func() int {
 				samples++
@@ -221,7 +221,7 @@ func TestProviderStreamRedirectedDisplayKeepsFallbackCaps(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.agent, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "", "model", nil)
+			decoder := newIterationStreamDecoder(tc.agent, &out, &tail, nil, "", "model", nil)
 			_, _ = decoder.Write([]byte(tc.toolEvent + "\n"))
 			if got := out.String(); strings.Contains(got, "tail-past-the-old-cap") || !strings.Contains(got, "…") {
 				t.Fatalf("redirected tool line did not keep its fixed fallback cap: %q", got)
@@ -264,7 +264,7 @@ func TestGrokLiveNarrationRemainsFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, tail bytes.Buffer
-	decoder := newIterationStreamDecoder("grok", &out, &tail, nil, "", "", "model", nil)
+	decoder := newIterationStreamDecoder("grok", &out, &tail, nil, "", "model", nil)
 	decoder.setDisplayWidth(func() int { return 32 })
 	_, _ = decoder.Write([]byte(`{"type":"text","data":` + quoted + `}` + "\n" + `{"type":"end","usage":{},"num_turns":1}` + "\n"))
 	decoder.flush()
@@ -285,13 +285,14 @@ func TestCodexStreamDecoder(t *testing.T) {
 		`not valid json`,
 	}
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "work", "/repo", "gpt-5.6")
+	d := newCodexStreamDecoder(&out, &tail, "/repo", "gpt-5.6")
+	d.identity = announceInto(&out)
 	writeSplit(t, d, strings.Join(lines, "\n")+"\n")
 	d.flush()
 
 	o := out.String()
 	for _, want := range []string{
-		"· using codex model gpt-5.6 credential work",
+		"identity[gpt-5.6]",
 		"⚙ ls",
 		"✦ I'm running the requested command.",
 		"· 15.9k input / 5 output",
@@ -486,7 +487,7 @@ func codexReviewTail(t *testing.T, reply string, wrapper ...string) string {
 	stream := append([]string{string(message)}, wrapper...)
 	stream = append(stream, `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}`)
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	d := newCodexStreamDecoder(&out, &tail, "/repo", "gpt-5.6")
 	_, _ = d.Write([]byte(strings.Join(stream, "\n") + "\n"))
 	d.flush()
 	normalized, _ := normalizeAgentReviewOutput("codex", tail.String())
@@ -569,7 +570,7 @@ func TestCodexStreamDecoderFailureAndUnknownItem(t *testing.T) {
 		`{"type":"item.completed","item":{"id":"future","type":"future_item"}}`,
 	}
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	d := newCodexStreamDecoder(&out, &tail, "/repo", "gpt-5.6")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
 	for _, want := range []string{"⚙ make check", "  ✗ make check (exit 1): compile failed", "· future_item"} {
@@ -633,7 +634,7 @@ func TestCodexFailedCommandRendersExitAndTailDiagnostic(t *testing.T) {
 		`{"type":"item.completed","item":{"id":"ok","type":"command_execution","command":"/bin/bash -lc true","aggregated_output":"ok\n","exit_code":0}}`,
 	}
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	d := newCodexStreamDecoder(&out, &tail, "/repo", "gpt-5.6")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
 	got := out.String()
@@ -677,7 +678,7 @@ func TestCodexStreamDecoderNativeActivity(t *testing.T) {
 		`{"type":"item.completed","item":{"id":"empty-collab","type":"collab_tool_call","tool":"","status":"completed"}}`,
 	}
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	d := newCodexStreamDecoder(&out, &tail, "/repo", "gpt-5.6")
 	writeSplit(t, d, strings.Join(lines, "\n")+"\n")
 	d.flush()
 
@@ -716,7 +717,7 @@ func TestCodexStreamDecoderSuppressesLivePlanChurn(t *testing.T) {
 		`{"type":"item.completed","item":{"id":"future","type":"future_item"}}`,
 	}
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "/repo", "gpt-5.6")
+	d := newCodexStreamDecoder(&out, &tail, "/repo", "gpt-5.6")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
 
@@ -730,7 +731,7 @@ func TestCodexStreamDecoderSuppressesLivePlanChurn(t *testing.T) {
 
 func TestCodexStreamDecoderTurnFailureReachesTail(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "", "gpt-5.6")
+	d := newCodexStreamDecoder(&out, &tail, "", "gpt-5.6")
 	_, _ = d.Write([]byte(`{"type":"turn.failed","error":{"message":"usage limit reached"}}` + "\n"))
 	if !strings.Contains(out.String(), "✗ usage limit reached") {
 		t.Errorf("turn failure not rendered: %q", out.String())
@@ -756,13 +757,14 @@ func TestGeminiStreamDecoder(t *testing.T) {
 		`not valid json`,
 	}
 	var out, tail bytes.Buffer
-	d := newGeminiStreamDecoder(&out, &tail, "gemini", "personal", "/repo", "gemini-3.5-pro")
+	d := newGeminiStreamDecoder(&out, &tail, "/repo", "gemini-3.5-pro")
+	d.identity = announceInto(&out)
 	writeSplit(t, d, strings.Join(lines, "\n")+"\n")
 	d.flush()
 
 	o := out.String()
 	for _, want := range []string{
-		"· using gemini model gemini-3.5-pro credential personal",
+		"identity[gemini-3.5-pro]",
 		"· message system",
 		"✦ hi there",
 		"▸ README.md",
@@ -802,7 +804,7 @@ func TestGeminiStreamDecoderFailedToolCanRecover(t *testing.T) {
 		`{"type":"result","status":"success","stats":{"input_tokens":12,"output_tokens":3,"duration_ms":1500}}`,
 	}
 	var out, tail bytes.Buffer
-	d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "/repo", "gemini-3.5-pro")
+	d := newGeminiStreamDecoder(&out, &tail, "/repo", "gemini-3.5-pro")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
 	for _, want := range []string{"  ✗ read_file README.md: permission denied", "· 2s · 12 input / 3 output"} {
@@ -820,7 +822,7 @@ func TestGeminiStreamDecoderFailedToolCanRecover(t *testing.T) {
 
 func TestGeminiStreamDecoderErrorEventFails(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "/repo", "gemini-3.5-pro")
+	d := newGeminiStreamDecoder(&out, &tail, "/repo", "gemini-3.5-pro")
 	_, _ = d.Write([]byte(`{"type":"error","severity":"error","message":"usage limit reached"}` + "\n"))
 	d.flush()
 	if got := d.streamOutcome(); got != streamFailed {
@@ -830,7 +832,7 @@ func TestGeminiStreamDecoderErrorEventFails(t *testing.T) {
 
 func TestGeminiStreamDecoderErrorResultFails(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "/repo", "gemini-3.5-pro")
+	d := newGeminiStreamDecoder(&out, &tail, "/repo", "gemini-3.5-pro")
 	_, _ = d.Write([]byte(`{"type":"result","status":"error","error":{"type":"fatal","message":"quota exhausted"},"stats":{"input_tokens":12,"output_tokens":3,"duration_ms":1500}}` + "\n"))
 	d.flush()
 	if got := d.streamOutcome(); got != streamFailed {
@@ -973,13 +975,14 @@ func TestGrokStreamDecoder(t *testing.T) {
 		`not valid json`,
 	}
 	var out, tail bytes.Buffer
-	d := newGrokStreamDecoder(&out, &tail, "grok", "work", "/repo", "grok-4.5")
+	d := newGrokStreamDecoder(&out, &tail, "/repo", "grok-4.5")
+	d.identity = announceInto(&out)
 	writeSplit(t, d, strings.Join(lines, "\n")+"\n")
 	d.flush()
 
 	o := out.String()
 	for _, want := range []string{
-		"· using grok model grok-4.5 credential work",
+		"identity[grok-4.5]",
 		"✦ hi there",
 		"· future_event",
 		"· 1 turns · 27.3k input / 187 output",
@@ -1027,7 +1030,7 @@ func TestProviderDecodersCaptureExactNativeSession(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			d := newIterationStreamDecoder(test.name, io.Discard, io.Discard, nil, "", "/repo", "", nil)
+			d := newIterationStreamDecoder(test.name, io.Discard, io.Discard, nil, "/repo", "", nil)
 			if d == nil {
 				t.Fatal("registered provider has no decoder")
 			}
@@ -1044,7 +1047,7 @@ func TestProviderDecodersCaptureExactNativeSession(t *testing.T) {
 			}
 		})
 	}
-	if d := newIterationStreamDecoder("other", io.Discard, io.Discard, nil, "", "", "", nil); d != nil {
+	if d := newIterationStreamDecoder("other", io.Discard, io.Discard, nil, "", "", nil); d != nil {
 		t.Fatalf("unknown provider dispatch=%T, want nil", d)
 	}
 }
@@ -1052,7 +1055,7 @@ func TestProviderDecodersCaptureExactNativeSession(t *testing.T) {
 func TestGrokStreamDecoderErrorReachesTail(t *testing.T) {
 	line := `{"type":"error","message":"Couldn't start session: usage limit"}`
 	var out, tail bytes.Buffer
-	d := newGrokStreamDecoder(&out, &tail, "grok", "", "", "grok-4.5")
+	d := newGrokStreamDecoder(&out, &tail, "", "grok-4.5")
 	_, _ = d.Write([]byte(line + "\n"))
 	if !strings.Contains(out.String(), line) {
 		t.Errorf("Grok error event not passed through: %q", out.String())
@@ -1065,7 +1068,7 @@ func TestGrokStreamDecoderErrorReachesTail(t *testing.T) {
 func TestBufferedStreamTextFlushesBeforeRawLine(t *testing.T) {
 	t.Run("gemini", func(t *testing.T) {
 		var out, tail bytes.Buffer
-		d := newGeminiStreamDecoder(&out, &tail, "gemini", "", "", "")
+		d := newGeminiStreamDecoder(&out, &tail, "", "")
 		lines := []string{
 			`{"type":"message","role":"assistant","content":"hi","delta":true}`,
 			`diagnostic`,
@@ -1082,14 +1085,15 @@ func TestBufferedStreamTextFlushesBeforeRawLine(t *testing.T) {
 
 	t.Run("grok", func(t *testing.T) {
 		var out, tail bytes.Buffer
-		d := newGrokStreamDecoder(&out, &tail, "grok", "", "", "")
+		d := newGrokStreamDecoder(&out, &tail, "", "")
+		d.identity = announceInto(&out)
 		lines := []string{
 			`{"type":"text","data":"hi"}`,
 			`diagnostic`,
 			`{"type":"end","usage":{},"num_turns":0}`,
 		}
 		_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
-		want := "· using grok model default\n✦ hi\ndiagnostic\n· 0 turns · 0 input / 0 output · fresh not reported · cache write not reported · cache read not reported\n"
+		want := "identity[]\n✦ hi\ndiagnostic\n· 0 turns · 0 input / 0 output · fresh not reported · cache write not reported · cache read not reported\n"
 		if out.String() != want {
 			t.Errorf("Grok raw-line ordering = %q, want %q", out.String(), want)
 		}
@@ -1103,7 +1107,7 @@ func TestProviderStreamDecoderRejectsTruncatedTerminalEvent(t *testing.T) {
 	for _, provider := range []string{"claude", "codex", "gemini", "grok"} {
 		t.Run(provider, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			decoder := newIterationStreamDecoder(provider, &out, &tail, nil, "work", "/workspace", "model", nil)
+			decoder := newIterationStreamDecoder(provider, &out, &tail, nil, "/workspace", "model", nil)
 			if decoder == nil {
 				t.Fatal("registered provider has no stream decoder")
 			}
@@ -1121,7 +1125,9 @@ func TestProviderStreamDecoderRejectsTruncatedTerminalEvent(t *testing.T) {
 	}
 }
 
-func TestProviderStreamDecoderDefaultModelLine(t *testing.T) {
+// A stream that has not reported a model announces an empty one: the loop's announcer then names
+// the model the person selected.
+func TestProviderStreamDecoderAnnouncesAnUnreportedModel(t *testing.T) {
 	cases := []struct {
 		name  string
 		write func(*bytes.Buffer)
@@ -1129,21 +1135,24 @@ func TestProviderStreamDecoderDefaultModelLine(t *testing.T) {
 		{
 			"codex",
 			func(out *bytes.Buffer) {
-				d := newCodexStreamDecoder(out, nil, "codex", "", "", "")
+				d := newCodexStreamDecoder(out, nil, "", "")
+				d.identity = announceInto(out)
 				_, _ = d.Write([]byte(`{"type":"thread.started"}` + "\n"))
 			},
 		},
 		{
 			"gemini",
 			func(out *bytes.Buffer) {
-				d := newGeminiStreamDecoder(out, nil, "gemini", "", "", "")
+				d := newGeminiStreamDecoder(out, nil, "", "")
+				d.identity = announceInto(out)
 				_, _ = d.Write([]byte(`{"type":"init"}` + "\n"))
 			},
 		},
 		{
 			"grok",
 			func(out *bytes.Buffer) {
-				d := newGrokStreamDecoder(out, nil, "grok", "", "", "")
+				d := newGrokStreamDecoder(out, nil, "", "")
+				d.identity = announceInto(out)
 				_, _ = d.Write([]byte(`{"type":"thought","data":"hidden"}` + "\n"))
 			},
 		},
@@ -1152,8 +1161,8 @@ func TestProviderStreamDecoderDefaultModelLine(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			var out bytes.Buffer
 			c.write(&out)
-			if !strings.Contains(out.String(), "· using "+c.name+" model default") {
-				t.Errorf("default model line missing: %q", out.String())
+			if out.String() != "identity[]\n" {
+				t.Errorf("unreported model announced %q, want one empty identity", out.String())
 			}
 		})
 	}
@@ -1180,7 +1189,7 @@ func TestGrokStreamDecoderRendersThePinnedClientsTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, tail bytes.Buffer
-	d := newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "grok-4.6-build")
+	d := newGrokStreamDecoder(&out, &tail, "/repo", "grok-4.6-build")
 	rec := &activityRecorder{}
 	d.setActivity(rec)
 	if _, err := d.Write(data); err != nil {
@@ -1227,7 +1236,7 @@ func boolInt(b bool) int {
 // on a completed update — the pinned client's own shape, captured — and that is not a failure.
 func TestGrokStreamDecoderReadsExitCodesOnlyForCommands(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "m")
+	d := newGrokStreamDecoder(&out, &tail, "/repo", "m")
 	lines := strings.Join([]string{
 		`{"type":"tool_call","toolCallId":"g1","toolName":"grep","kind":"search","status":"pending","rawInput":{"pattern":"zzz"}}`,
 		`{"type":"tool_call_update","toolCallId":"g1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"found 0 matches"}}],"rawOutput":{"type":"GrepSearch","exit_code":1,"match_count":0}}`,
@@ -1269,7 +1278,7 @@ func TestGrokErrorStatusesClassifyTheIteration(t *testing.T) {
 		{"401 in the server's prose only", `{"type":"error","message":"Internal error: upstream returned 401"}` + "\n", "process_failure"},
 	} {
 		var out, tail, diagnostic bytes.Buffer
-		d := newGrokStreamDecoder(&out, &tail, "grok", "", "", "m")
+		d := newGrokStreamDecoder(&out, &tail, "", "m")
 		d.diagnostic = &diagnostic
 		if _, err := d.Write([]byte(c.event)); err != nil {
 			t.Fatal(err)

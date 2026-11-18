@@ -20,7 +20,7 @@ type LiveStreamProbe struct {
 
 func NewLiveStreamProbe(provider string) *LiveStreamProbe {
 	p := &LiveStreamProbe{open: map[string]bool{}}
-	p.decoder = newIterationStreamDecoder(provider, io.Discard, io.Discard, io.Discard, "", "", "", nil)
+	p.decoder = newIterationStreamDecoder(provider, io.Discard, io.Discard, io.Discard, "", "", func(string) {})
 	if p.decoder != nil {
 		p.decoder.setActivity(p)
 	}

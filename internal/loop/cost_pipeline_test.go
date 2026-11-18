@@ -25,7 +25,7 @@ func TestCostPipelineE2E(t *testing.T) {
 	// 1. A claude work stage: feed a real-shaped claude result event through the decoder and take
 	//    the tally it captured — exactly what runIteration hands recordStage.
 	var out, tail bytes.Buffer
-	dec := newStreamDecoder(&out, &tail, "claude", "personal_backup", "")
+	dec := newStreamDecoder(&out, &tail, "")
 	_, _ = dec.Write([]byte(`{"type":"result","subtype":"success","num_turns":42,"duration_ms":600000,"total_cost_usd":12.31,"usage":{"input_tokens":40000,"cache_creation_input_tokens":200000,"cache_read_input_tokens":1000000,"output_tokens":48000}}` + "\n"))
 	dec.flush()
 	if dec.last == nil {

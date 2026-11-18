@@ -23,7 +23,7 @@ func TestGrokCapturedAccountingFormats(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			d := newGrokStreamDecoder(&out, &tail, "grok", "default", "", "captured")
+			d := newGrokStreamDecoder(&out, &tail, "", "captured")
 			writeSplit(t, d, tc.event+"\n")
 			d.flush()
 			got := d.lastIterResult()
@@ -51,7 +51,7 @@ func TestGrokInvalidCostDoesNotDiscardTerminalUsage(t *testing.T) {
 	for _, value := range []string{"null", `"invalid"`, "-1", "1e999", "{}"} {
 		t.Run(value, func(t *testing.T) {
 			var out bytes.Buffer
-			d := newGrokStreamDecoder(&out, nil, "grok", "", "", "")
+			d := newGrokStreamDecoder(&out, nil, "", "")
 			d.event([]byte(`{"type":"end","total_cost_usd":` + value + `,"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`))
 			got := d.lastIterResult()
 			if got == nil || got.CostUSD != 0 || got.ReportedCostUSD != nil || got.InTok != 10 || got.OutTok != 5 || d.streamOutcome() != streamSucceeded {

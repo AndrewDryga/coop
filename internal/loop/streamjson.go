@@ -33,8 +33,6 @@ const llmIcon = "✦"
 // reach neither tail because they are the agent's own work and may contain misleading markers.
 type streamDecoder struct {
 	*ndjsonDecoder
-	agent      string        // the agent whose stream this is (e.g. claude), for the model line
-	profile    string        // the credential profile in play, for the model line
 	root       string        // the repo's in-box mount; tool paths show relative to it (empty = off)
 	tool       boundedLabels // tool_use id → label, to name a failed tool_result
 	last       *iterResult   // the last result event's cost/turns/tokens, for the loop's telemetry
@@ -50,8 +48,8 @@ type streamDecoder struct {
 	lastText string
 }
 
-func newStreamDecoder(out, tail io.Writer, agent, profile, root string) *streamDecoder {
-	d := &streamDecoder{agent: agent, profile: profile, root: root}
+func newStreamDecoder(out, tail io.Writer, root string) *streamDecoder {
+	d := &streamDecoder{root: root}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	// Claude can repeat one base64 image in both message.content and tool_use_result. Keep the
 	// complete typed event so its tool_use_id can close exactly one watchdog lifecycle, but bound
@@ -120,29 +118,29 @@ func validateProviderStream(code int, runErr error, outcome providerStreamOutcom
 
 // newIterationStreamDecoder dispatches on the schema declared by the provider adapter. Several
 // CLIs use overlapping flag names, so the flags themselves cannot identify the event schema.
-func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, profile, root, model string, identity func(string)) iterationStreamDecoder {
+func newIterationStreamDecoder(agent string, out, tail, diagnostic io.Writer, root, model string, identity func(string)) iterationStreamDecoder {
 	adapter, ok := agents.Get(agent)
 	if !ok {
 		return nil
 	}
 	switch adapter.Stream().Format {
 	case agents.StreamClaudeJSON:
-		d := newStreamDecoder(out, tail, agent, profile, root)
+		d := newStreamDecoder(out, tail, root)
 		d.diagnostic = diagnostic
 		d.identity = identity
 		return d
 	case agents.StreamCodexJSON:
-		d := newCodexStreamDecoder(out, tail, agent, profile, root, model)
+		d := newCodexStreamDecoder(out, tail, root, model)
 		d.diagnostic = diagnostic
 		d.identity = identity
 		return d
 	case agents.StreamGeminiJSON:
-		d := newGeminiStreamDecoder(out, tail, agent, profile, root, model)
+		d := newGeminiStreamDecoder(out, tail, root, model)
 		d.diagnostic = diagnostic
 		d.identity = identity
 		return d
 	case agents.StreamGrokJSON:
-		d := newGrokStreamDecoder(out, tail, agent, profile, root, model)
+		d := newGrokStreamDecoder(out, tail, root, model)
 		d.diagnostic = diagnostic
 		d.identity = identity
 		return d
@@ -363,12 +361,10 @@ func (d *ndjsonDecoder) emit(s string) {
 	}
 }
 
-func (d *ndjsonDecoder) announceIdentity(agent, model, profile string) {
+func (d *ndjsonDecoder) announceIdentity(model string) {
 	if d.identity != nil {
 		d.identity(model)
-		return
 	}
-	d.emit(streamModelLineWithPalette(d.palette, agent, streamDisplayModel(model), profile))
 }
 
 // fitDisplayText trims one plain-text segment to the current live row, reserving fixed cells and
@@ -761,23 +757,8 @@ func (d *streamDecoder) toolResult(msg json.RawMessage) {
 func (d *streamDecoder) system(ev *streamEvent) {
 	if ev.Subtype == "init" {
 		d.noteBootstrap()
-		if ev.Model != "" || d.identity != nil {
-			d.announceIdentity(d.agent, ev.Model, d.profile)
-		}
+		d.announceIdentity(ev.Model)
 	}
-}
-
-func streamModelLineWithPalette(p ui.Palette, agent, model, profile string) string {
-	if agent == "" {
-		return p.Dim("· model ") + cleanDiagnosticLine(model)
-	}
-	// Dim the labels (· using / model / credential) but leave the values — agent, model, credential —
-	// at normal brightness, so they stand out a touch against the otherwise-faint line.
-	line := p.Dim("· using ") + cleanDiagnosticLine(agent) + p.Dim(" model ") + cleanDiagnosticLine(model)
-	if profile != "" {
-		line += p.Dim(" credential ") + cleanDiagnosticLine(profile)
-	}
-	return line
 }
 
 // rateLimit shows a real limit and translates it into the text the loop's detector already

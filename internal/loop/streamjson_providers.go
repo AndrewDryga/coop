@@ -128,8 +128,6 @@ func (f *stderrLineFilter) writeLine(line []byte, newline bool) error {
 // codexStreamDecoder renders `codex exec --json` events into the loop's common activity view.
 type codexStreamDecoder struct {
 	*ndjsonDecoder
-	agent            string
-	profile          string
 	root             string
 	model            string
 	tool             boundedLabels
@@ -140,8 +138,8 @@ type codexStreamDecoder struct {
 	blindWaitSeconds int
 }
 
-func newCodexStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *codexStreamDecoder {
-	d := &codexStreamDecoder{agent: agent, profile: profile, root: root, model: model}
+func newCodexStreamDecoder(out, tail io.Writer, root, model string) *codexStreamDecoder {
+	d := &codexStreamDecoder{root: root, model: model}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	return d
 }
@@ -201,7 +199,7 @@ func (d *codexStreamDecoder) event(raw json.RawMessage) {
 }
 
 func (d *codexStreamDecoder) showModel() {
-	d.announceIdentity(d.agent, d.model, d.profile)
+	d.announceIdentity(d.model)
 }
 
 // codexRecognizedItem lists the item types the Codex stream is known to emit; only these prove
@@ -417,8 +415,6 @@ type codexStreamUsage struct {
 // deltas, so the decoder holds one narration line until the next non-assistant event.
 type geminiStreamDecoder struct {
 	*ndjsonDecoder
-	agent            string
-	profile          string
 	root             string
 	model            string
 	assistant        boundedNarration
@@ -429,8 +425,8 @@ type geminiStreamDecoder struct {
 	blindWaitSeconds int
 }
 
-func newGeminiStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *geminiStreamDecoder {
-	d := &geminiStreamDecoder{agent: agent, profile: profile, root: root, model: model}
+func newGeminiStreamDecoder(out, tail io.Writer, root, model string) *geminiStreamDecoder {
+	d := &geminiStreamDecoder{root: root, model: model}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	d.ndjsonDecoder.beforeRaw = d.flushAssistant
 	return d
@@ -451,7 +447,7 @@ func (d *geminiStreamDecoder) event(raw json.RawMessage) {
 			d.sessionID = ev.SessionID
 		}
 		d.noteBootstrap()
-		d.announceIdentity(d.agent, d.model, d.profile)
+		d.announceIdentity(d.model)
 	case "message":
 		switch ev.Role {
 		case "assistant":
@@ -618,8 +614,6 @@ type geminiStreamEvent struct {
 // ACP-shaped tool_call / tool_call_update events paired by toolCallId.
 type grokStreamDecoder struct {
 	*ndjsonDecoder
-	agent            string
-	profile          string
 	root             string
 	model            string
 	modelShown       bool
@@ -632,8 +626,8 @@ type grokStreamDecoder struct {
 	blindWaitSeconds int
 }
 
-func newGrokStreamDecoder(out, tail io.Writer, agent, profile, root, model string) *grokStreamDecoder {
-	d := &grokStreamDecoder{agent: agent, profile: profile, root: root, model: model}
+func newGrokStreamDecoder(out, tail io.Writer, root, model string) *grokStreamDecoder {
+	d := &grokStreamDecoder{root: root, model: model}
 	d.ndjsonDecoder = newNDJSONDecoder(out, tail, d.event)
 	d.ndjsonDecoder.beforeRaw = d.flushText
 	return d
@@ -878,7 +872,7 @@ func (d *grokStreamDecoder) showModel() {
 		return
 	}
 	d.modelShown = true
-	d.announceIdentity(d.agent, d.model, d.profile)
+	d.announceIdentity(d.model)
 }
 
 func (d *grokStreamDecoder) flushText() {
@@ -941,11 +935,4 @@ func jsonEventMessage(raw json.RawMessage) string {
 		return strings.TrimSpace(obj.Message)
 	}
 	return ""
-}
-
-func streamDisplayModel(model string) string {
-	if model == "" {
-		return "default"
-	}
-	return model
 }

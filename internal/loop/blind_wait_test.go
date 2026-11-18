@@ -25,7 +25,7 @@ func TestFixedSleepSecondsOnlyFlagsObviousLongWaits(t *testing.T) {
 
 func TestClaudeDecoderReportsOneBlindWait(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "", "/workspace")
+	d := newStreamDecoder(&out, &tail, "/workspace")
 	_, _ = d.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"one","name":"Bash","input":{"command":"sleep 120"}}]}}` + "\n"))
 	_, _ = d.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"two","name":"Bash","input":{"command":"sleep 180"}}]}}` + "\n"))
 	_, _ = d.Write([]byte(`{"type":"result","subtype":"success","num_turns":2,"duration_ms":10}` + "\n"))

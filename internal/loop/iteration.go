@@ -233,7 +233,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 			identityCapture = io.MultiWriter(identityCopies...)
 		}
 		identity := providerIdentityAnnouncer(agent, selectedModel, c.cfg.EffortFor(agent), profile, identityCapture, liveWidth)
-		dec = newIterationStreamDecoder(agent, termOut, tail, diagnostic, profile, box.Workdir(c.cfg, repo), selectedModel, identity)
+		dec = newIterationStreamDecoder(agent, termOut, tail, diagnostic, box.Workdir(c.cfg, repo), selectedModel, identity)
 	}
 	if dec != nil {
 		dec.setDisplayWidth(liveWidth)

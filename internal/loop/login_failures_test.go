@@ -19,7 +19,7 @@ import (
 func classifyCapture(t *testing.T, provider string, stdout, stderr []byte) string {
 	t.Helper()
 	var out, tail, diagnostic bytes.Buffer
-	dec := newIterationStreamDecoder(provider, &out, &tail, &diagnostic, "", "", "m", nil)
+	dec := newIterationStreamDecoder(provider, &out, &tail, &diagnostic, "", "m", nil)
 	if _, err := dec.Write(stdout); err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,7 @@ func TestClaudeStreamActivity(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}`,
 		`{"type":"result","subtype":"success","is_error":false,"num_turns":1}`,
 	}
-	feedActivityLines(t, newStreamDecoder(&out, &tail, "claude", "", ""), rec, lines)
+	feedActivityLines(t, newStreamDecoder(&out, &tail, ""), rec, lines)
 	want := []string{"bootstrap", "progress", "progress", "tool_start:t1", "tool_end:t1", "progress", "terminal"}
 	if !slices.Equal(rec.events, want) {
 		t.Errorf("claude activity = %v, want %v", rec.events, want)
@@ -47,7 +47,7 @@ func TestClaudeStreamActivity(t *testing.T) {
 func TestClaudeToolResultsOnlyEndAcceptedMatchingStarts(t *testing.T) {
 	var out, tail bytes.Buffer
 	rec := &activityRecorder{}
-	d := newStreamDecoder(&out, &tail, "claude", "", "")
+	d := newStreamDecoder(&out, &tail, "")
 	lines := []string{
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"known","name":"Bash","input":{"command":"make check"}}]}}`,
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"still-open","name":"Read","input":{"file_path":"result.png"}}]}}`,
@@ -90,7 +90,7 @@ func TestCodexStreamActivity(t *testing.T) {
 		`{"type":"future.event"}`,
 		`{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`,
 	}
-	feedActivityLines(t, newCodexStreamDecoder(&out, &tail, "codex", "", "", "m"), rec, lines)
+	feedActivityLines(t, newCodexStreamDecoder(&out, &tail, "", "m"), rec, lines)
 	want := []string{
 		"bootstrap", "progress", "progress", "tool_start:c1", "progress", "tool_end:c1",
 		"progress", "progress", "terminal",
@@ -112,7 +112,7 @@ func TestGeminiStreamActivity(t *testing.T) {
 		`{"type":"retry"}`,
 		`{"type":"result","status":"success","stats":{"input_tokens":1,"output_tokens":1,"duration_ms":5}}`,
 	}
-	feedActivityLines(t, newGeminiStreamDecoder(&out, &tail, "gemini", "", "", "m"), rec, lines)
+	feedActivityLines(t, newGeminiStreamDecoder(&out, &tail, "", "m"), rec, lines)
 	want := []string{"bootstrap", "progress", "tool_start:g1", "tool_end:g1", "terminal"}
 	if !slices.Equal(rec.events, want) {
 		t.Errorf("gemini activity = %v, want %v", rec.events, want)
@@ -147,7 +147,7 @@ func TestGrokStreamActivity(t *testing.T) {
 		`{"type":"usage","usage":{"input_tokens":1,"output_tokens":1}}`,
 		`{"type":"end","num_turns":1,"usage":{"input_tokens":1,"output_tokens":1}}`,
 	}
-	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "m"), rec, lines)
+	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "/repo", "m"), rec, lines)
 	want := []string{"progress", "progress", "tool_start:c1", "tool_end:c1", "tool_start:c2", "tool_end:c2",
 		"tool_start:c3", "tool_end:c3", "tool_start:c4", "tool_end:c4", "terminal"}
 	if !slices.Equal(rec.events, want) {
@@ -165,7 +165,7 @@ func TestGrokStreamAbandonedToolStaysOpenUntilTheAttemptEnds(t *testing.T) {
 		`{"type":"tool_call_update","toolCallId":"c1","status":"in_progress","rawOutput":{"type":"Bash","exit_code":0}}`,
 		`{"type":"end","num_turns":1,"usage":{"input_tokens":1,"output_tokens":1}}`,
 	}
-	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "grok", "", "/repo", "m"), rec, lines)
+	feedActivityLines(t, newGrokStreamDecoder(&out, &tail, "/repo", "m"), rec, lines)
 	if want := []string{"tool_start:c1", "terminal"}; !slices.Equal(rec.events, want) {
 		t.Errorf("abandoned grok tool activity = %v, want %v", rec.events, want)
 	}
@@ -183,7 +183,7 @@ func TestEmptyRecognizedEnvelopesNeverResetActivity(t *testing.T) {
 		decoder iterationStreamDecoder
 		lines   []string
 	}{
-		{"claude", newStreamDecoder(&out, &tail, "claude", "", ""), []string{
+		{"claude", newStreamDecoder(&out, &tail, ""), []string{
 			`{"type":"assistant"}`,
 			`{"type":"assistant","message":{}}`,
 			`{"type":"assistant","message":{"content":[]}}`,
@@ -195,7 +195,7 @@ func TestEmptyRecognizedEnvelopesNeverResetActivity(t *testing.T) {
 			`{"type":"user","message":{"content":[{"type":"tool_result"}]}}`,
 			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true}]}}`,
 		}},
-		{"codex", newCodexStreamDecoder(&out, &tail, "codex", "", "", "m"), []string{
+		{"codex", newCodexStreamDecoder(&out, &tail, "", "m"), []string{
 			`{"type":"item.started","item":{}}`,
 			`{"type":"item.started","item":{"type":"reasoning"}}`,
 			`{"type":"item.started","item":{"type":"command_execution","command":"make check"}}`,
@@ -203,7 +203,7 @@ func TestEmptyRecognizedEnvelopesNeverResetActivity(t *testing.T) {
 			`{"type":"item.completed","item":{"type":"agent_message","text":"done"}}`,
 			`{"type":"item.completed","item":{"type":"mcp_tool_call"}}`,
 		}},
-		{"gemini", newGeminiStreamDecoder(&out, &tail, "gemini", "", "", "m"), []string{
+		{"gemini", newGeminiStreamDecoder(&out, &tail, "", "m"), []string{
 			`{"type":"message","role":"assistant"}`,
 			`{"type":"message","role":"assistant","content":""}`,
 			`{"type":"tool_use"}`,
@@ -211,7 +211,7 @@ func TestEmptyRecognizedEnvelopesNeverResetActivity(t *testing.T) {
 			`{"type":"tool_result"}`,
 			`{"type":"tool_result","status":"success"}`,
 		}},
-		{"grok", newGrokStreamDecoder(&out, &tail, "grok", "", "", "m"), []string{
+		{"grok", newGrokStreamDecoder(&out, &tail, "", "m"), []string{
 			`{"type":"thought"}`,
 			`{"type":"thought","data":""}`,
 			`{"type":"text"}`,
@@ -242,11 +242,11 @@ func TestEmptyRecognizedEnvelopesNeverResetActivity(t *testing.T) {
 func TestForgedStreamIDsCannotGrowDecoderState(t *testing.T) {
 	const forged = 5_000
 	var out, tail bytes.Buffer
-	claude := newStreamDecoder(&out, &tail, "claude", "", "")
-	codexTools := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
-	codexShown := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
-	gemini := newGeminiStreamDecoder(&out, &tail, "gemini", "", "", "m")
-	grok := newGrokStreamDecoder(&out, &tail, "grok", "", "", "m")
+	claude := newStreamDecoder(&out, &tail, "")
+	codexTools := newCodexStreamDecoder(&out, &tail, "", "m")
+	codexShown := newCodexStreamDecoder(&out, &tail, "", "m")
+	gemini := newGeminiStreamDecoder(&out, &tail, "", "m")
+	grok := newGrokStreamDecoder(&out, &tail, "", "m")
 	cases := []struct {
 		name    string
 		decoder iterationStreamDecoder
@@ -291,7 +291,7 @@ func TestForgedStreamIDsCannotGrowDecoderState(t *testing.T) {
 // a long attempt's tracked state tracks OPEN tools, not the tools it has ever run.
 func TestCompletedToolsLeaveNoDecoderState(t *testing.T) {
 	var out, tail bytes.Buffer
-	claude := newStreamDecoder(&out, &tail, "claude", "", "")
+	claude := newStreamDecoder(&out, &tail, "")
 	rec := &activityRecorder{}
 	claude.setActivity(rec)
 	var lines []string
@@ -309,7 +309,7 @@ func TestCompletedToolsLeaveNoDecoderState(t *testing.T) {
 func TestClaudeLargeImageResultClosesOnlyItsMatchingTool(t *testing.T) {
 	var out, tail, diagnostic bytes.Buffer
 	rec := &activityRecorder{}
-	d := newStreamDecoder(&out, &tail, "claude", "", "")
+	d := newStreamDecoder(&out, &tail, "")
 	d.diagnostic = &diagnostic
 	d.setActivity(rec)
 	start := `{"type":"assistant","message":{"content":[` +
@@ -377,7 +377,7 @@ func TestClaudeLargeMalformedAndOverCapEventsDoNotCloseTools(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out, tail bytes.Buffer
 			rec := &activityRecorder{}
-			d := newStreamDecoder(&out, &tail, "claude", "", "")
+			d := newStreamDecoder(&out, &tail, "")
 			d.setActivity(rec)
 			_, _ = d.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"open","name":"Read","input":{"file_path":"capture.png"}}]}}` + "\n"))
 			before := len(rec.events)
@@ -406,7 +406,7 @@ func TestClaudeLargeMalformedAndOverCapEventsDoNotCloseTools(t *testing.T) {
 func TestRawAndRepaintOutputNeverResetsActivity(t *testing.T) {
 	var out, tail bytes.Buffer
 	rec := &activityRecorder{}
-	d := newStreamDecoder(&out, &tail, "claude", "", "")
+	d := newStreamDecoder(&out, &tail, "")
 	d.setActivity(rec)
 	// Raw prose, ANSI repaints, a malformed event, and an oversized event: none are
 	// adapter-recognized semantic activity.
@@ -424,7 +424,7 @@ func TestRawAndRepaintOutputNeverResetsActivity(t *testing.T) {
 // An MCP call shows its tool once, not the raw item type and not twice for its start and end.
 func TestCodexStreamNamesAnMCPToolOnce(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
+	d := newCodexStreamDecoder(&out, &tail, "", "m")
 	for _, line := range []string{
 		`{"type":"item.started","item":{"id":"m1","type":"mcp_tool_call","server":"coop-tasks","tool":"tasks_get"}}`,
 		`{"type":"item.completed","item":{"id":"m1","type":"mcp_tool_call","server":"coop-tasks","tool":"tasks_get"}}`,
@@ -442,7 +442,7 @@ func TestCodexStreamNamesAnMCPToolOnce(t *testing.T) {
 // set and every later call printed twice.
 func TestCodexStreamNamesEveryMCPToolOnceInALongAttempt(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newCodexStreamDecoder(&out, &tail, "codex", "", "", "m")
+	d := newCodexStreamDecoder(&out, &tail, "", "m")
 	const calls = maxStreamTrackedIDs + 44
 	for i := range calls {
 		_, _ = fmt.Fprintf(d, `{"type":"item.started","item":{"id":"m%d","type":"mcp_tool_call","tool":"tasks_get"}}`+"\n", i)

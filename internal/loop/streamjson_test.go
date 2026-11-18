@@ -15,7 +15,7 @@ import (
 
 func TestRenderedProviderTextIsSanitizedAndCopiesStayPlain(t *testing.T) {
 	var terminal, copied, tail bytes.Buffer
-	d := newStreamDecoder(&terminal, &tail, "claude", "personal", "/workspace")
+	d := newStreamDecoder(&terminal, &tail, "/workspace")
 	d.setRender(ui.Colored(), &copied)
 	_, _ = d.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"safe \u001b[31mred\u001b[0m\nINJECT"}]}}` + "\n"))
 
@@ -34,6 +34,12 @@ func TestRenderedProviderTextIsSanitizedAndCopiesStayPlain(t *testing.T) {
 	}
 }
 
+// announceInto stands in for the loop's identity announcer: it writes each model the decoder
+// reports into w, in stream order, so a test sees when and with what the announcer ran.
+func announceInto(w io.Writer) func(string) {
+	return func(model string) { _, _ = io.WriteString(w, "identity["+model+"]\n") }
+}
+
 func TestStreamDecoder(t *testing.T) {
 	// Representative events from a real `claude -p --output-format stream-json --verbose` run.
 	lines := []string{
@@ -49,8 +55,9 @@ func TestStreamDecoder(t *testing.T) {
 		`{"type":"result","subtype":"success","is_error":false,"num_turns":2,"duration_ms":8269,"total_cost_usd":0.1117,"result":"done"}`,
 	}
 	var out, tail, diagnostic bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "", "", "")
+	d := newStreamDecoder(&out, &tail, "")
 	d.diagnostic = &diagnostic
+	d.identity = announceInto(&out)
 	// Feed in two chunks split mid-line to exercise the partial-line buffer.
 	blob := strings.Join(lines, "\n") + "\n"
 	cut := len(blob) / 2
@@ -59,7 +66,7 @@ func TestStreamDecoder(t *testing.T) {
 	d.flush()
 
 	o := out.String()
-	for _, want := range []string{"· model claude-opus-4-8", "⚙ Bash", "echo hi", "✦ working on task 9", "✎ task egress", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
+	for _, want := range []string{"identity[claude-opus-4-8]", "⚙ Bash", "echo hi", "✦ working on task 9", "✎ task egress", "✗", "could not find string", "· 2 turns", "$0.11", "not valid json"} {
 		if !strings.Contains(o, want) {
 			t.Errorf("rendered output missing %q\n--- got ---\n%s", want, o)
 		}
@@ -102,7 +109,7 @@ func TestStreamDecoderKeepsOneCopyOfTheFinalMessage(t *testing.T) {
 	}
 	decode := func(events string) string {
 		var out, tail bytes.Buffer
-		d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+		d := newStreamDecoder(&out, &tail, "")
 		_, _ = d.Write([]byte(events))
 		d.flush()
 		return tail.String()
@@ -163,7 +170,7 @@ func TestNDJSONDecoderBoundsAndReportsStreamProblems(t *testing.T) {
 	}
 
 	var successOut, successTail bytes.Buffer
-	success := newStreamDecoder(&successOut, &successTail, "claude", "work", "")
+	success := newStreamDecoder(&successOut, &successTail, "")
 	_, _ = success.Write(bytes.Repeat([]byte("x"), maxStreamEventBytes+1))
 	_, _ = success.Write([]byte("\n" + `{"type":"result","subtype":"success","num_turns":1,"duration_ms":1,"total_cost_usd":0.01}` + "\n"))
 	success.flush()
@@ -198,7 +205,7 @@ func TestBoundedNarration(t *testing.T) {
 // renders cost/turns and captures those with zero tokens (no crash, no usage pair on the line).
 func TestStreamDecoderResultUsage(t *testing.T) {
 	var out, tail, diagnostic bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "", "", "")
+	d := newStreamDecoder(&out, &tail, "")
 	d.diagnostic = &diagnostic
 	// input 4243 + cache_creation 3630 + cache_read 15197 = 23070 in; 698 out.
 	_, _ = d.Write([]byte(`{"type":"result","subtype":"success","num_turns":5,"duration_ms":1000,"total_cost_usd":1.23,"usage":{"input_tokens":4243,"cache_creation_input_tokens":3630,"cache_read_input_tokens":15197,"output_tokens":698}}` + "\n"))
@@ -218,7 +225,7 @@ func TestStreamDecoderResultUsage(t *testing.T) {
 
 	// No usage block: cost/turns still captured, tokens zero, and the line omits the usage pair.
 	var out2, tail2 bytes.Buffer
-	d2 := newStreamDecoder(&out2, &tail2, "", "", "")
+	d2 := newStreamDecoder(&out2, &tail2, "")
 	_, _ = d2.Write([]byte(`{"type":"result","subtype":"success","num_turns":2,"duration_ms":500,"total_cost_usd":0.05}` + "\n"))
 	d2.flush()
 	if strings.Contains(out2.String(), " input / ") || strings.Contains(out2.String(), " output") {
@@ -235,28 +242,22 @@ func TestTokenUsageLabelsBothSides(t *testing.T) {
 	}
 }
 
-// The init model line names the agent and credential in play when given them, so a loop iteration
-// shows "using claude model … credential personal"; with neither it falls back to "· model …".
-func TestStreamDecoderModelLine(t *testing.T) {
-	init := `{"type":"system","subtype":"init","model":"claude-opus-4-8[1m]"}` + "\n"
+// The init event hands the reported model id to the identity announcer verbatim, suffix and all:
+// the `[1m]` 1M-context tier reads like an ANSI bold code but is literal text.
+func TestStreamDecoderAnnouncesTheReportedModelVerbatim(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "personal", "")
-	_, _ = d.Write([]byte(init))
-	if got := out.String(); !strings.Contains(got, "· using claude model claude-opus-4-8[1m] credential personal") {
-		t.Errorf("with agent+credential, model line = %q", got)
-	}
-	var out2, tail2 bytes.Buffer
-	d2 := newStreamDecoder(&out2, &tail2, "", "", "")
-	_, _ = d2.Write([]byte(init))
-	if got := out2.String(); !strings.Contains(got, "· model claude-opus-4-8[1m]") {
-		t.Errorf("without agent/credential, model line = %q (want the bare fallback)", got)
+	d := newStreamDecoder(&out, &tail, "")
+	d.identity = announceInto(&out)
+	_, _ = d.Write([]byte(`{"type":"system","subtype":"init","model":"claude-opus-4-8[1m]"}` + "\n"))
+	if got := out.String(); got != "identity[claude-opus-4-8[1m]]\n" {
+		t.Errorf("init announced %q, want the reported model once and no line of its own", got)
 	}
 }
 
 func TestLoopProviderIdentityUsesReportedModelAndDeduplicates(t *testing.T) {
 	var out, tail, forkLog, renderedTrace bytes.Buffer
 	announce := providerIdentityAnnouncer("claude", "opus", "", "personal", io.MultiWriter(&forkLog, &renderedTrace), nil)
-	d := newIterationStreamDecoder("claude", &out, &tail, nil, "personal", "", "opus", announce)
+	d := newIterationStreamDecoder("claude", &out, &tail, nil, "", "opus", announce)
 	got := captureStderr(t, func() {
 		_, _ = d.Write([]byte(`{"type":"system","subtype":"init","model":"claude-\u001b[31mopus-5"}` + "\n"))
 		_, _ = d.Write([]byte(`{"type":"system","subtype":"init","model":"claude-\u001b[31mopus-5"}` + "\n"))
@@ -276,7 +277,7 @@ func TestLoopProviderIdentityUsesReportedModelAndDeduplicates(t *testing.T) {
 
 func TestLoopProviderIdentityUsesSelectedTargetUntilAReportedModelArrives(t *testing.T) {
 	var out, tail bytes.Buffer
-	d := newIterationStreamDecoder("claude", &out, &tail, nil, "personal", "", "opus",
+	d := newIterationStreamDecoder("claude", &out, &tail, nil, "", "opus",
 		providerIdentityAnnouncer("claude", "opus", "high", "personal", nil, nil))
 	got := captureStderr(t, func() {
 		_, _ = d.Write([]byte(`{"type":"system","subtype":"init"}` + "\n"))
@@ -314,7 +315,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	// A blocking rate_limit_event is translated into the text ladder.DetectLimit understands, with the
 	// reset epoch, so the loop waits until then instead of failing the run.
 	var out, tail, diagnostic bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "", "", "")
+	d := newStreamDecoder(&out, &tail, "")
 	d.diagnostic = &diagnostic
 	_, _ = d.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
 	if !strings.Contains(tail.String(), "usage limit reached|1781877000") {
@@ -349,7 +350,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	// Without a structured event, text that merely discusses a limit remains visible in the
 	// response tail but is not promoted into terminal diagnostics used for rotation.
 	var textOut, textTail bytes.Buffer
-	textDecoder := newStreamDecoder(&textOut, &textTail, "", "", "")
+	textDecoder := newStreamDecoder(&textOut, &textTail, "")
 	var textDiagnostic bytes.Buffer
 	textDecoder.diagnostic = &textDiagnostic
 	_, _ = textDecoder.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your weekly limit"}]}}` + "\n"))
@@ -365,7 +366,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 
 	// The structured flag is narrow: ordinary assistant text and result errors still render.
 	var otherOut, otherTail bytes.Buffer
-	otherDecoder := newStreamDecoder(&otherOut, &otherTail, "", "", "")
+	otherDecoder := newStreamDecoder(&otherOut, &otherTail, "")
 	_, _ = otherDecoder.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour"}}` + "\n"))
 	_, _ = otherDecoder.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"Saving diagnostic state"}]}}` + "\n"))
 	_, _ = otherDecoder.Write([]byte(`{"type":"result","subtype":"error","is_error":true,"result":"network unavailable"}` + "\n"))
@@ -378,7 +379,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	// A failed attempt still spent tokens: its result keeps the reported cost and usage for
 	// telemetry, and the outcome stays failed.
 	var failedOut, failedTail bytes.Buffer
-	failed := newStreamDecoder(&failedOut, &failedTail, "", "", "")
+	failed := newStreamDecoder(&failedOut, &failedTail, "")
 	_, _ = failed.Write([]byte(`{"type":"result","subtype":"error","is_error":true,"result":"API Error: 500","num_turns":4,"total_cost_usd":0.42,"usage":{"input_tokens":100,"output_tokens":50}}` + "\n"))
 	if last := failed.lastIterResult(); failed.streamOutcome() != streamFailed || last == nil || last.CostUSD != 0.42 || last.OutTok != 50 {
 		t.Errorf("failed result = %v / %+v, want streamFailed with its cost and tokens", failed.streamOutcome(), last)
@@ -387,7 +388,7 @@ func TestStreamDecoderRateLimit(t *testing.T) {
 	// Informational statuses every run emits must not trip the detector.
 	for _, st := range []string{"allowed", "warning", "queued"} {
 		var o, tl bytes.Buffer
-		nd := newStreamDecoder(&o, &tl, "", "", "")
+		nd := newStreamDecoder(&o, &tl, "")
 		_, _ = nd.Write([]byte(`{"type":"rate_limit_event","rate_limit_info":{"status":"` + st + `","resetsAt":1781877000,"rateLimitType":"five_hour"}}` + "\n"))
 		if ladder.DetectLimit(tl.String(), now).Limited {
 			t.Errorf("status %q should not trip the limit detector (tail=%q)", st, tl.String())
@@ -418,7 +419,7 @@ func TestClaudeTerminalCreditLimitPromotion(t *testing.T) {
 	}
 
 	var out, tail, diagnostic bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+	d := newStreamDecoder(&out, &tail, "")
 	d.diagnostic = &diagnostic
 	_, _ = d.Write(assistantEvent(notice))
 	d.flush()
@@ -477,7 +478,7 @@ func TestClaudeTerminalCreditLimitPromotion(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out, tail, diagnostic bytes.Buffer
-			d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+			d := newStreamDecoder(&out, &tail, "")
 			d.diagnostic = &diagnostic
 			d.limitShown = tc.shown
 			_, _ = d.Write(assistantEvent(tc.text))
@@ -509,7 +510,7 @@ func TestClaudeStructuredAssistantRateLimit(t *testing.T) {
 	}
 
 	var out, tail, diagnostic bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "personal", "")
+	d := newStreamDecoder(&out, &tail, "")
 	d.diagnostic = &diagnostic
 	for _, event := range events {
 		raw, err := json.Marshal(event)
@@ -536,14 +537,15 @@ func TestStreamDecoderModel(t *testing.T) {
 	cases := []struct {
 		name, line, want string
 	}{
-		{"init with model", `{"type":"system","subtype":"init","model":"claude-opus-4-8"}`, "· model claude-opus-4-8"},
-		{"init without model", `{"type":"system","subtype":"init"}`, ""},
+		{"init with model", `{"type":"system","subtype":"init","model":"claude-opus-4-8"}`, "identity[claude-opus-4-8]"},
+		{"init without model", `{"type":"system","subtype":"init"}`, "identity[]"}, // the announcer falls back to the selected model
 		{"non-init system", `{"type":"system","subtype":"compact_boundary","model":"x"}`, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			d := newStreamDecoder(&out, &tail, "", "", "")
+			d := newStreamDecoder(&out, &tail, "")
+			d.identity = announceInto(&out)
 			_, _ = d.Write([]byte(c.line + "\n"))
 			d.flush()
 			if c.want == "" {
@@ -622,7 +624,7 @@ func TestStreamDecoderDelegationTools(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"ls /workspace/repo/.agent/tasks"}}]}}`,
 	}
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "", "/workspace/repo")
+	d := newStreamDecoder(&out, &tail, "/workspace/repo")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
 	o := out.String()
@@ -663,7 +665,7 @@ func TestStreamDecoderTaskLifecycleTools(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"code","name":"Edit","input":{"file_path":"/workspace/repo/internal/cli/streamjson.go"}}]}}`,
 	}
 	var out, tail bytes.Buffer
-	d := newStreamDecoder(&out, &tail, "claude", "", "/workspace/repo")
+	d := newStreamDecoder(&out, &tail, "/workspace/repo")
 	_, _ = d.Write([]byte(strings.Join(lines, "\n") + "\n"))
 	d.flush()
 	o := out.String()
@@ -757,7 +759,7 @@ func TestStreamDecoderRepoPaths(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var out, tail bytes.Buffer
-			d := newStreamDecoder(&out, &tail, "claude", "", root)
+			d := newStreamDecoder(&out, &tail, root)
 			_, _ = d.Write([]byte(c.event + "\n"))
 			d.flush()
 			o := out.String()
