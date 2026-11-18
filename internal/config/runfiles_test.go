@@ -29,6 +29,24 @@ func TestExistingRunfilesIsReadOnlyAndFindsTheCreatedFolder(t *testing.T) {
 	}
 }
 
+// A state folder that cannot hold run files stops the launch with an error naming it. Run files
+// never fall back to the settings folder, which may sync to other machines.
+func TestPrivateRunfilesRefusesAnUnwritableStateFolder(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(state, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(state, 0o700) })
+	cfg := &Config{LocalDir: state, BoxHome: t.TempDir()}
+	got, err := PrivateRunfiles(cfg)
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(state, "runfiles")) {
+		t.Fatalf("PrivateRunfiles = (%q, %v), want a refusal naming the state folder", got, err)
+	}
+	if _, err := os.Lstat(filepath.Join(cfg.BoxHome, "runfiles")); !os.IsNotExist(err) {
+		t.Fatalf("run files fell back to the settings folder: %v", err)
+	}
+}
+
 // The container runtime has no Config when it makes a Docker client folder. Its folder must be the
 // one the daily sweep visits for the Config every command loads, or killed runs' folders would
 // pile up where nothing looks.

@@ -22,15 +22,10 @@ func PrivateRunfiles(cfg *Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// No fallback to the settings folder: it may sync to other machines, and private per-run files
+	// left there are outside what the daily sweep visits.
 	if err := os.MkdirAll(root, 0o700); err != nil {
-		// A read-only state folder need not stop a launch whose settings folder can hold them.
-		if cfg == nil || cfg.LocalDir == "" || cfg.BoxHome == "" {
-			return "", err
-		}
-		root = filepath.Join(cfg.BoxHome, "runfiles")
-		if err := os.MkdirAll(root, 0o700); err != nil {
-			return "", err
-		}
+		return "", fmt.Errorf("cannot create Coop's private run-files folder %s (make its parent folder writable by you): %w", root, err)
 	}
 	return validateRunfiles(root)
 }
