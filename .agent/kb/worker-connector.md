@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/session/quiescence.go, internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/box/controller_runtime.go, .agent/kb/controller-project-runtime.md, internal/workerconnector/activity_narration.go, internal/workerconnector/job_sources.go]
-updated: 2026-11-17
+updated: 2026-11-18
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -109,7 +109,8 @@ The traps the code does not make obvious:
   session: its metadata-only origin must be durable before receipt deletion. The fair activity scan
   resolves only that original key and operation ID, verifies a succeeded CreateRemoteSession/session
   resource, then writes the stream before marking its origin bound. Uncertain operations remain
-  pending. An authenticated ACK that cannot retire local custody suppresses only that exact
+  pending, and their lookups back off like an unresolved lookup below, without a warning; reserved
+  and running ones are looked up every poll. An authenticated ACK that cannot retire local custody suppresses only that exact
   result in memory; its original receipt bytes remain on disk and restart requires a fresh ACK.
   Retained ACKs yield to activity, commands and event ACKs. At most one repair runs per poll,
   with a two-second deadline and backoff from five seconds to two minutes. A conflicting create
@@ -161,6 +162,9 @@ The traps the code does not make obvious:
   nonblocking journal lock; network lookups happen outside it and recheck origin identity when binding.
   A corrupt origin suppresses its corresponding stream
   and reports an error while healthy siblings continue; it never enables legacy fallback.
+  Because they are watermarks, settled origins are never deleted, so the scan still lists one file
+  per session the worker ever created; a settled one this process already read is taken from
+  memory while its inode, size and mtime are unchanged (`readListedCreateOrigin`), not reopened.
 - **Checkpoints preserve complete custody.** V2 streams raw typed Git objects and LFS payloads,
   including intermediate new history, plus the final tracked tree, untracked files and task state.
   Git object selection explicitly subtracts both the authorized base commit and its tree closure:
@@ -199,6 +203,7 @@ The traps the code does not make obvious:
 ## Changelog
 - 2026-11-17 — `Run` backs a poll the controller never answered off to 30 s and restores the interval on its first answer; a repeated identical poll error is reported once, then at a doubling interval up to 5 min, with a "worker poll recovered" line when it clears (connector.go `repeatReporter`, task 2026-11-17-warn-once-about-a-lasting-worker-poll-error-and).
 - 2026-11-17 — a permanently refused response upload settles the command instead of retrying forever; the spool goes on acknowledgement (task 2026-11-17-settle-a-command-whose-saved-response-the-contro).
+- 2026-11-18 — uncertain create lookups back off quietly; a poll no longer reopens settled create origins it already read. Their retirement stays open: deleting a watermark needs an owner decision (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll).
 - 2026-11-17 — the hello's storage and capabilities come from `LiveReports` (`storage.go`): storage is the last report, refreshed in the background one at a time, so a slow `/v1/storage` no longer stalls the single poll goroutine; capabilities are read once the daemon answers, then kept for the connection. The event scan cursor is written only when a scan stops early (audit WC-7/WC-8; settled-origin retirement and the uncertain-origin backoff are still open).
 - 2026-11-17 — the api_request tunnel filters `GET /v1/sessions/{id}/events` through the narration projection and cuts `GET /v1/storage` to its `storage` object (audit WC-2, owner choice A).
 - 2026-11-17 — a held create's retry caps at 15 s, not 2 min, and the disk-space wait holds the same way (audit K6-8; checked internal/workerconnector/first_download_waits.go).

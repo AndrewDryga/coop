@@ -258,6 +258,8 @@ func TestCreateOriginPreservationFailureKeepsOnlyItsReceiptAndReportsAfterComman
 
 func TestCreateOriginsFenceGenerationsAndNeverResurrectDiscardedStreams(t *testing.T) {
 	executor, api, first := newOriginFixture(t)
+	clock := executor.now()
+	executor.now = func() time.Time { return clock }
 	if _, err := executor.Execute(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
@@ -280,6 +282,7 @@ func TestCreateOriginsFenceGenerationsAndNeverResurrectDiscardedStreams(t *testi
 		if batches, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil || len(batches) != 0 {
 			t.Fatalf("higher %s origin leaked lower activity: %v, %v", state, batches, err)
 		}
+		clock = clock.Add(5 * time.Second) // an uncertain create is looked up again after its wait
 	}
 	if _, err := executor.Execute(context.Background(), first); err != nil {
 		t.Fatal(err)
@@ -302,6 +305,7 @@ func TestCreateOriginsFenceGenerationsAndNeverResurrectDiscardedStreams(t *testi
 	}
 	_, _ = executor.collectActivity(context.Background(), maximumPollBytes)
 	api.operation.State, api.operation.ResourceType, api.operation.ResourceID = "succeeded", "session", "coop-session-1"
+	clock = clock.Add(5 * time.Second)
 	_, _ = executor.collectActivity(context.Background(), maximumPollBytes)
 	api.events[0].Type = "workspace.discarded"
 	if batches, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil || len(batches) != 1 {
@@ -457,5 +461,111 @@ func TestActivityMetadataLockExcludesIndependentJournalWriters(t *testing.T) {
 	}
 	if err := other.preserveCreateOrigin(entry); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An uncertain create was looked up every poll, once a second, for as long as the daemon took to
+// settle it. It now waits like a failed lookup, without a warning, and a running create is still
+// looked up every poll.
+func TestUncertainCreateLookupsBackOffQuietly(t *testing.T) {
+	executor, api, command := newOriginFixture(t)
+	clock := executor.now()
+	executor.now = func() time.Time { return clock }
+	if _, err := executor.Execute(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	lookups := 0
+	api.lookup = func(context.Context, Request) (json.RawMessage, error) {
+		lookups++
+		return json.Marshal(api.operation)
+	}
+	api.operation.State = "running"
+	for range 3 {
+		if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if lookups != 3 {
+		t.Fatalf("a running create was looked up %d times in 3 polls, want every poll", lookups)
+	}
+	lookups, api.operation.State = 0, "uncertain"
+	for range 20 {
+		if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
+			t.Fatalf("an uncertain create was reported: %v", err)
+		}
+	}
+	if lookups != 1 {
+		t.Fatalf("an uncertain create was looked up %d times in 20 polls, want once", lookups)
+	}
+	for _, delay := range []time.Duration{5, 10, 20} {
+		clock = clock.Add(delay * time.Second)
+		previous := lookups
+		if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil || lookups != previous+1 {
+			t.Fatalf("due lookup after %ds: %d lookups, %v", delay, lookups-previous, err)
+		}
+	}
+	api.operation.State, api.operation.ResourceType, api.operation.ResourceID = "succeeded", "session", "coop-session-1"
+	clock = clock.Add(40 * time.Second)
+	if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
+		t.Fatal(err)
+	}
+	if origin, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(command.SessionRef)); err != nil || origin.State != "bound" {
+		t.Fatalf("settled create did not bind: %+v, %v", origin, err)
+	}
+}
+
+// Every poll opened and decoded every create origin the worker ever made. A settled one this
+// process has read is now taken from memory while its file is unchanged.
+func TestPollDoesNotReopenSettledCreateOrigins(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	executor, _, command := newOriginFixture(t)
+	var paths []string
+	for index := range 200 {
+		origin := createOrigin{
+			Version: createOriginVersion, WorkerID: "worker-a", SessionRef: fmt.Sprintf("settled-%03d", index),
+			PlacementGeneration: 1, CommandID: fmt.Sprintf("command-%03d", index), CommandDigest: strings.Repeat("a", 64),
+			OperationKey: fmt.Sprintf("key-%03d", index), OperationID: fmt.Sprintf("create-%03d", index), State: "failed",
+		}
+		path := executor.journal.createOriginPath(origin.SessionRef)
+		if err := executor.journal.writeActivityRecord(path, origin); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
+		t.Fatal(err)
+	}
+	// An unreadable file fails any open, so a poll that opened one would report it.
+	for _, path := range paths {
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, path := range paths {
+			_ = os.Chmod(path, 0o600)
+		}
+	})
+	for range 3 {
+		if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
+			t.Fatalf("a poll reopened settled origins: %v", err)
+		}
+	}
+	// A pending origin, and a settled file replaced by a newer pending one, are read.
+	if _, err := executor.Execute(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	replaced := createOrigin{
+		Version: createOriginVersion, WorkerID: "worker-a", SessionRef: "settled-000", PlacementGeneration: 2,
+		CommandID: "command-new", CommandDigest: strings.Repeat("b", 64), OperationKey: "key-new", OperationID: "create-new", State: "pending",
+	}
+	if err := executor.journal.writeActivityRecord(paths[0], replaced); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := executor.activityTargets()
+	if err != nil || len(targets) != 2 || targets[0].origin == nil || targets[1].origin == nil {
+		t.Fatalf("targets = %+v, %v; want the two pending creates", targets, err)
 	}
 }

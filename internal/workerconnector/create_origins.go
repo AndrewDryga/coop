@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -226,9 +227,16 @@ func (e *Executor) resolveCreateOrigin(ctx context.Context, origin createOrigin)
 			current.State = "failed"
 			return e.journal.writeActivityRecord(e.journal.createOriginPath(origin.SessionRef), current)
 		})
+	case "uncertain":
+		return errCreateOperationUncertain
 	}
 	return nil
 }
+
+// errCreateOperationUncertain is not a failure: the daemon has not settled the create yet and may
+// take long to. Its lookups back off like failed ones, without a warning; a reserved or running
+// create is still looked up every poll, so a new session's narration starts at once.
+var errCreateOperationUncertain = errors.New("worker create operation is uncertain")
 
 type activityTarget struct {
 	sessionRef string
@@ -250,11 +258,13 @@ func (e *Executor) activityTargets() ([]activityTarget, error) {
 		return nil, err
 	}
 	var issues error
+	listed := make(map[string]bool, len(files))
 	for _, file := range files {
 		if filepath.Ext(file.Name()) != ".json" {
 			continue
 		}
-		origin, err := e.journal.readCreateOrigin(filepath.Join(e.journal.origins, file.Name()))
+		listed[file.Name()] = true
+		origin, err := e.readListedCreateOrigin(file)
 		if err != nil {
 			issues = errors.Join(issues, fmt.Errorf("worker create origin %s: %w", file.Name(), err))
 			// The filename, not untrusted decoded identity, determines which legacy
@@ -281,6 +291,11 @@ func (e *Executor) activityTargets() ([]activityTarget, error) {
 		}
 		targets[origin.SessionRef] = target
 	}
+	for name := range e.settledOrigins {
+		if !listed[name] {
+			delete(e.settledOrigins, name)
+		}
+	}
 	result := make([]activityTarget, 0, len(targets))
 	for _, target := range targets {
 		if target.stream != nil && target.stream.TerminalSequence > 0 && target.stream.AcknowledgedSequence >= target.stream.TerminalSequence {
@@ -298,6 +313,38 @@ func (e *Executor) activityTargets() ([]activityTarget, error) {
 		return nil, fmt.Errorf("read worker activity scan cursor: %w", err)
 	}
 	return result, issues
+}
+
+// settledCreateOrigin is a bound or failed origin as this process last read it, with the file it
+// read it from. A rewrite creates its new file before the old one is removed, so it never takes
+// the old inode; only a third write within the same timestamp tick could.
+type settledCreateOrigin struct {
+	file   fs.FileInfo
+	origin createOrigin
+}
+
+// readListedCreateOrigin reads one origin the scan listed. A settled origin this process already
+// read comes from memory while its file is the same one: every origin write replaces the file
+// whole (WriteFileAtomic), so the same inode, size and modification time is the same record.
+// Opening and decoding every origin the worker ever created, every second, grew with its history.
+func (e *Executor) readListedCreateOrigin(file fs.DirEntry) (createOrigin, error) {
+	info, err := file.Info()
+	if err != nil {
+		return createOrigin{}, err
+	}
+	if cached, ok := e.settledOrigins[file.Name()]; ok && os.SameFile(cached.file, info) &&
+		cached.file.Size() == info.Size() && cached.file.ModTime().Equal(info.ModTime()) {
+		return cached.origin, nil
+	}
+	delete(e.settledOrigins, file.Name())
+	origin, err := e.journal.readCreateOrigin(filepath.Join(e.journal.origins, file.Name()))
+	if err == nil && origin.State != "pending" {
+		if e.settledOrigins == nil {
+			e.settledOrigins = make(map[string]settledCreateOrigin)
+		}
+		e.settledOrigins[file.Name()] = settledCreateOrigin{file: info, origin: origin}
+	}
+	return origin, err
 }
 
 func (j *journal) eventStreamAuthorized(stream eventStream) bool {

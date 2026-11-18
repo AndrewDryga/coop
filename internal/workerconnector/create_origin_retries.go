@@ -2,12 +2,13 @@ package workerconnector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
 
 // Missing operation evidence is not terminal proof. Preserve the origin while
-// bounding failed reads; this process-local wait never changes durable custody.
+// bounding failed and uncertain reads; this process-local wait never changes durable custody.
 type createOriginRetry struct {
 	origin      createOrigin
 	nextAttempt time.Time
@@ -30,6 +31,9 @@ func (e *Executor) resolveCreateOriginWhenDue(ctx context.Context, origin create
 			e.originRetries = make(map[string]createOriginRetry)
 		}
 		e.originRetries[origin.SessionRef] = createOriginRetry{origin: origin, nextAttempt: e.now().Add(delay), delay: delay}
+		if errors.Is(err, errCreateOperationUncertain) {
+			return nil
+		}
 		return fmt.Errorf("%w (retry in %s)", err, delay)
 	}
 	delete(e.originRetries, origin.SessionRef)

@@ -65,6 +65,7 @@ type Executor struct {
 	now             func() time.Time
 	workerID        string
 	originRetries   map[string]createOriginRetry
+	settledOrigins  map[string]settledCreateOrigin
 }
 
 func NewExecutor(config ExecutorConfig) (*Executor, error) {
