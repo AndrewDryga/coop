@@ -142,6 +142,11 @@ func (a *app) cmdLoop(args []string) (int, error) {
 			return 1, err // loop.yaml's own work.agent, not anything typed
 		}
 	}
+	// The review steps' agent: rungs are targets or presets too; a word that is neither stops the
+	// run here, before any image or box work.
+	if err := loop.CheckReviewLadders(a.cfg, repo, lc); err != nil {
+		return 1, err
+	}
 	agent := presetLeadAgent(p, t.Provider, hasTarget)
 	if agent == "" {
 		agent = workAgent // loop.yaml work.agent's first rung supplied the lead

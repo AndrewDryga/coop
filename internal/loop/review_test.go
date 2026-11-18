@@ -588,6 +588,9 @@ func TestReviewVerdictCorrectionDropsControlBytes(t *testing.T) {
 // fallback rungs. Without the provider, a claude-led run's `codex:…` signoff would resolve to
 // `claude --model <a-codex-model>` and the cross-vendor reviewer would never run.
 func TestReviewLadder(t *testing.T) {
+	c := &Control{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	repo := t.TempDir()
+	reviewLadder := func(rungs []string) ([]agents.Target, error) { return c.reviewLadder(repo, rungs) }
 	ladder, err := reviewLadder([]string{"codex:gpt-5.6-sol/xhigh", "claude:claude-fable-5/xhigh"})
 	if err != nil {
 		t.Fatal(err)
@@ -609,6 +612,57 @@ func TestReviewLadder(t *testing.T) {
 	}
 }
 
+// A preset name in a review step's agent: runs that preset's lead targets, in order and in place,
+// as work.agent does, so `signoff.agent: [frontier]` reviews on frontier's lead, not the fallback.
+func TestReviewLadderRunsAPresetsLeadTargets(t *testing.T) {
+	repo := t.TempDir()
+	writeTaskFile(t, filepath.Join(repo, ".agent", "presets", "frontier", "preset.yaml"),
+		"lead:\n  agent: [codex:gpt-5.6-sol/xhigh, claude:claude-fable-5]\n")
+	c := &Control{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	got, err := c.reviewLadder(repo, []string{"frontier", "claude@spare"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"codex:gpt-5.6-sol/xhigh", "claude:claude-fable-5", "claude@spare"}
+	if len(got) != len(want) {
+		t.Fatalf("ladder = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].String() != want[i] {
+			t.Errorf("rung %d = %s, want %s", i, got[i].String(), want[i])
+		}
+	}
+}
+
+// A word in a review step's agent: that names no agent and no preset stops the run before any box,
+// with the step named, even when there is no work to do. It is never dropped for the fallback.
+func TestUnknownReviewAgentStopsTheRunBeforeAnyBox(t *testing.T) {
+	for _, stage := range []string{"signoff", "between", "verify"} {
+		t.Run(stage, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", t.TempDir())
+			repo := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(repo, tasksRoot, stateTodo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeTaskFile(t, filepath.Join(repo, ".agent", "loop.yaml"), stage+":\n  agent: [cluade]\n")
+			host := Host{BuildRotation: func(_ string, rungs []agents.Target) (*ladder.Rotation, error) {
+				return ladder.NewRotation(rungs), nil
+			}}
+			c := New(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}, runtime.Runtime{Name: "true"}, "test", host)
+			c.boxRun = func(box.RunSpec) (int, error) {
+				t.Error("a box launched")
+				return 0, nil
+			}
+			code, err := c.Run(RunSpec{Repo: repo, Image: "img", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+				Rotation: ladder.NewRotation([]agents.Target{target("claude", "work")})})
+			if code != 1 || err == nil || !strings.Contains(err.Error(), ".agent/loop.yaml: "+stage+".agent: ") ||
+				!strings.Contains(err.Error(), `"cluade" is neither an agent`) {
+				t.Fatalf("Run = (%d, %v), want (1, the %s step's unknown word)", code, err, stage)
+			}
+		})
+	}
+}
+
 func TestReviewRotationsShareOnlyInheritedCooldowns(t *testing.T) {
 	c := &Control{host: Host{BuildRotation: func(_ string, rungs []agents.Target) (*ladder.Rotation, error) {
 		return ladder.NewRotation(rungs), nil
@@ -620,7 +674,7 @@ func TestReviewRotationsShareOnlyInheritedCooldowns(t *testing.T) {
 		if explicit {
 			lc.Signoff.Agent = []string{"claude@review", "claude@spare"}
 		}
-		rotations, err := c.resolveReviewRotations(lc, "claude", work)
+		rotations, err := c.resolveReviewRotations(t.TempDir(), lc, "claude", work)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -658,7 +712,7 @@ func TestReviewRotationsPreserveStageErrorOrder(t *testing.T) {
 				Between: loopcfg.Between{Agent: []string{"claude@between"}},
 				Verify:  loopcfg.Verify{Agent: []string{"claude@verify"}},
 			}
-			_, err := c.resolveReviewRotations(lc, "claude", rts("work"))
+			_, err := c.resolveReviewRotations(t.TempDir(), lc, "claude", rts("work"))
 			if !errors.Is(err, refusal) || !strings.HasPrefix(err.Error(), stage+" agent: ") || calls != index+1 {
 				t.Fatalf("calls=%d error=%v, want first %s refusal", calls, err, stage)
 			}

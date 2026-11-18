@@ -213,6 +213,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	if err := c.checkReviewLadders(repo, lc); err != nil {
+		return 1, err
+	}
 	currentSignoff, currentVerify := lc.Signoff, lc.Verify
 	currentSignoff.Agent = slices.Clone(currentSignoff.Agent)
 	currentVerify.Agent = slices.Clone(currentVerify.Agent)
@@ -344,7 +347,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// pasted onto the work provider). An unset stage falls back: between → signoff → the work loop.
 	// A stage with no account to run fails like the work rotation in cmdLoop: -1 lets the error set
 	// the exit code, 1 here, since neither a missing login nor an unreadable folder is rejected input.
-	activeRotations, err := c.resolveReviewRotations(lc, agent, rot)
+	activeRotations, err := c.resolveReviewRotations(repo, lc, agent, rot)
 	if err != nil {
 		return -1, err
 	}
@@ -353,7 +356,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if resumingCohort {
 		currentConfig := *lc
 		currentConfig.Signoff, currentConfig.Verify = currentSignoff, currentVerify
-		currentRotations, err = c.resolveReviewRotations(&currentConfig, agent, rot)
+		currentRotations, err = c.resolveReviewRotations(repo, &currentConfig, agent, rot)
 		if err != nil {
 			return -1, fmt.Errorf("current %w", err)
 		}

@@ -12,19 +12,22 @@ import (
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ladder"
 	"github.com/AndrewDryga/coop/internal/loopcfg"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // reviewLadder parses a review stage's raw .agent/loop.yaml agent: rungs into targets, PRESERVING
-// provider, model, effort, and account (and every fallback rung) — dropping only preset rungs, since
-// a once-per-stage review takes targets, not a rotation of presets. Without the provider, a
+// provider, model, effort, and account (and every fallback rung). A preset rung runs that preset's
+// lead targets, in order, as work.agent does; the preset is read from repo, then the global presets
+// folder, and a word that names no agent and no preset stops the run. Without the provider, a
 // claude-led run's `codex:…` signoff would resolve to `claude --model <a-codex-model>`, an invalid
 // combination, and the cross-vendor reviewer the config promises would never run.
-func reviewLadder(rungs []string) ([]agents.Target, error) {
+func (c *Control) reviewLadder(repo string, rungs []string) ([]agents.Target, error) {
 	rs, err := loopcfg.Rungs(rungs)
 	if err != nil {
 		return nil, err
@@ -33,17 +36,49 @@ func reviewLadder(rungs []string) ([]agents.Target, error) {
 	for _, r := range rs {
 		if r.Target != nil {
 			targets = append(targets, *r.Target)
+			continue
 		}
+		globalDir := ""
+		if c.cfg != nil {
+			globalDir = c.cfg.GlobalPresetsDir()
+		}
+		p, err := preset.Load(repo, globalDir, r.Preset)
+		if errors.Is(err, preset.ErrNotFound) {
+			return nil, fmt.Errorf("%q is neither an agent (%s) nor a preset listed by coop presets", r.Preset, ui.List(agents.Names(), "or"))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("preset %q: %w", r.Preset, err)
+		}
+		targets = append(targets, p.LeadTargets...)
 	}
 	return targets, nil
 }
 
+// CheckReviewLadders is checkReviewLadders for `coop loop`, which asks before it prepares an image.
+func CheckReviewLadders(cfg *config.Config, repo string, lc *loopcfg.Config) error {
+	return (&Control{cfg: cfg}).checkReviewLadders(repo, lc)
+}
+
+// checkReviewLadders reads every review stage's agent: ladder at loop start, before any box, so a
+// mistyped agent or preset stops the run with its step named even when there is no work to do.
+func (c *Control) checkReviewLadders(repo string, lc *loopcfg.Config) error {
+	for _, stage := range []struct {
+		name  string
+		rungs []string
+	}{{"signoff", lc.Signoff.Agent}, {"between", lc.Between.Agent}, {"verify", lc.Verify.Agent}} {
+		if _, err := c.reviewLadder(repo, stage.rungs); err != nil {
+			return fmt.Errorf("%s: %s.agent: %w", loopcfg.File, stage.name, err)
+		}
+	}
+	return nil
+}
+
 // reviewRotation builds a review stage's own rotation from its ladder, so the stage runs on the
 // configured provider/model/effort/account and rotates its OWN fallback rungs on a rate limit —
-// exactly like the work loop. An empty (or preset-only) ladder falls back to def: between → signoff
-// → the work rotation, so an unconfigured stage still reviews on the work target.
-func (c *Control) reviewRotation(rungs []string, workAgent string, def *ladder.Rotation) (*ladder.Rotation, error) {
-	targets, err := reviewLadder(rungs)
+// exactly like the work loop. An empty ladder falls back to def: between → signoff → the work
+// rotation, so an unconfigured stage still reviews on the work target.
+func (c *Control) reviewRotation(repo string, rungs []string, workAgent string, def *ladder.Rotation) (*ladder.Rotation, error) {
+	targets, err := c.reviewLadder(repo, rungs)
 	if err != nil {
 		return nil, err
 	}
@@ -59,16 +94,16 @@ type reviewRotations struct {
 	signoff, between, verify *ladder.Rotation
 }
 
-func (c *Control) resolveReviewRotations(lc *loopcfg.Config, workAgent string, work *ladder.Rotation) (reviewRotations, error) {
-	signoff, err := c.reviewRotation(lc.Signoff.Agent, workAgent, work)
+func (c *Control) resolveReviewRotations(repo string, lc *loopcfg.Config, workAgent string, work *ladder.Rotation) (reviewRotations, error) {
+	signoff, err := c.reviewRotation(repo, lc.Signoff.Agent, workAgent, work)
 	if err != nil {
 		return reviewRotations{}, fmt.Errorf("signoff agent: %w", err)
 	}
-	between, err := c.reviewRotation(lc.Between.Agent, workAgent, signoff)
+	between, err := c.reviewRotation(repo, lc.Between.Agent, workAgent, signoff)
 	if err != nil {
 		return reviewRotations{}, fmt.Errorf("between agent: %w", err)
 	}
-	verify, err := c.reviewRotation(lc.Verify.Agent, workAgent, signoff)
+	verify, err := c.reviewRotation(repo, lc.Verify.Agent, workAgent, signoff)
 	if err != nil {
 		return reviewRotations{}, fmt.Errorf("verify agent: %w", err)
 	}

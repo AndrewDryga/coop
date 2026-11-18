@@ -2051,6 +2051,15 @@ func TestAPresetThatDoesNotLoadExitsByWhatWentWrong(t *testing.T) {
 	if want := `Could not use preset "fats" from .agent/loop.yaml's work.agent`; code != 1 || err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("coop loop with work.agent naming no preset = (%d, %v); want exit 1 saying %q", code, err, want)
 	}
+	// A review step's agent: takes presets too, so a word naming neither an agent nor a preset there
+	// stops the run the same way, with the step named, before the runtime.
+	if err := os.WriteFile(filepath.Join(repo, ".agent", "loop.yaml"), []byte("work:\n  agent: [claude]\nsignoff:\n  agent: [cluade]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, err = a().dispatch([]string{"loop"})
+	if want := `.agent/loop.yaml: signoff.agent: "cluade" is neither an agent`; code != 1 || err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("coop loop with signoff.agent naming nothing = (%d, %v); want exit 1 saying %q", code, err, want)
+	}
 }
 
 // A bad flag or an unknown provider in the positional target is a usage error, and a malformed

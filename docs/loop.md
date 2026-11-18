@@ -203,9 +203,11 @@ Tune the loop in one committed `.agent/loop.yaml`, with a section per step:
 | `verify` | an optional affected-feature pass after the final review |
 
 Set `agent:` for `work`, `between`, `signoff` or `verify` to choose its models. Each setting takes
-a fallback list of targets (`provider[:model][/effort][@account]`) or preset names. For example,
-`signoff.agent` can use a stronger model to review work done by a cheaper `work.agent`. Every
-step except `work` also accepts a `prompt:`.
+a fallback list of targets (`provider[:model][/effort][@account]`) or preset names. A preset name
+runs that preset's lead targets, in its place in the list. A word that names neither an agent nor
+a preset stops the loop before it starts, naming the step. For example, `signoff.agent` can use a
+stronger model to review work done by a cheaper `work.agent`. Every step except `work` also
+accepts a `prompt:`.
 
 Custom prompts add to co:op's built-in checks and don't replace them:
 
