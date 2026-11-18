@@ -3045,7 +3045,7 @@ func printTaskTree(root, heading string, items []Item, waits queueIndex, all boo
 		total := len(ts)
 		capped := state == StateDone && !all && total > doneListCap
 		if capped {
-			ts = ts[total-doneListCap:] // the most recent (folders sort oldest-first)
+			ts = ts[total-doneListCap:] // the newest by creation date: ids sort oldest-first
 		}
 		for _, t := range ts {
 			// Title-first (what a human scans), wrapped across as many lines as it needs so the
