@@ -1,12 +1,43 @@
 package box
 
 import (
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/runtime"
 )
+
+// COOP_RUNTIME may name Docker by path. Such a launch is still a kernel-protection candidate; it
+// used to fall back to mount protection with no word, because the check compared the name to "docker".
+func TestPathValuedDockerRuntimeIsAKernelProtectionCandidate(t *testing.T) {
+	repo := t.TempDir()
+	if !filesystemProfileCandidate(repo) {
+		t.Skip("the temporary folder's filesystem is not a kernel-protection candidate")
+	}
+	t.Setenv("DOCKER_CONTEXT", "")
+	t.Setenv("DOCKER_HOST", "unix://"+filepath.Join(t.TempDir(), "absent.sock"))
+	cfg := &config.Config{ConfigDir: t.TempDir(), NoNewPrivileges: true}
+	for _, test := range []struct {
+		name      string
+		candidate bool
+	}{
+		{filepath.Join(t.TempDir(), "docker"), true},
+		{filepath.Join(t.TempDir(), "docker-wrapper"), false},
+	} {
+		var report FilesystemReport
+		spec := RunSpec{Repo: repo, Quiet: true, OnFilesystemReport: func(r FilesystemReport) { report = r }}
+		admission, err := selectFilesystemAdmission(t.Context(), runtime.Runtime{Name: test.name}, cfg, spec, nil, nil, nil)
+		if err != nil || admission != nil {
+			t.Fatalf("%s: admission = (%v, %v), want a mount-protection fallback", test.name, admission, err)
+		}
+		if report.kernelCandidate != test.candidate {
+			t.Errorf("%s: kernel-protection candidate = %t, want %t (reason %q)", test.name, report.kernelCandidate, test.candidate, report.Reason)
+		}
+	}
+}
 
 func TestFilesystemAgentImageAdmission(t *testing.T) {
 	for _, test := range []struct {

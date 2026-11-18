@@ -70,7 +70,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	// (the compose path is not shadowed), but the host refuses anything that reaches outside a
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
-	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, rt.Name == "docker" && filesystemProfileCandidate(workspace))
+	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, rt.IsDocker() && filesystemProfileCandidate(workspace))
 	data, err := readValidatedCompose(file, workspace, repoReadOnly)
 	controller, _ := ctx.Value(controllerServicesKey{}).(*config.Config)
 	if err == nil && controller != nil {

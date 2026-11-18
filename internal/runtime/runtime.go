@@ -201,6 +201,13 @@ func (r Runtime) DaemonID(ctx context.Context) (string, error) {
 	return "", r.EnsureDaemonContext(ctx)
 }
 
+// IsDocker reports whether this runtime is Docker's own CLI, named or given as a path such as
+// /usr/local/bin/docker. Features built on Docker's API (kernel file protection, deferred service
+// shadows) ask this rather than comparing Name, which holds whatever COOP_RUNTIME said.
+func (r Runtime) IsDocker() bool {
+	return r.kind() == runtimeDocker
+}
+
 // SupportsFilteredNetwork reports whether `--egress filtered` can run on this runtime. The gateway,
 // its qualification and the locked client images are all built against Docker's API (see
 // InspectDocker) — no other runtime has been proven to serve them.

@@ -257,6 +257,20 @@ func TestLaunchFeatureCapabilities(t *testing.T) {
 	}
 }
 
+// COOP_RUNTIME may name Docker by path; the box's Docker-only features must still see Docker.
+func TestIsDockerFollowsTheBaseName(t *testing.T) {
+	for _, name := range []string{"docker", "/usr/local/bin/docker", "/opt/homebrew/bin/docker"} {
+		if !(Runtime{Name: name}).IsDocker() {
+			t.Errorf("%q should read as Docker", name)
+		}
+	}
+	for _, name := range []string{"container", "/usr/local/bin/container", "podman", "/usr/bin/docker-wrapper", ""} {
+		if (Runtime{Name: name}).IsDocker() {
+			t.Errorf("%q should not read as Docker", name)
+		}
+	}
+}
+
 func TestSupportsInit(t *testing.T) {
 	for _, name := range []string{"docker", "/usr/local/bin/docker", "/opt/homebrew/bin/docker"} {
 		if !(Runtime{Name: name}).SupportsInit() {

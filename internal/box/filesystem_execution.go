@@ -99,7 +99,7 @@ func selectFilesystemAdmission(ctx context.Context, rt runtime.Runtime, cfg *con
 			spec.OnFilesystemReport(report)
 		}
 	}()
-	if spec.Login || spec.GradeSnapshot || spec.FormatCorrection || !cfg.NoNewPrivileges && spec.CapturedEgress == nil || rt.Name != "docker" || !filesystemProfileCandidate(spec.Repo) {
+	if spec.Login || spec.GradeSnapshot || spec.FormatCorrection || !cfg.NoNewPrivileges && spec.CapturedEgress == nil || !rt.IsDocker() || !filesystemProfileCandidate(spec.Repo) {
 		return nil, nil
 	}
 	kernelCandidate = true

@@ -359,7 +359,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) (result error) {
 		return nil
 	}
 	ctx = context.WithValue(ctx, isolatedServiceParentKey{}, s.isolatedParent)
-	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, s.runtime.Name == "docker" && filesystemProfileCandidate(s.repo))
+	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, s.runtime.IsDocker() && filesystemProfileCandidate(s.repo))
 	if err := refuseRunningServiceWriters(ctx, s.runtime, s.repo); err != nil {
 		return err
 	}

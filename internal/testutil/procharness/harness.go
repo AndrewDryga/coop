@@ -114,6 +114,10 @@ func Environment(layout Layout, extra map[string]string) ([]string, error) {
 		"COOP_HOMES": "0", "COOP_NETWORK": "0", "COOP_AUTO_UP": "0", "COOP_CACHE": "0",
 		"COOP_CAFFEINATE": "0", "COOP_EGRESS": "offline", "COOP_NO_UPDATE_CHECK": "1",
 		"COOP_RUN_ARGS": "", "COOP_MEMORY": "", "COOP_CPUS": "",
+		// The runtime fixture is installed as docker, so a launch asks Docker's API whether kernel file
+		// protection can run. No daemon answers here: the check fails without a runtime call and the
+		// launch keeps mount protection, and nothing can reach the host's real Docker socket.
+		"DOCKER_HOST": "unix://" + filepath.Join(layout.Root, "no-docker.sock"), "DOCKER_CONTEXT": "",
 	}
 	allowed := map[string]bool{
 		"PATH": true, "TERM": true, "TZ": true,

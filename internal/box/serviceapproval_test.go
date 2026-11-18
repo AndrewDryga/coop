@@ -107,6 +107,8 @@ func serviceReviewRuntime(t *testing.T, recorder string) runtime.Runtime {
 	t.Helper()
 	t.Setenv("DOCKER_CONTEXT", "")
 	t.Setenv("DOCKER_HOST", serviceFixtureDaemon(t, recorder))
+	// Named docker on purpose: it fronts a fake Docker daemon, so a start reads as Docker and takes
+	// the deferred service shadows a real Docker start on a candidate filesystem takes.
 	path := filepath.Join(t.TempDir(), "docker")
 	script := "#!/bin/sh\n"
 	if recorder != "" {

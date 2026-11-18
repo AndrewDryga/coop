@@ -100,7 +100,7 @@ func prepareFilesystemAdmission(ctx context.Context, rt runtime.Runtime, roots [
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if rt.Name != "docker" {
+	if !rt.IsDocker() {
 		return nil, errFilesystemUnsupported
 	}
 	endpoint, daemon := rt.ComposeBinding()
