@@ -1365,10 +1365,11 @@ OPTIONS
 ` + networkOptionRows + `
 
   Without a target, Coop starts the target the fork was made with or last
-  switched to; choose another model or effort in your editor.
+  switched to; choose another model or effort in your editor. A fork made
+  from a preset runs that preset, with its roles and ladder.
 
   Open the parent project in your editor; Coop maps it to the fork. The fork,
-  provider and account stay fixed.
+  provider and account stay fixed, or the preset does.
 
 EXAMPLES
   coop fork myfork acp

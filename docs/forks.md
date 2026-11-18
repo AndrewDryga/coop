@@ -203,8 +203,10 @@ saved account has been removed, co:op names the saved target and says how to pic
 
 A fork made from a preset (`coop fork perf frontier`) remembers the preset the same way, and
 `coop fork perf` and `coop fork perf --loop -d` run it again with its lead's model and account, its
-roles and its ladder. If the preset no longer loads, co:op names it and stops. An editor session
-does not run presets yet, so `coop fork perf acp` on such a fork asks you to name a target.
+roles and its ladder. If the preset no longer loads, co:op names it and stops. `coop fork perf acp`
+runs it in your editor the way `coop acp frontier` does: the lead's model and account, the roles,
+and the ladder when the lead reaches a limit. The session stays on that preset; to run something
+else in the editor, name a target: `coop fork perf acp claude`.
 
 Reopening a fork also resumes the last conversation. co:op saves a session ID for each fork,
 provider and account in the fork's git-excluded `.coop/` folder, and uses it to resume the exact

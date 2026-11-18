@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/acpctl"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -410,21 +412,117 @@ func TestDetachedForkLoopResumesWithItsSavedPreset(t *testing.T) {
 	}
 }
 
-// An editor session runs no preset yet, so a target-less coop fork <name> acp on a fork made from one
-// is refused by name instead of opening the lead's provider bare; naming a target still works.
-func TestForkACPRefusesAForkMadeFromAPreset(t *testing.T) {
+// A target-less coop fork <name> acp on a fork made from a preset runs that preset, as coop acp
+// <preset> does: its supervisor starts each box on the ladder's rung with the preset named, and
+// pins no account itself. Naming a target still runs that target alone.
+func TestForkACPRunsTheForksSavedPreset(t *testing.T) {
 	repo := initRepo(t)
 	a, _ := savedTargetApp(t, repo)
 	presetFork(t, a, repo, "perf")
+
+	b := reopened(a)
+	called := false
+	b.acpSupervise = func(inner []string, ctrl *acpctl.Control) (int, error) {
+		called = true
+		if target, presetName, ok := ctrl.SpawnTarget(); !ok || presetName != "frontier" || target.String() != "claude:haiku@personal" {
+			t.Errorf("the fork's editor session starts (%s, %q, %v), want claude:haiku@personal on preset frontier", target.String(), presetName, ok)
+		}
+		if !slices.Equal(inner[:3], []string{"fork", "perf", "acp"}) || slices.ContainsFunc(inner, func(arg string) bool { return strings.HasPrefix(arg, "claude") }) {
+			t.Errorf("child argv = %q, want the fork's acp with its target left to the environment", inner)
+		}
+		return 0, nil
+	}
+	if code, err := b.forkACP("perf", []string{"--egress", "open"}); code != 0 || err != nil || !called {
+		t.Fatalf("coop fork perf acp = (%d, %v, supervised=%v), want the preset session", code, err, called)
+	}
+	if b.preset == nil || b.preset.Name != "frontier" || b.cfg.ActiveProfile("claude") != "default" {
+		t.Errorf("the supervisor ran preset %+v with Claude's account %q; want frontier and no pinned account", b.preset, b.cfg.ActiveProfile("claude"))
+	}
+
+	c := reopened(a)
+	c.acpSupervise = func(inner []string, ctrl *acpctl.Control) (int, error) {
+		if len(inner) < 4 || inner[3] != "claude@default" {
+			t.Errorf("child argv = %q, want the named target", inner)
+		}
+		if _, presetName, _ := ctrl.SpawnTarget(); presetName != "" {
+			t.Errorf("a named target ran preset %q", presetName)
+		}
+		return 0, nil
+	}
+	if code, err := c.forkACP("perf", []string{"claude", "--egress", "open"}); code != 0 || err != nil || c.preset != nil {
+		t.Fatalf("coop fork perf acp claude = (%d, %v, preset %+v), want claude alone", code, err, c.preset)
+	}
+}
+
+// The box a preset fork's editor child starts carries the preset: the rung its supervisor named,
+// with that rung's model and account, and the preset's roles.
+func TestForkACPChildRunsThePresetRungItIsGiven(t *testing.T) {
+	repo := initRepo(t)
+	a, recorder := savedTargetApp(t, repo)
+	presetFork(t, a, repo, "perf")
+	before := dockerRuns(t, recorder)
+	t.Setenv("COOP_ACP_INNER", "1")
+	t.Setenv("COOP_ACP_PRESET", "frontier")
+	t.Setenv("COOP_ACP_TARGET", "claude:haiku@personal")
+	b := reopened(a)
+	captureStderr(t, func() { _, _ = b.forkACP("perf", []string{"--egress", "open"}) })
+	if b.preset == nil || b.preset.Name != "frontier" || b.cfg.ModelFor("claude") != "haiku" || b.cfg.ActiveProfile("claude") != "personal" {
+		t.Fatalf("the child ran preset %+v with model %q on account %q, want frontier's haiku on personal",
+			b.preset, b.cfg.ModelFor("claude"), b.cfg.ActiveProfile("claude"))
+	}
+	data, err := os.ReadFile(recorder)
+	if err != nil || dockerRuns(t, recorder) != before+1 || !strings.Contains(string(data), "COOP_CONSULT_CRITIC_") {
+		t.Fatalf("the child's box does not mount the preset's critic (%v):\n%s", err, data)
+	}
+}
+
+// A saved preset that no longer loads is refused by name, as coop fork <name> refuses it.
+func TestForkACPRefusesASavedPresetThatNoLongerLoads(t *testing.T) {
+	repo := initRepo(t)
+	a, _ := savedTargetApp(t, repo)
+	presetFork(t, a, repo, "perf")
+	if err := os.RemoveAll(filepath.Join(repo, ".agent", "presets", "frontier")); err != nil {
+		t.Fatal(err)
+	}
 	code, err := reopened(a).forkACP("perf", nil)
 	usage := asUsage(err)
-	if code != 1 || usage == nil || usage.Headline != `Fork "perf" was made from preset "frontier", which an editor session cannot run` {
-		t.Fatalf("coop fork perf acp = (%d, %v), want the preset named", code, err)
+	if code != 1 || usage == nil || usage.Headline != `Fork "perf" cannot use its saved preset "frontier"` {
+		t.Fatalf("coop fork perf acp = (%d, %v), want the saved preset named", code, err)
 	}
-	block := usageBlock(t, err)
-	for _, want := range []string{"coop fork perf\n", "coop fork perf acp <target>\n"} {
-		if !strings.Contains(block, want) {
-			t.Errorf("refusal does not offer %q:\n%s", want, block)
+	if block := usageBlock(t, err); !strings.Contains(block, "coop fork perf <target>\n") {
+		t.Errorf("refusal does not offer another target:\n%s", block)
+	}
+}
+
+// The fork's preset session stays on its preset: the editor cannot pick another, none, or a plain
+// provider or account. Its native model choices and the preset itself pass through.
+func TestForkPresetSessionRefusesSwitchingAway(t *testing.T) {
+	set := func(id, value string) []byte {
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":7,"method":"session/set_config_option","params":{"sessionId":"s","configId":%q,"value":%q}}`, id, value))
+	}
+	for _, tc := range []struct {
+		line    []byte
+		refused bool
+	}{
+		{set(acpctl.CoopPresetID, "none"), true},
+		{set(acpctl.CoopPresetID, "other"), true},
+		{set(acpctl.CoopProviderID, "codex"), true},
+		{set(acpctl.CoopAccountID, "work"), true},
+		{set(acpctl.CoopPresetID, "frontier"), false},
+		{set("model", "opus"), false},
+		{[]byte(`{"jsonrpc":"2.0","id":8,"method":"session/prompt","params":{"sessionId":"s"}}`), false},
+	} {
+		id, refused := forkPresetSwitch(tc.line, "frontier")
+		if refused != tc.refused || refused && string(id) != "7" {
+			t.Errorf("forkPresetSwitch(%s) = (%s, %v), want refused=%v", tc.line, id, refused, tc.refused)
 		}
+	}
+	var refusal struct {
+		ID    int                      `json:"id"`
+		Error struct{ Message string } `json:"error"`
+	}
+	if err := json.Unmarshal(forkPresetSwitchRefused(json.RawMessage("7"), "perf", "frontier"), &refusal); err != nil || refusal.ID != 7 ||
+		!strings.Contains(refusal.Error.Message, "coop fork perf acp <target>") {
+		t.Errorf("refusal = %+v, %v", refusal, err)
 	}
 }

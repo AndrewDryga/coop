@@ -15,7 +15,9 @@ one (below). See [[restricted-networking]] for what admission decides.
 (`cli/commands.go`). Interactive forks and remote/restricted fork ACP children do the same in
 `cli/fork_cmd.go`. A direct local fork ACP editor admits once in its outer process; its pinned
 child re-proves the capture reference and exact credential bindings without re-admitting
-(`cli/fork_acp.go`, `cli/fork_cmd.go`). Open/offline children inherit the resolved posture.
+(`cli/fork_acp.go`, `cli/fork_cmd.go`). A fork made from a preset admits every rung of its lead
+ladder, its roles and the peers beside each rung (`forkACPPresetScope`), as `coop acp <preset>` does.
+Open/offline children inherit the resolved posture.
 Fork review/merge gates use the trusted parent policy in `forkctl/merge.go`. A fork loop re-renders
 the operator's flags in their exact spelling so the detached worker admits what its foreground twin
 would have (`cli/network_flags.go`). Before detaching, the parent fully admits the actual fork
@@ -203,6 +205,7 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-17 — a preset fork's editor session admits every rung and role of its saved preset (`forkACPPresetScope`).
 - 2026-11-17 — a session's runs no longer expire at 90 days; they last as long as the session row (audit NS-3, owner decision A).
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K3-7; checked with grep).
 - 2026-11-17 — dropped the claim that a pre-marker setup snapshot goes: origin-based marking is gone,

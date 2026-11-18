@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/acpctl"
@@ -20,26 +21,45 @@ import (
 // superviseForkACP gives a local fork the same ACP permission and target-setting
 // handling as a normal editor session without exposing provider or preset switches:
 // this command fixes the fork, provider and account, while native model/effort
-// choices remain available. Its child still takes the
-// forkACP path, which owns the parent's image, fork generation and network policy.
-func (a *app) superviseForkACP(repo, workspace, name string, target agents.Target, peers []agents.Target, capture *box.CapturedEgress) (int, error) {
+// choices remain available. A fork made from a preset runs that preset as `coop acp
+// <preset>` does, its ladder, roles and limit rotation included, and stays on it. Its
+// child still takes the forkACP path, which owns the parent's image, fork generation and
+// network policy. scope is what admission covered for a preset.
+func (a *app) superviseForkACP(repo, workspace, name string, target agents.Target, presetName string, peers, scope []agents.Target, capture *box.CapturedEgress) (int, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return 1, err
 	}
 	superID := newSupervisorID()
-	if account := a.cfg.ActiveProfile(target.Provider); account != "" {
-		target.Accounts = []string{account}
-	}
 	a.acpCapture = capture
 	a.acpPeers = peers
-	if capture != nil {
-		a.acpNetworkTargets, _, err = a.acpFilteredSpawnScope(target, "")
-		if err != nil {
-			return 1, err
+	inner := []string{"fork", name, "acp"}
+	var ctrl *acpctl.Control
+	var hooks *acpproxy.Hooks
+	if presetName != "" {
+		// Each child's rung and preset ride in its environment (spawnBox), so its argv names none. The
+		// control reads the preset from the parent, as the child does (loadRunPreset).
+		ctrl = acpctl.New(a.cfg, target.Provider, a.cfg.ModelFor(target.Provider), a.cfg.EffortFor(target.Provider), repo,
+			acpctl.Selection{Preset: presetName}, []string{presetName}, nil, acpHost())
+		if capture != nil {
+			a.acpNetworkTargets = slices.Clone(scope)
+			ctrl.LimitNetworkTargets(scope)
 		}
+		hooks = presetForkACPHooks(ctrl, repo, workspace, name, presetName)
+	} else {
+		if account := a.cfg.ActiveProfile(target.Provider); account != "" {
+			target.Accounts = []string{account}
+		}
+		if capture != nil {
+			a.acpNetworkTargets, _, err = a.acpFilteredSpawnScope(target, "")
+			if err != nil {
+				return 1, err
+			}
+		}
+		inner = append(inner, target.String())
+		ctrl = newForkACPControl(a.cfg, target, workspace)
+		hooks = fixedForkACPHooks(ctrl, repo, workspace)
 	}
-	inner := []string{"fork", name, "acp", target.String()}
 	for _, peer := range peers {
 		inner = append(inner, "--peer", peer.String())
 	}
@@ -48,9 +68,17 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 		return 2, err
 	}
 	inner = append(inner, networkArgs...)
-
-	ctrl := newForkACPControl(a.cfg, target, workspace)
-	hooks := fixedForkACPHooks(ctrl, repo, workspace)
+	if a.acpSupervise != nil {
+		return a.acpSupervise(inner, ctrl)
+	}
+	// A preset child starts on the rung the control names now: a limit moves it along the ladder.
+	spawnTarget := func() (agents.Target, string, bool, *acpctl.Control) {
+		if presetName == "" {
+			return target, "", false, nil
+		}
+		t, ps, ok := ctrl.SpawnTarget()
+		return t, ps, ok, ctrl
+	}
 	// Build readiness must use the same fork-local approval as its child admission.
 	restarter := &acpproxy.Restarter{}
 	a.acpBoxWait = a.newACPBoxWait(ctrl, restarter, box.RunSpec{Repo: workspace, Workdir: workspace, Agent: target.Provider, Network: a.cfg.Network, SupervisorID: superID}, func() {}, func() {})
@@ -63,7 +91,8 @@ func (a *app) superviseForkACP(repo, workspace, name string, target agents.Targe
 		if err := a.acpBoxWait.refreshStale(ctx); err != nil {
 			acpproxy.Trace("box wait: could not look: %v", err)
 		}
-		child, err := a.spawnBox(ctx, self, inner, superID, nil, target, "", false, os.Stderr)
+		t, ps, ok, spawnCtrl := spawnTarget()
+		child, err := a.spawnBox(ctx, self, inner, superID, spawnCtrl, t, ps, ok, os.Stderr)
 		if err == nil {
 			a.acpBoxWait.started(child)
 		}
@@ -118,6 +147,89 @@ func fixedForkACPHooks(ctrl *acpctl.Control, repo, workspace string) *acpproxy.H
 			return handled, response, rewritten, restart
 		},
 	}
+}
+
+// presetForkACPHooks are coop acp's hooks for the fork's preset session, which rotate the lead
+// ladder on a limit and show the preset with its live rung. The fork stays on its preset: the
+// editor's choice of another preset, of none, or of a plain provider or account is refused.
+func presetForkACPHooks(ctrl *acpctl.Control, repo, workspace, name, presetName string) *acpproxy.Hooks {
+	hooks := ctrl.Hooks()
+	fromEditor := hooks.FromEditor
+	hooks.FromEditor = func(line []byte) (bool, []byte, []byte, bool) {
+		handled, response, rewritten, restart := forkACPFromEditor(line, repo, workspace)
+		if handled {
+			return handled, response, rewritten, restart
+		}
+		if rewritten != nil {
+			line = rewritten
+		}
+		if id, refused := forkPresetSwitch(line, presetName); refused {
+			return true, forkPresetSwitchRefused(id, name, presetName), nil, false
+		}
+		handled, response, toAdapter, restart := fromEditor(line)
+		if !handled && toAdapter == nil {
+			toAdapter = rewritten
+		}
+		return handled, response, toAdapter, restart
+	}
+	return hooks
+}
+
+// forkPresetSwitch reports whether line asks to change Coop's own preset, provider or account
+// selection to anything but presetName, with the request's id.
+func forkPresetSwitch(line []byte, presetName string) (json.RawMessage, bool) {
+	var request struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params struct {
+			ConfigID string `json:"configId"`
+			Value    string `json:"value"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &request) != nil || request.Method != "session/set_config_option" {
+		return nil, false
+	}
+	switch request.Params.ConfigID {
+	case acpctl.CoopPresetID:
+		return request.ID, request.Params.Value != presetName
+	case acpctl.CoopProviderID, acpctl.CoopAccountID:
+		return request.ID, true
+	}
+	return nil, false
+}
+
+func forkPresetSwitchRefused(id json.RawMessage, name, presetName string) []byte {
+	message := fmt.Sprintf("Fork %s runs preset %s here. To run something else, open it with: coop fork %s acp <target>", name, presetName, name)
+	response, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": id,
+		"error": map[string]any{"code": -32602, "message": message},
+	})
+	return append(response, '\n')
+}
+
+// forkACPPresetScope is every target a preset fork's editor session may start, for its one
+// admission: each rung of the preset's lead ladder with the peers beside it, and the preset's roles.
+func (a *app) forkACPPresetScope(presetName string, peers []agents.Target) ([]agents.Target, error) {
+	leads, err := expandLadder(a.cfg, a.preset.Lead().Provider, a.preset.LeadTargets)
+	if err != nil {
+		return nil, err
+	}
+	a.acpPeers = peers
+	var scope []agents.Target
+	seen := map[string]bool{}
+	for _, lead := range leads {
+		targets, _, err := a.acpFilteredSpawnScope(lead, presetName)
+		if err != nil {
+			return nil, err
+		}
+		for _, target := range targets {
+			if !seen[target.String()] {
+				seen[target.String()] = true
+				scope = append(scope, target)
+			}
+		}
+	}
+	return scope, nil
 }
 
 // The editor starts Coop from the parent project, while the ACP adapter only

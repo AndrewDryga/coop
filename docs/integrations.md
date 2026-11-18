@@ -192,7 +192,9 @@ The command starts the agent the fork was created with. Name a target to start a
 Configure this command with the parent project open in Zed, and co:op maps that directory to the
 fork inside the box. If the editor is open on an unrelated directory, co:op refuses the session.
 The fork, provider and account stay fixed, so co:op hides the usual ACP Provider and Preset menus.
-You can still use any model and effort choices the adapter offers.
+You can still use any model and effort choices the adapter offers. A fork made from a preset runs
+that preset instead, as `coop acp <preset>` does: the Preset menu shows it and its live rung, and
+co:op refuses a switch to another preset or to a plain provider.
 
 ### Services and custom images
 

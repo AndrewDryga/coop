@@ -3,7 +3,7 @@ name: acp-target-commit
 description: ACP model and effort choices become controller truth only from the effective provider response
 subsystem: acp
 sources: [internal/acpctl/control.go, internal/acpctl/control_test.go, internal/cli/fork_acp.go, internal/cli/fork_acp_test.go, internal/agent/grok.go, internal/acpproxy/proxy.go, internal/acpproxy/scripted_matrix_e2e_test.go]
-updated: 2026-11-06
+updated: 2026-11-17
 ---
 
 Native and synthesized target requests carry a monotonic provider/field sequence. A provider success
@@ -17,7 +17,9 @@ native `session/set_model` requests, plus their adapter responses. Accepted choi
 target commit path before `SessionReady` reapplies them after a child restart; rejected choices do
 not change the target. An adapter request with the same numeric ID in the opposite RPC direction is
 not an acknowledgment. The supervisor leaves native toolbar frames unchanged and never enables Coop
-provider/account/preset selection.
+provider/account/preset selection. A fork made from a preset instead runs the full control of
+`coop acp <preset>` (ladder rotation, the Preset menu with its live rung), and refuses a change to
+another preset, to none, or to a plain provider or account (`presetForkACPHooks`).
 
 For a translated `session/set_model`, only the exact structured Grok pair
 `MODEL_SWITCH_INCOMPATIBLE_AGENT` plus `start_new_session` is an accepted launch-target migration.
@@ -53,6 +55,7 @@ Live conformance changes a model only when the installed adapter advertises a di
 while live E2E still requires a nonempty current model, reload, and a second successful prompt.
 
 ## Changelog
+- 2026-11-17 — a fork made from a preset runs the preset's full control in its editor session and refuses switching away from it.
 - 2026-11-06 — a plain session's session/new answer now shows the target's effort too
   (`retargetSettings`), so an editor that ignores the settled update does not show the adapter's
   default; verified against each agent's `ACPSessionSettings` and the option ids the 2026-11-06

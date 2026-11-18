@@ -1194,15 +1194,55 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		}
 	}
 	// The positional target names the fork's ACP session (coop fork <name> acp claude:opus@work),
-	// like plain `coop acp`. Without one, the fork's own saved target starts and the editor's model
-	// and effort selectors choose from there.
+	// like plain `coop acp`. Without one, the fork's own saved preset or target starts and the
+	// editor's model and effort selectors choose from there. A preset fork's supervisor names each
+	// child's preset and ladder rung in the environment, as coop acp's does.
+	innerProcess := os.Getenv("COOP_ACP_INNER") != ""
+	// An editor session's own launch supervises its boxes (superviseForkACP); a supervised child, a
+	// session daemon's child and a read-only session run their one box here.
+	supervised := !innerProcess && sessionsvc.RunIDFromEnv() == "" && !repositoryReadOnly
 	var t agents.Target
-	if len(rest) == 0 {
-		if t, err = a.forkACPTarget(name); err != nil {
+	presetName := ""
+	if innerProcess && len(rest) == 0 {
+		presetName = os.Getenv("COOP_ACP_PRESET")
+		if tv := os.Getenv("COOP_ACP_TARGET"); tv != "" {
+			if t, err = agents.ParseTarget(tv); err != nil {
+				// The environment can carry tokens, so this states the form and never echoes the value.
+				return 2, &ui.UsageError{
+					Headline: "Invalid COOP_ACP_TARGET for \"coop fork " + name + " acp\"",
+					Cause:    "Use an agent, with an optional model, effort and account, such as claude:opus/high@work.",
+				}
+			}
+		}
+	}
+	switch {
+	case t.Provider != "":
+	case len(rest) == 0:
+		if t, presetName, err = a.forkACPTarget(name); err != nil {
 			return 1, err
 		}
-	} else if t, err = agents.ParseTarget(rest[0]); err != nil {
-		return 2, err
+	default:
+		if t, err = agents.ParseTarget(rest[0]); err != nil {
+			return 2, err
+		}
+	}
+	if presetName != "" {
+		p, err := a.loadRunPreset("coop fork", presetName)
+		if err != nil {
+			refusal := savedForkErr(name, "preset", presetName, err)
+			return refusalExit(refusal), refusal
+		}
+		if t.Provider == "" {
+			t.Provider = p.Lead().Provider
+		}
+		if supervised {
+			// The supervisor owns the ladder, as in coop acp: the lead's first rung is not pinned here.
+			a.preset = p
+		} else {
+			// A box runs here: a supervised child on the rung its supervisor chose, whose explicit
+			// target below overrides the lead's first rung that applyPreset seeds, or a session's.
+			a.applyPreset(p, t.Provider)
+		}
 	}
 	agent, model, profile, effort := t.Provider, "", "", t.Effort
 	// provider[:model][/effort][@account]: model + single account fold into the session's one-off
@@ -1210,7 +1250,6 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err := foldTarget(t, "coop fork "+name+" acp", &model, &profile); err != nil {
 		return 2, err
 	}
-	innerProcess := os.Getenv("COOP_ACP_INNER") != ""
 	if innerProcess && os.Getenv(box.SessionNetworkCaptureEnv) != "" {
 		bindings, err := applyACPAccountBindings(a.cfg, os.Getenv(acpAccountBindingsEnv))
 		if err != nil {
@@ -1261,8 +1300,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 		return refusalExit(err), err
 	}
 	lead := ""
-	if len(peers) > 0 {
-		lead = agent
+	if len(peers) > 0 || a.preset != nil {
+		lead = agent // a preset's roles mount through the consult lead too
 	}
 	activityKind := forkspace.ExecutionForkACP
 	reservationOwner := ""
@@ -1279,7 +1318,7 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	}
 	spec := box.RunSpec{
 		Image: img, Repo: ws, Workdir: workdir, RepoReadOnly: repositoryReadOnly,
-		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers, NetworkClient: egress.ClientACP,
+		Cmd: cmd, ForceNoTTY: true, Agent: agent, ConsultLead: lead, Peers: peers, Preset: a.preset, NetworkClient: egress.ClientACP,
 		ShareACPSessions: true,
 		SupervisorID:     os.Getenv("COOP_ACP_SUPERVISOR"), Quiet: innerProcess,
 		Homes: a.cfg.Homes, Network: a.cfg.Network, Cache: a.cfg.Cache,
@@ -1311,20 +1350,32 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	// A preset's supervisor admits once for every box the session may start, as coop acp does: each
+	// rung of the lead ladder, the preset's roles, and the peers beside each rung.
+	var scope []agents.Target
+	if supervised && a.preset != nil {
+		if scope, err = a.forkACPPresetScope(presetName, peers); err != nil {
+			return 1, err
+		}
+	}
 	// A local fork ACP launch admits here. A remote session already froze its
 	// policy in the daemon, including open/offline runs that carry no capture.
 	if capture == nil && !innerProcess && sessionsvc.RunIDFromEnv() == "" {
 		options := a.network.admission()
+		admitted := spec
+		if scope != nil {
+			admitted.Peers = scope
+		}
 		if !repositoryReadOnly { // this one has a supervisor below, to connect first and report the wait
 			options.ProjectBuild = box.DeferProjectBuild
-			admissionCfg, holdingSpec := a.cfg.Clone(), spec
+			admissionCfg, holdingSpec := a.cfg.Clone(), admitted
 			a.acpHoldAdmission = func(ctx context.Context) (*box.CapturedEgress, error) {
 				held := holdingSpec
 				held.Ctx = ctx
 				return box.AdmitHoldingNetwork(admissionCfg.Clone(), a.rt, held, options)
 			}
 		}
-		capture, err = box.AdmitNetwork(a.cfg, a.rt, spec, options)
+		capture, err = box.AdmitNetwork(a.cfg, a.rt, admitted, options)
 		if err != nil {
 			return 1, err
 		}
@@ -1355,8 +1406,8 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return 1, err
 		}
 	}
-	if !innerProcess && sessionsvc.RunIDFromEnv() == "" && !repositoryReadOnly {
-		return a.superviseForkACP(repo, ws, name, t, peers, capture)
+	if supervised {
+		return a.superviseForkACP(repo, ws, name, t, presetName, peers, scope, capture)
 	}
 	code, err := a.runBox(spec)
 	if code >= 0 { // the box ran, so an agent has now worked in this fork (see forkctl.NoteForkStart)
@@ -1377,35 +1428,27 @@ func forkACPChildEnded(ctx context.Context, code int, err error) (int, error) {
 	return code, err
 }
 
-// forkACPTarget is the target a target-less `coop fork <name> acp` starts: the one the fork was
-// created with, as `coop fork <name>` resumes it, else the first signed-in provider.
-func (a *app) forkACPTarget(name string) (agents.Target, error) {
+// forkACPTarget is what a target-less `coop fork <name> acp` starts: the preset or target the fork
+// was created with, as `coop fork <name>` resumes it, else the first signed-in provider. For a
+// preset it returns only the preset's name; the caller loads it, and its lead names the provider.
+func (a *app) forkACPTarget(name string) (agents.Target, string, error) {
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
-		return agents.Target{}, err
+		return agents.Target{}, "", err
 	}
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
-		return agents.Target{}, missingACPForkErr(name)
+		return agents.Target{}, "", missingACPForkErr(name)
 	}
-	// An editor session runs no preset yet. A fork made from one is refused by name rather than
-	// opened on its lead's provider bare, with no roles, ladder, model or account.
 	if saved := forkctl.ReadForkPreset(ws); saved != "" {
-		return agents.Target{}, &ui.UsageError{
-			Headline: fmt.Sprintf("Fork %q was made from preset %q, which an editor session cannot run", name, saved),
-			Cause:    "coop fork " + name + " acp runs one agent, so it would drop the preset's roles, models and accounts.",
-			Rows: [][2]string{
-				{"Run the preset:", "coop fork " + name},
-				{"Pick a target:", "coop fork " + name + " acp <target>"},
-			},
-			ExitCode: 1,
-		}
+		return agents.Target{}, saved, nil
 	}
 	if saved := forkctl.ReadForkTarget(ws); saved != "" {
-		return a.savedForkTarget(name, saved)
+		t, err := a.savedForkTarget(name, saved)
+		return t, "", err
 	}
 	agent, err := a.firstSignedInAgent()
-	return agents.Target{Provider: agent}, err
+	return agents.Target{Provider: agent}, "", err
 }
 
 func sessionOutputMountArgs(workspace, workdir string) ([]string, string, error) {
