@@ -221,24 +221,26 @@ func TestProfileCredentialReady(t *testing.T) {
 	}
 }
 
-func TestGeminiProfileAuthFollowsSelectedAuthority(t *testing.T) {
+// The folder Coop before v11 kept (profiles/<account>/) does not choose Gemini's key: a leftover
+// settings.json, whatever it selects or leaves out, neither hides an agents/env key nor picks one.
+func TestGeminiProfileAuthIgnoresTheRetiredSelector(t *testing.T) {
 	tests := []struct {
 		name       string
 		profile    string
-		selected   string
+		settings   string // "" writes no settings.json
 		env        string
 		withMarker bool
 		want       bool
 	}{
-		{name: "Gemini key selected and present", profile: "default", selected: "gemini-api-key", env: "GEMINI_API_KEY=token\n", want: true},
-		{name: "Gemini native key selected and marker present", profile: "default", selected: "gemini-api-key", env: "GOOGLE_API_KEY=token\n", withMarker: true},
-		{name: "Gemini key selected without marker or key", profile: "default", selected: "gemini-api-key", env: "GOOGLE_API_KEY=token\n"},
-		{name: "Vertex key selected and present", profile: "default", selected: "vertex-ai", env: "GOOGLE_API_KEY=token\n", want: true},
-		{name: "Vertex key selected but only Gemini key present", profile: "default", selected: "vertex-ai", env: "GEMINI_API_KEY=token\n", withMarker: true},
-		{name: "OAuth marker of a pre-v11 login is not read", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n", withMarker: true},
-		{name: "OAuth selected without marker", profile: "default", selected: "oauth-personal", env: "GEMINI_API_KEY=token\nGOOGLE_API_KEY=token\n"},
-		{name: "named account rejects host-bound native Gemini key", profile: "work", selected: "gemini-api-key", withMarker: true},
-		{name: "named account cannot use provider env", profile: "work", selected: "gemini-api-key", env: "GEMINI_API_KEY=token\n"},
+		{name: "no settings, Gemini key", profile: "default", env: "GEMINI_API_KEY=token\n", want: true},
+		{name: "settings without a selector, no marker, Gemini key", profile: "default", settings: `{"theme":"dark"}`, env: "GEMINI_API_KEY=token\n", want: true},
+		{name: "empty selector, no marker, Gemini key", profile: "default", settings: `{"security":{"auth":{"selectedType":""}}}`, env: "GEMINI_API_KEY=token\n", want: true},
+		{name: "OAuth selector does not hide the key", profile: "default", settings: `{"security":{"auth":{"selectedType":"oauth-personal"}}}`, env: "GEMINI_API_KEY=token\n", want: true},
+		{name: "Gemini-key selector does not hide a Google key", profile: "default", settings: `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`, env: "GOOGLE_API_KEY=token\n", want: true},
+		{name: "Vertex selector does not hide a Gemini key", profile: "default", settings: `{"security":{"auth":{"selectedType":"vertex-ai"}}}`, env: "GEMINI_API_KEY=token\n", want: true},
+		{name: "settings without a key", profile: "default", settings: `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`},
+		{name: "marker of a pre-v11 login is not read", profile: "default", settings: `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`, env: "GEMINI_API_KEY=token\n", withMarker: true},
+		{name: "named account cannot use provider env", profile: "work", settings: `{"security":{"auth":{"selectedType":"gemini-api-key"}}}`, env: "GEMINI_API_KEY=token\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -247,9 +249,10 @@ func TestGeminiProfileAuthFollowsSelectedAuthority(t *testing.T) {
 			if err := os.MkdirAll(profileDir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			settings := `{"security":{"auth":{"selectedType":"` + tt.selected + `"}}}`
-			if err := os.WriteFile(filepath.Join(profileDir, "settings.json"), []byte(settings), 0o600); err != nil {
-				t.Fatal(err)
+			if tt.settings != "" {
+				if err := os.WriteFile(filepath.Join(profileDir, "settings.json"), []byte(tt.settings), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tt.withMarker {
 				if err := os.WriteFile(filepath.Join(profileDir, "gemini-credentials.json"), []byte(`{"encrypted":"stale"}`), 0o600); err != nil {
@@ -261,6 +264,9 @@ func TestGeminiProfileAuthFollowsSelectedAuthority(t *testing.T) {
 			}
 			if got := ProfileAuthed(cfg, "gemini", tt.profile); got != tt.want {
 				t.Errorf("ProfileAuthed = %v, want %v", got, tt.want)
+			}
+			if got := ProfileCredentialReady(cfg, "gemini", tt.profile, time.Now()); got != tt.want {
+				t.Errorf("ProfileCredentialReady = %v, want %v", got, tt.want)
 			}
 		})
 	}

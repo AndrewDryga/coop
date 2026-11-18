@@ -344,7 +344,9 @@ func TestEnvKeysOutsideScopeMarkerBackedDefaultWinsMatrix(t *testing.T) {
 	}
 }
 
-func TestEnvKeysOutsideScopeHonorsGeminiAPIKeySelection(t *testing.T) {
+// A pre-v11 sign-in marker gets no env authority, and a leftover settings.json beside it selects
+// no key: the retired folder does not choose Gemini's key.
+func TestEnvKeysOutsideScopeIgnoresTheRetiredGeminiSelector(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir()}
 	if err := cfg.SetDefaultProfile("gemini", "work"); err != nil {
 		t.Fatal(err)
@@ -357,26 +359,13 @@ func TestEnvKeysOutsideScopeHonorsGeminiAPIKeySelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := filepath.Join(dir, "settings.json")
-	if err := os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"gemini-api-key"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	drop := envKeysOutsideScope(cfg, []string{"gemini"})
-	if drop["GEMINI_API_KEY"] || !drop["GOOGLE_API_KEY"] {
-		t.Errorf("Gemini API-key selection authority = %v, want only GEMINI_API_KEY", drop)
-	}
-	if err := os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"vertex-ai"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	drop = envKeysOutsideScope(cfg, []string{"gemini"})
-	if !drop["GEMINI_API_KEY"] || drop["GOOGLE_API_KEY"] {
-		t.Errorf("Gemini Vertex selection authority = %v, want only GOOGLE_API_KEY", drop)
-	}
-	if err := os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"oauth-personal"}}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"} {
-		if drop := envKeysOutsideScope(cfg, []string{"gemini"}); !drop[key] {
-			t.Errorf("Gemini OAuth selection kept provider-wide %s: %v", key, drop)
+	for _, selected := range []string{"gemini-api-key", "vertex-ai", "oauth-personal"} {
+		if err := os.WriteFile(settings, []byte(`{"security":{"auth":{"selectedType":"`+selected+`"}}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		drop := envKeysOutsideScope(cfg, []string{"gemini"})
+		if !drop["GEMINI_API_KEY"] || !drop["GOOGLE_API_KEY"] {
+			t.Errorf("leftover %s selector kept a provider-wide key: %v", selected, drop)
 		}
 	}
 }

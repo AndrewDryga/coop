@@ -1083,39 +1083,44 @@ func TestCredentialArtifactProjectionUsesExactAccessOnlySchemas(t *testing.T) {
 	}
 }
 
+// The folder Coop before v11 kept (profiles/<account>/) does not choose Gemini's key: a leftover
+// settings.json, whatever it selects, changes nothing. Without a sign-in marker either key Gemini
+// can auto-detect is offered; with one, a file-backed login gets no env authority.
 func TestGeminiCredentialEnvPrecedence(t *testing.T) {
 	gemini, _ := Get("gemini")
 	dir := t.TempDir()
-	for authType, wantKeys := range map[string][]string{
-		"gemini-api-key": {"GEMINI_API_KEY"},
-		"vertex-ai":      {"GOOGLE_API_KEY"},
-		"oauth-personal": nil,
-		"":               nil,
+	check := func(what string) {
+		t.Helper()
+		if got := gemini.ActiveCredentialEnvKeys(dir, false); !slices.Equal(got, gemini.CredentialEnvKeys()) {
+			t.Errorf("%s, no marker: env keys = %v, want %v", what, got, gemini.CredentialEnvKeys())
+		}
+		if got := gemini.ActiveCredentialEnvKeys(dir, true); got != nil {
+			t.Errorf("%s, marker: env keys = %v, want none", what, got)
+		}
+		selection, err := gemini.(NetworkAuthSelector).NetworkAuthSelection(dir, false)
+		if err != nil || selection.EnvKey != "GEMINI_API_KEY" {
+			t.Errorf("%s, no marker: network selection = %+v, %v; want the API key", what, selection, err)
+		}
+		if _, err := gemini.(NetworkAuthSelector).NetworkAuthSelection(dir, true); err == nil {
+			t.Errorf("%s, marker: network selection accepted a stored sign-in", what)
+		}
+	}
+	check("no settings file")
+	for _, body := range []string{
+		`{"security":{"auth":{"selectedType":"gemini-api-key"}}}`,
+		`{"security":{"auth":{"selectedType":"vertex-ai"}}}`,
+		`{"security":{"auth":{"selectedType":"oauth-personal"}}}`,
+		`{"security":{"auth":{"selectedType":""}}}`,
+		`{"theme":"dark"}`,
+		`{`,
 	} {
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"`+authType+`"}}}`), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got := gemini.ActiveCredentialEnvKeys(dir, true); !slices.Equal(got, wantKeys) {
-			t.Errorf("selectedType %q env keys = %v, want %v", authType, got, wantKeys)
-		}
+		check("leftover settings " + body)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := gemini.ActiveCredentialEnvKeys(dir, true); got != nil {
-		t.Fatalf("malformed settings selected env keys %v", got)
-	}
-	if got := gemini.ActiveCredentialEnvKeys(dir, false); got != nil {
-		t.Fatalf("malformed settings without marker selected env keys %v", got)
-	}
-	if err := os.Remove(filepath.Join(dir, "settings.json")); err != nil {
-		t.Fatal(err)
-	}
-	if got := gemini.ActiveCredentialEnvKeys(dir, true); got != nil {
-		t.Fatalf("marker without selector selected env keys %v", got)
-	}
-	if got := gemini.ActiveCredentialEnvKeys(dir, false); !slices.Equal(got, gemini.CredentialEnvKeys()) {
-		t.Fatalf("missing marker and selector env keys = %v, want %v", got, gemini.CredentialEnvKeys())
+	if _, ok := gemini.(StoredAPIKeyDetector); ok {
+		t.Error("Gemini reads a stored API key choice from the retired profile folder")
 	}
 }
 

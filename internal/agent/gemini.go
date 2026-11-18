@@ -911,11 +911,6 @@ func (geminiAgent) CredentialBroker() CredentialBrokerSpec {
 	}
 }
 
-func (geminiAgent) StoredAPIKey(profileDir string) (bool, error) {
-	selected, ok, err := geminiSelectedAuthType(profileDir)
-	return ok && selected == "gemini-api-key", err
-}
-
 func (geminiAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
 		Artifacts: []CredentialArtifact{
@@ -935,48 +930,14 @@ func (geminiAgent) LiveCredentials() LiveCredentialSpec {
 	}
 }
 
-// ActiveCredentialEnvKeys grants exactly the key family selected in settings.json. Without a
-// marker or selector, Gemini may auto-detect either supported key; a marker without a selector is
-// file-backed and receives no env authority.
-func (a geminiAgent) ActiveCredentialEnvKeys(profileDir string, markerPresent bool) []string {
-	selectedType, ok, err := geminiSelectedAuthType(profileDir)
-	if err != nil {
+// ActiveCredentialEnvKeys offers either key Gemini can auto-detect, unless the account has a
+// sign-in marker: a file-backed login receives no env authority. The folder Coop before v11 kept
+// (profiles/<account>/) is not read for a key choice; the key is chosen in agents/env.
+func (a geminiAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []string {
+	if markerPresent {
 		return nil
 	}
-	if !ok {
-		if markerPresent {
-			return nil
-		}
-		return a.CredentialEnvKeys()
-	}
-	switch selectedType {
-	case "gemini-api-key":
-		return []string{"GEMINI_API_KEY"}
-	case "vertex-ai":
-		return []string{"GOOGLE_API_KEY"}
-	}
-	return nil
-}
-
-func geminiSelectedAuthType(profileDir string) (string, bool, error) {
-	data, present, err := readDefaultsFile(filepath.Join(profileDir, "settings.json"))
-	if err != nil {
-		return "", false, err
-	}
-	if !present {
-		return "", false, nil
-	}
-	var settings struct {
-		Security struct {
-			Auth struct {
-				SelectedType string `json:"selectedType"`
-			} `json:"auth"`
-		} `json:"security"`
-	}
-	if err := json.Unmarshal(data, &settings); err != nil {
-		return "", false, err
-	}
-	return settings.Security.Auth.SelectedType, true, nil
+	return a.CredentialEnvKeys()
 }
 
 // MCP builds the settings mounted inside a gemini box: the host settings plus the box-only
@@ -1201,18 +1162,11 @@ func (a geminiAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, err
 		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/core/contentGenerator.ts"})
 }
 
-// NetworkAuthSelection refuses native OAuth and Vertex until each has its own
-// portable authority and endpoint trace. A saved or env-backed AI Studio key is
-// the one account family qualified by this release.
-func (geminiAgent) NetworkAuthSelection(profileDir string, markerPresent bool) (NetworkAuthSelection, error) {
-	selected, ok, err := geminiSelectedAuthType(profileDir)
-	if err != nil {
-		return NetworkAuthSelection{}, fmt.Errorf("read Gemini authentication selection: %w", err)
-	}
-	if ok && selected != "gemini-api-key" {
-		return NetworkAuthSelection{}, fmt.Errorf("gemini authentication %q is unsupported for restricted networking", selected)
-	}
-	if markerPresent && !ok {
+// NetworkAuthSelection refuses a stored native sign-in (OAuth or Vertex) until each has its own
+// portable authority and endpoint trace. A saved or env-backed AI Studio key is the one account
+// family qualified by this release.
+func (geminiAgent) NetworkAuthSelection(_ string, markerPresent bool) (NetworkAuthSelection, error) {
+	if markerPresent {
 		return NetworkAuthSelection{}, fmt.Errorf("gemini stored authentication is unsupported for restricted networking")
 	}
 	return NetworkAuthSelection{AuthMode: "api-key", EnvKey: "GEMINI_API_KEY"}, nil

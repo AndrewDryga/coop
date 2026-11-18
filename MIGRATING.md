@@ -3,6 +3,14 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
+## Unreleased: a Gemini settings file from before v11 no longer picks the key
+
+Coop no longer reads `profiles/<account>/settings.json` under `~/.config/coop/agents/gemini/` to
+choose between `GEMINI_API_KEY` and `GOOGLE_API_KEY`. The key is chosen in `agents/env`: keep the
+one you want there. A leftover file that selected `vertex-ai` no longer picks the Vertex key, and
+one that selected `oauth-personal`, or nothing, no longer hides a key you set. The file is not
+changed or deleted.
+
 ## v13.1.0: per-project tools, Git folders and Docker Engine 28
 
 - **`COOP_NO_ASDF` is retired.** A `coop.conf` that still sets it stops every command except

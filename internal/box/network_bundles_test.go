@@ -167,11 +167,12 @@ func TestNetworkTargetBundleBindsAuthenticationAndOffersAPIKeysToACP(t *testing.
 	if err := os.MkdirAll(vertexDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// A leftover pre-v11 selector does not pick between the two keys, so both at once stay ambiguous.
 	if err := os.WriteFile(filepath.Join(vertexDir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"vertex-ai"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "gemini", Accounts: []string{"default"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "vertex-ai") {
-		t.Fatal("unqualified Vertex mode was admitted", err)
+	if _, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "gemini", Accounts: []string{"default"}}, egress.ClientACP); err == nil || !strings.Contains(err.Error(), "more than one provider environment credential") {
+		t.Fatal("two Gemini keys were admitted", err)
 	}
 	if _, err := NetworkTargetBundle(t.Context(), cfg, agents.Target{Provider: "gemini", Accounts: []string{"named"}}, egress.ClientACP); err == nil {
 		t.Fatal("named Gemini account borrowed the default env key")
