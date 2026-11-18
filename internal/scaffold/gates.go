@@ -3,6 +3,7 @@ package scaffold
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -175,10 +176,12 @@ func parseToolVersions(data []byte) map[string]bool {
 }
 
 // hasTerraformFiles reports whether the repo has a *.tf at its root or one level down (a
-// cheap check; a deeper layout is covered by the .tool-versions terraform signal).
+// cheap check; a deeper layout is covered by the .tool-versions terraform signal). The patterns
+// are matched inside the repo, so brackets or stars in its own path are not read as a pattern.
 func hasTerraformFiles(repo string) bool {
-	for _, pat := range []string{"*.tf", filepath.Join("*", "*.tf")} {
-		if m, _ := filepath.Glob(filepath.Join(repo, pat)); len(m) > 0 {
+	root := os.DirFS(repo)
+	for _, pat := range []string{"*.tf", "*/*.tf"} {
+		if m, _ := fs.Glob(root, pat); len(m) > 0 {
 			return true
 		}
 	}

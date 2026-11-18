@@ -37,6 +37,12 @@ func TestDetectStacks(t *testing.T) {
 	if got := DetectStacks(repo); !slices.Equal(got, []string{"terraform"}) {
 		t.Errorf("*.tf → %v, want [terraform]", got)
 	}
+	// A repo path with pattern characters is a path, not a pattern.
+	repo = filepath.Join(t.TempDir(), "a[1]")
+	write(repo, "infra/main.tf", "resource \"null_resource\" \"x\" {}\n")
+	if got := DetectStacks(repo); !slices.Equal(got, []string{"terraform"}) {
+		t.Errorf("*.tf under a[1] → %v, want [terraform]", got)
+	}
 	// .tool-versions drives detection too, in GateLangs order.
 	repo = t.TempDir()
 	write(repo, ".tool-versions", "elixir 1.18.3-otp-27\nterraform 1.14.0\n")
