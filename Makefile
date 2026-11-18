@@ -7,8 +7,9 @@ LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 # The gate tool pins. CI installs exactly these versions (it reads them from here), and the
 # corresponding targets refuse any other build, so a laptop, a box, and CI cannot silently use
 # different analyzers. Staticcheck's isolated module also pins its Go export-data importer.
-# This repository's .agent/Dockerfile installs both for the gate in its box: Staticcheck from
-# that module, the scanner at a pin mirrored there (agent_config_test.go holds them equal).
+# This repository's .agent/Dockerfile installs them for the gate in its box: Staticcheck from
+# that module, the scanner and ShellCheck at pins mirrored there (agent_config_test.go holds them
+# equal).
 STATICCHECK_MODFILE := tools/staticcheck.mod
 # VET_TAGS are the build tags vet and staticcheck add, so the tagged suites are linted too.
 VET_TAGS := filesystemruntimee2e,acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e
@@ -20,6 +21,7 @@ STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$
 GOVULNCHECK_VERSION := v1.9.0
 NPM_VERSION := 11.21.2
 TRIVY_VERSION := 0.72.0
+SHELLCHECK_VERSION := 0.11.0
 
 build: ## Build the coop binary to ./coop
 	@go build -trimpath -ldflags "$(LDFLAGS)" -o coop .
@@ -106,7 +108,9 @@ vuln: ## Report reachable Go vulnerabilities with the pinned govulncheck
 	@govulncheck ./...
 
 shellcheck: ## ShellCheck every tracked .sh except the eval starter workloads
-	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is not installed — run: brew install shellcheck (macOS) or apt-get install -y shellcheck (Debian)"; exit 1; }
+	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is not installed — run: make install-shellcheck"; exit 1; }
+	@version="$$(shellcheck --version | awk '$$1 == "version:" {print $$2}')"; \
+		[ "$$version" = "$(SHELLCHECK_VERSION)" ] || { echo "shellcheck $${version:-unknown} is not the pinned $(SHELLCHECK_VERSION) — run: make install-shellcheck (it installs to ~/.local/bin; put that first on PATH)"; exit 1; }
 # The file list comes from git, so a new .sh is covered the moment it is tracked — no list here to
 # forget to update. An empty list means git failed or the tree moved, never "nothing to check":
 # that is the one way a lint silently stops running, so it fails closed.
@@ -126,6 +130,9 @@ npm-audit: ## Audit the bundled client lockfile; HIGH/CRITICAL findings and regi
 	 npm audit --prefix internal/agent/locked-clients --package-lock-only --ignore-scripts --offline=false \
 	 --include=prod --include=dev --include=optional --include=peer \
 	 --audit-level=high --registry=https://registry.npmjs.org --userconfig=/dev/null --globalconfig="$$config"
+
+install-shellcheck: ## Install the pinned ShellCheck after verifying its reviewed release checksum
+	@go run ./tools/installshellcheck --version $(SHELLCHECK_VERSION) --dest "$(HOME)/.local/bin/shellcheck"
 
 install-trivy: ## Install the pinned scanner after verifying its reviewed release checksum
 	@go run ./tools/installtrivy --version $(TRIVY_VERSION) --dest "$(HOME)/.local/bin/trivy"
@@ -450,7 +457,7 @@ help: ## List targets
 	@grep -hE '^[a-z][a-z0-9-]*:.*##' $(MAKEFILE_LIST) | sed -E 's/:.*## / — /' | sort
 
 .PHONY: thread-messages-check
-.PHONY: install-npm npm-audit install-trivy image-vuln build install test test-minimal-path cover fmt-check lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
+.PHONY: install-npm npm-audit install-shellcheck install-trivy image-vuln build install test test-minimal-path cover fmt-check lint staticcheck-version install-staticcheck govulncheck-version vuln shellcheck snapshot doctor docs docs-check align rules-check build-all race check provider-scripted-e2e live-process-control provider-live-e2e provider-live-e2e-all provider-resume-live-e2e provider-resume-live-e2e-all provider-network-live-e2e provider-network-live-e2e-all provider-loop-live-e2e provider-loop-live-e2e-all provider-consult-live-e2e provider-consult-live-e2e-all acp-scripted-e2e acp-e2e review-writes-e2e native-roles-e2e skills-e2e mcp-e2e box-runtime-e2e task-channel-e2e network-runtime-e2e clean help
 .PHONY: provider-delegate-live-e2e-all provider-accounts-live-e2e-all
 .PHONY: check-local bench-tools-test services-bench lifecycle-bench require-services-workspace
 .PHONY: full-gate trim-gate-cache check-static check-unit check-process check-race

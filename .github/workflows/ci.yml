@@ -51,6 +51,8 @@ jobs:
           NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm" make install-npm
           echo "$RUNNER_TEMP/npm/bin" >> "$GITHUB_PATH"
           go install golang.org/x/vuln/cmd/govulncheck@"$(make -s govulncheck-version)"
+          make install-shellcheck
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Make-owned free checks
         run: make "${{ matrix.target }}"
       # Read-only CI only: pull requests and tags restore main's objects and save none, and the

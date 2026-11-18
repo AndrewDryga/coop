@@ -42,8 +42,22 @@ USER root
 RUN npm install --global --ignore-scripts --no-audit --no-fund npm@11.21.2
 RUN printf 'export PATH="/opt/coop/bin:/home/node/.asdf/shims:$PATH"\n' > /etc/profile.d/zz-asdf.sh \
  && install -m 0755 /tmp/gate-tools/* /usr/local/bin/ && rm -rf /tmp/gate-tools \
- && apt-get update && apt-get install -y --no-install-recommends shellcheck git-lfs make \
+ && apt-get update && apt-get install -y --no-install-recommends git-lfs make \
  && rm -rf /var/lib/apt/lists/*
+# ShellCheck at the Makefile's SHELLCHECK_VERSION, checked against the digests in
+# tools/installshellcheck/checksums.txt; it lands in /usr/local/bin, ahead of the base image's
+# Debian copy. agent_config_test.go holds the version and digests equal.
+RUN arch="$(uname -m)" \
+ && case "$arch" in \
+      x86_64) sum=b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6 ;; \
+      aarch64) sum=68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc ;; \
+      *) echo "no reviewed ShellCheck for $arch" >&2; exit 1 ;; \
+    esac \
+ && curl --fail --silent --show-error --location --proto '=https' --output /tmp/shellcheck.tar.gz "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.$arch.tar.gz" \
+ && printf '%s  %s\n' "$sum" /tmp/shellcheck.tar.gz | sha256sum -c - \
+ && tar -C /tmp -xzf /tmp/shellcheck.tar.gz shellcheck-v0.11.0/shellcheck \
+ && install -m 0755 /tmp/shellcheck-v0.11.0/shellcheck /usr/local/bin/shellcheck \
+ && rm -rf /tmp/shellcheck.tar.gz /tmp/shellcheck-v0.11.0
 USER node
 
 WORKDIR /workspace

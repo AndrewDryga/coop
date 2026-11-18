@@ -1,0 +1,4 @@
+b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6  shellcheck-v0.11.0.linux.x86_64.tar.gz
+68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc  shellcheck-v0.11.0.linux.aarch64.tar.gz
+c2c15e08df0e8fbc374c335b230a7ee958c313fa5714817a59aa59f1aa594f51  shellcheck-v0.11.0.darwin.x86_64.tar.gz
+339b930feb1ea764467013cc1f72d09cd6b869ebf1013296ba9055ab2ffbd26f  shellcheck-v0.11.0.darwin.aarch64.tar.gz

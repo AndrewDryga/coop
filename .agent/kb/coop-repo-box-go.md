@@ -2,7 +2,7 @@
 name: coop-repo-box-go
 description: coop's own boxes are filtered, so Go and the gate tools come from .agent/Dockerfile and the requested Go/npm domains, the module proxy's storage.googleapis.com redirect included; module downloads and the gate slots sit in this project's own cache volume, shared with its forks
 subsystem: box
-sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/gateslot.go, tools/staticcheck.mod, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go, internal/box/filtered_mounts.go]
+sources: [.agent/Dockerfile, .agent/project.yaml, internal/box/run.go, internal/box/gateslot.go, tools/staticcheck.mod, tools/installshellcheck/checksums.txt, tools/gateslot/main.go, Makefile, .tool-versions, agent_config_test.go, internal/box/filtered_mounts.go]
 updated: 2026-11-17
 ---
 
@@ -12,8 +12,8 @@ project's `.agent/Dockerfile` can put a toolchain there (`boxEnvNote` in `intern
 blocked with `go: not found` before it could run `make check`.
 
 `.agent/Dockerfile` (from `coop init --stack asdf`) installs `.tool-versions` (Go) at build time and
-adds the gate's tools at the Makefile's pins (staticcheck, govulncheck, npm), plus shellcheck, git-lfs and
-make. Changing it, or anything it copies, makes launches refuse until `coop build` runs. It is the
+adds the gate's tools at the Makefile's pins (staticcheck, govulncheck, npm, and ShellCheck from its
+release archive with the digests in `tools/installshellcheck/checksums.txt`), plus git-lfs and make. Changing it, or anything it copies, makes launches refuse until `coop build` runs. It is the
 only source of the Go analyzers in coop's box: since 2026-10-16 Coop's own box images carry none, so
 an analyzer bump moves no user's box tag or network setup, only this project's image.
 
@@ -65,6 +65,7 @@ exactly that tmpfs: `validateMountsContext` recomputes it from the `--memory` in
 doesn't use them, so they were removed after running it.
 
 ## Changelog
+- 2026-11-17 — ShellCheck is pinned too: the Dockerfile installs the Makefile's SHELLCHECK_VERSION from its release archive by digest instead of Debian's copy; TestShellCheckPinMatchesEverywhere holds Makefile, CI and Dockerfile equal.
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-10 — added the pinned npm audit tool and its requested registry domain; verified the
   Dockerfile, Make target and project egress request, without changing host approval.

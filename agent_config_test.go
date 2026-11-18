@@ -86,6 +86,71 @@ func TestOwnDockerfileInstallsTheGatePins(t *testing.T) {
 	}
 }
 
+// ShellCheck is pinned like the other analyzers: `make shellcheck` refuses any other version, CI
+// installs it with tools/installshellcheck, and this repository's box installs the same release
+// with the same reviewed digests. A bump in one place alone fails here, not as a red gate on one
+// host and a green one on another.
+func TestShellCheckPinMatchesEverywhere(t *testing.T) {
+	version := makeVariable(t, "SHELLCHECK_VERSION")
+	sums, err := os.ReadFile("tools/installshellcheck/checksums.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := map[string]string{}
+	for line := range strings.Lines(string(sums)) {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			t.Fatalf("checksums.txt line %q is not <sha256>  <asset>", line)
+		}
+		digest[fields[1]] = fields[0]
+	}
+	assets := map[string]string{}
+	for _, platform := range []string{"linux.x86_64", "linux.aarch64", "darwin.x86_64", "darwin.aarch64"} {
+		asset := "shellcheck-v" + version + "." + platform + ".tar.gz"
+		if digest[asset] == "" {
+			t.Errorf("tools/installshellcheck/checksums.txt has no digest for %s", asset)
+		}
+		assets[platform] = digest[asset]
+	}
+	if len(digest) != len(assets) {
+		t.Errorf("tools/installshellcheck/checksums.txt lists assets of another version: %v", digest)
+	}
+	dockerfile, err := os.ReadFile(".agent/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"x86_64) sum=" + assets["linux.x86_64"] + " ;;",
+		"aarch64) sum=" + assets["linux.aarch64"] + " ;;",
+		`"https://github.com/koalaman/shellcheck/releases/download/v` + version + "/shellcheck-v" + version + `.linux.$arch.tar.gz"`,
+		"sha256sum -c -",
+		"install -m 0755 /tmp/shellcheck-v" + version + "/shellcheck /usr/local/bin/shellcheck",
+	} {
+		if !strings.Contains(string(dockerfile), want) {
+			t.Errorf(".agent/Dockerfile must install the pinned ShellCheck: missing %q", want)
+		}
+	}
+	ci, err := os.ReadFile(".github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ci), "make install-shellcheck\n          echo \"$HOME/.local/bin\" >> \"$GITHUB_PATH\"\n") {
+		t.Error("CI must install the pinned ShellCheck and put it ahead of the runner's copy")
+	}
+	makefile, err := os.ReadFile("Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"go run ./tools/installshellcheck --version $(SHELLCHECK_VERSION)",
+		`[ "$$version" = "$(SHELLCHECK_VERSION)" ]`,
+	} {
+		if !strings.Contains(string(makefile), want) {
+			t.Errorf("the Makefile must install and require the pinned ShellCheck: missing %q", want)
+		}
+	}
+}
+
 func TestImageNPMPinMatchesTheGate(t *testing.T) {
 	df, err := box.BaseDockerfile("arm64")
 	if err != nil {

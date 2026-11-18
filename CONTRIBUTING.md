@@ -98,9 +98,10 @@ another program and doesn't skip fails there. The race owners can't repeat that 
 `make test-minimal-path` by hand when a test starts using a program.
 
 The gate needs `staticcheck`, `govulncheck`, `shellcheck`, `git-lfs` and npm at the Makefile's `NPM_VERSION` (`make install-npm`). The Makefile pins
-`govulncheck` and installs Staticcheck with `make install-staticcheck` from
-`tools/staticcheck.mod`. CI and this repository's own box (`.agent/Dockerfile`) install the same
-pins. co:op's box images ship neither `staticcheck` nor `govulncheck`. A missing or wrong-version
+`govulncheck` and ShellCheck (`make install-shellcheck` installs the pinned release to
+`~/.local/bin` after checking its digest), and installs Staticcheck with `make install-staticcheck`
+from `tools/staticcheck.mod`. CI and this repository's own box (`.agent/Dockerfile`) install the
+same pins. co:op's box images ship neither `staticcheck` nor `govulncheck`. A missing or wrong-version
 tool fails the gate and prints the command that installs it. The gate never skips a check silently.
 
 `.tool-versions` pins the exact Go toolchain, so an asdf user and co:op's own box get the
