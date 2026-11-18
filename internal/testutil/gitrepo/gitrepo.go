@@ -25,6 +25,7 @@ func New(t *testing.T) (string, func(...string)) {
 		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "nosystem"))
 	env = append(env, noMaintenance...)
 	run := func(args ...string) {
+		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir, cmd.Env = repo, env
 		if out, err := cmd.CombinedOutput(); err != nil {

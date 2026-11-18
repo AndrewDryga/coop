@@ -212,7 +212,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 				return 1, "", err
 			}
 		}
-		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, outcome); err != nil {
+		if err := serveLoopWorker(root, provider, plan.TaskID, outcome); err != nil {
 			return 1, "", err
 		}
 		if attempt.Result == "complete-reopen-archive" {
@@ -511,7 +511,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		if err := emitLoopWatchdogToolEnd(provider, providerArgv); err != nil {
 			return 1, "", err
 		}
-		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, ""); err != nil {
+		if err := serveLoopWorker(root, provider, plan.TaskID, ""); err != nil {
 			return 1, "", err
 		}
 		emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
@@ -531,7 +531,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		if err := waitLoopRelease(root, plan.TaskID); err != nil {
 			return 1, "", err
 		}
-		if err := serveLoopWorker(root, provider, plan.TaskID, attempt.Target, ""); err != nil {
+		if err := serveLoopWorker(root, provider, plan.TaskID, ""); err != nil {
 			return 1, "", err
 		}
 		emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
@@ -1291,7 +1291,7 @@ func loopAuthenticationFailure(provider string) string {
 	}
 }
 
-func serveLoopWorker(root, provider, taskID, target, outcome string) error {
+func serveLoopWorker(root, provider, taskID, outcome string) error {
 	repo, err := loopRepo(root)
 	if err != nil {
 		return fmt.Errorf("loop repo: %w", err)
