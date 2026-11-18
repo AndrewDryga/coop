@@ -269,7 +269,7 @@ func TestGateWarnsWhenTheFormatterIsMissing(t *testing.T) {
 	}
 	for _, tc := range []struct{ lang, file, want string }{
 		{"go", "main.go", "pre-commit: gofmt is not installed here, so the Go format check was skipped\n"},
-		{"terraform", "infra/main.tf", "pre-commit: terraform is not installed here, so the Terraform format check was skipped\n"},
+		{"terraform", "infra/main.tf", "pre-commit: terraform (or tofu) is not installed here, so the Terraform format check was skipped\n"},
 		{"elixir", "lib/app.ex", "pre-commit: mix is not installed here, so the Elixir format check was skipped\n"},
 		{"rust", "src/main.rs", "pre-commit: rustfmt is not installed here, so the Rust format check was skipped\n"},
 	} {
@@ -334,8 +334,10 @@ func TestPreCommitHookStopsWhenTheFormatterFails(t *testing.T) {
 		// terraform -no-color opens its diagnostics with a blank line, as terraform 1.17 does.
 		{"terraform syntax error", "terraform", "main.tf", "terraform", `printf '\nError: Invalid expression\n\n  on main.tf line 2:\n' >&2; exit 2` + "\n", false,
 			"pre-commit blocked — terraform fmt failed on main.tf: Error: Invalid expression\n"},
+		{"tofu diff", "terraform", "main.tf", "tofu", lastArg + `echo "$f"; exit 3` + "\n", false,
+			"pre-commit blocked — these need tofu fmt: main.tf\nfix: tofu fmt <files>   (skip once: git commit --no-verify)\n"},
 		{"terraform absent", "terraform", "main.tf", "terraform", "", true,
-			"pre-commit: terraform is not installed here, so the Terraform format check was skipped\n"},
+			"pre-commit: terraform (or tofu) is not installed here, so the Terraform format check was skipped\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, git := gitrepo.New(t)

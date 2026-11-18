@@ -216,24 +216,26 @@ elif [ -n "$go_files" ]; then
   fi
 fi`,
 	"terraform": `# Terraform: block the commit if any staged .tf file isn't terraform-fmt clean, or if terraform
-# can't check it.
+# can't check it. OpenTofu's tofu takes the same fmt flags, so it stands in when terraform is absent.
 tf_files=$(echo "$staged" | grep '\.tf$' || true)
-if [ -n "$tf_files" ] && ! command -v terraform >/dev/null 2>&1; then
-  echo "pre-commit: terraform is not installed here, so the Terraform format check was skipped" >&2
+tf=terraform
+command -v terraform >/dev/null 2>&1 || tf=tofu
+if [ -n "$tf_files" ] && ! command -v "$tf" >/dev/null 2>&1; then
+  echo "pre-commit: terraform (or tofu) is not installed here, so the Terraform format check was skipped" >&2
 elif [ -n "$tf_files" ]; then
   bad=""
   for f in $tf_files; do
     # -check exits non-zero for a file it lists; a non-zero exit that lists nothing is a failure.
-    out=$(terraform fmt -check -list=true "$f" 2>/dev/null); status=$?
+    out=$("$tf" fmt -check -list=true "$f" 2>/dev/null); status=$?
     if [ "$status" -ne 0 ] && [ -z "$out" ]; then
-      why=$(terraform fmt -no-color -check -list=true "$f" 2>&1 >/dev/null | grep -m1 .)
-      echo "pre-commit blocked — terraform fmt failed on $f: ${why:-exit status $status}" >&2; exit @EXIT@
+      why=$("$tf" fmt -no-color -check -list=true "$f" 2>&1 >/dev/null | grep -m1 .)
+      echo "pre-commit blocked — $tf fmt failed on $f: ${why:-exit status $status}" >&2; exit @EXIT@
     fi
     [ -n "$out" ] && bad="$bad $f"
   done
   if [ -n "$bad" ]; then
-    echo "pre-commit blocked — these need terraform fmt:$bad" >&2
-    echo "fix: terraform fmt <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
+    echo "pre-commit blocked — these need $tf fmt:$bad" >&2
+    echo "fix: $tf fmt <files>   (skip once: git commit --no-verify)" >&2; exit @EXIT@
   fi
 fi`,
 	"elixir": `# Elixir: block the commit if any staged .ex/.exs file isn't mix-format clean. mix has no
