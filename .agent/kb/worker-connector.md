@@ -197,6 +197,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-17 — `Run` backs a poll the controller never answered off to 30 s and restores the interval on its first answer; a repeated identical poll error is reported once, then at a doubling interval up to 5 min, with a "worker poll recovered" line when it clears (connector.go `repeatReporter`, task 2026-11-17-warn-once-about-a-lasting-worker-poll-error-and).
 - 2026-11-17 — a permanently refused response upload settles the command instead of retrying forever; the spool goes on acknowledgement (task 2026-11-17-settle-a-command-whose-saved-response-the-contro).
 - 2026-11-17 — the hello's storage and capabilities come from `LiveReports` (`storage.go`): storage is the last report, refreshed in the background one at a time, so a slow `/v1/storage` no longer stalls the single poll goroutine; capabilities are read once the daemon answers, then kept for the connection. The event scan cursor is written only when a scan stops early (audit WC-7/WC-8; settled-origin retirement and the uncertain-origin backoff are still open).
 - 2026-11-17 — the api_request tunnel filters `GET /v1/sessions/{id}/events` through the narration projection and cuts `GET /v1/storage` to its `storage` object (audit WC-2, owner choice A).

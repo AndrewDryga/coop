@@ -110,7 +110,7 @@ func (c *Connector) pollOnce(ctx context.Context, dispatch func(workerproto.Comm
 	}
 	response, err := c.transport.Poll(ctx, poll)
 	if err != nil {
-		return err
+		return controllerUnreachable{err}
 	}
 	if err := response.Validate(); err != nil {
 		return fmt.Errorf("validate controller worker response: %w", err)
@@ -221,6 +221,8 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 	}
 	timer := time.NewTimer(0)
 	defer timer.Stop()
+	pollReports := &repeatReporter{report: onError}
+	pollGap := interval
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -254,16 +256,70 @@ func (c *Connector) Run(ctx context.Context, interval time.Duration, onError fun
 				timer.Reset(0)
 			}
 		case <-timer.C:
-			if err := c.pollOnce(ctx, dispatch); err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				onError(err)
+			err := c.pollOnce(ctx, dispatch)
+			if err != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil {
+				pollReports.failed(c.now(), err)
+			} else {
+				pollReports.cleared()
+			}
+			// A controller that does not answer is polled less and less often, up to a cap; its
+			// first answer restores the interval. A completion still polls at once.
+			if errors.As(err, new(controllerUnreachable)) {
+				pollGap = min(2*pollGap, max(maxUnreachablePollGap, interval))
+			} else {
+				pollGap = interval
 			}
 			startNext()
-			timer.Reset(interval)
+			timer.Reset(pollGap)
 		}
 	}
+}
+
+// controllerUnreachable marks a poll the controller never answered.
+type controllerUnreachable struct{ err error }
+
+func (e controllerUnreachable) Error() string { return e.err.Error() }
+func (e controllerUnreachable) Unwrap() error { return e.err }
+
+const (
+	maxUnreachablePollGap = 30 * time.Second
+	firstRepeatReport     = 30 * time.Second
+	maxRepeatReport       = 5 * time.Minute
+)
+
+// repeatReporter reports a lasting poll error once, then again at a doubling interval up to a
+// cap, and says when it clears. A different error is reported at once. Without it an operator's
+// log got the same warning every second for as long as a controller was down.
+type repeatReporter struct {
+	report func(error)
+	last   string
+	gap    time.Duration
+	next   time.Time
+}
+
+func (r *repeatReporter) failed(now time.Time, err error) {
+	text := err.Error()
+	if text == r.last {
+		if now.Before(r.next) {
+			return
+		}
+		r.gap = min(2*r.gap, maxRepeatReport)
+	} else {
+		r.last, r.gap = text, firstRepeatReport
+	}
+	r.next = now.Add(r.gap)
+	r.report(err)
+}
+
+func (r *repeatReporter) cleared() {
+	if r.last == "" {
+		return
+	}
+	r.report(fmt.Errorf("worker poll recovered (last error: %s)", r.last))
+	r.last = ""
 }
 
 func watchCommandLease(parent context.Context, now, expiresAt func() time.Time, renewed <-chan struct{}) (context.Context, func()) {

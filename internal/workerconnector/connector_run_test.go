@@ -641,6 +641,76 @@ func TestConnectorRunRetriesTransportFailure(t *testing.T) {
 	}
 }
 
+// A down controller used to be polled every second, with the same warning printed every second.
+// The poll now backs off to a cap while the controller is unreachable, the warning repeats only at
+// a doubling interval, and the first answer restores the interval and says the error cleared.
+func TestConnectorBacksOffAndWarnsOnceWhileTheControllerIsDown(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		executor, err := NewExecutor(ExecutorConfig{API: &fakeAPI{}, JournalDir: t.TempDir(), Now: time.Now, WorkerID: "worker-a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		var polls []time.Duration
+		transport := pollTransportFunc(func(_ context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+			polls = append(polls, time.Since(start))
+			if len(polls) <= 6 {
+				return workerproto.Response{}, errors.New("controller unreachable")
+			}
+			return workerproto.Response{
+				Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: time.Now(),
+				AcknowledgedResultCommandIDs: []string{}, Commands: []workerproto.Command{}, EventAcknowledgements: []workerproto.EventAcknowledgement{},
+			}, nil
+		})
+		connector, err := NewConnector(ConnectorConfig{
+			Executor: executor, Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) },
+			Now: time.Now, Transport: transport,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		var reports []string
+		done := make(chan error, 1)
+		go func() {
+			done <- connector.Run(ctx, time.Second, func(err error) { reports = append(reports, err.Error()) })
+		}()
+		time.Sleep(92 * time.Second)
+		synctest.Wait()
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("run = %v", err)
+		}
+		want := []time.Duration{0, 2, 6, 14, 30, 60, 90, 91, 92}
+		if len(polls) != len(want) {
+			t.Fatalf("polls at %v, want %v seconds", polls, want)
+		}
+		for i := range want {
+			if polls[i] != want[i]*time.Second {
+				t.Fatalf("polls at %v, want %v seconds", polls, want)
+			}
+		}
+		wantReports := []string{"controller unreachable", "controller unreachable", "worker poll recovered (last error: controller unreachable)"}
+		if strings.Join(reports, "\n") != strings.Join(wantReports, "\n") {
+			t.Fatalf("reports = %q, want %q", reports, wantReports)
+		}
+	})
+}
+
+// A different error is reported at once, even while the last one would still be quiet.
+func TestRepeatReporterReportsADifferentErrorAtOnce(t *testing.T) {
+	var reports []string
+	reporter := &repeatReporter{report: func(err error) { reports = append(reports, err.Error()) }}
+	now := time.Now()
+	reporter.failed(now, errors.New("a"))
+	reporter.failed(now.Add(time.Second), errors.New("a"))
+	reporter.failed(now.Add(2*time.Second), errors.New("b"))
+	reporter.failed(now.Add(3*time.Second), errors.New("a"))
+	if strings.Join(reports, ",") != "a,b,a" {
+		t.Fatalf("reports = %q", reports)
+	}
+}
+
 type failingThenHealthyTransport struct {
 	calls atomic.Int64
 	now   time.Time
