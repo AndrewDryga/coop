@@ -3,13 +3,40 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
-## Unreleased: a Gemini settings file from before v11 no longer picks the key
+## v14.0.0: stricter defaults, changed exit codes and session API answers
 
-Coop no longer reads `profiles/<account>/settings.json` under `~/.config/coop/agents/gemini/` to
-choose between `GEMINI_API_KEY` and `GOOGLE_API_KEY`. The key is chosen in `agents/env`: keep the
-one you want there. A leftover file that selected `vertex-ai` no longer picks the Vertex key, and
-one that selected `oauth-personal`, or nothing, no longer hides a key you set. The file is not
-changed or deleted.
+- **`coop build` refuses while `COOP_IMAGE` is set.** Unset it to build this project; the override
+  image is never rebuilt.
+- **`project.yaml` can only lower the process cap.** A `box.pids` that raises or removes the cap is
+  refused. Set `COOP_PIDS` yourself to raise it.
+- **An agent's `coop tasks claim` over a task you claimed at a terminal needs `--force`.** Scripts
+  that relied on the silent takeover add the flag.
+- **MCP settings are checked at launch for every agent.** A Grok or Gemini launch refuses a header
+  that names an environment variable that is not set, as Codex already did, and any launch refuses
+  a header or env value that is not a string. Set the variable or fix the value in `mcp.json`.
+- **With eBPF protection a box cannot rename a file onto a secret name** such as `.env` or
+  `key.pem`. A tool in the box that saves a new secret by writing a temporary file and renaming it
+  must write inside a hidden folder.
+- **Options that were silently ignored are refused.** `coop fork --loop` and `-d` refuse
+  `--continue` and `--new`, and `coop context` refuses a second `--task`.
+- **Exit codes.** `coop context` with an unreadable `.agent/project.yaml`, `coop presets init` that
+  cannot write, and the `coop sessions` commands with no home folder exit 1, not 2. `coop eval run`
+  exits 2, not 1, when its options make the plan impossible.
+- **`coop update` checks the release signature when cosign is installed** and refuses a release
+  whose signature is missing or does not verify.
+- **Run files stay in the state folder.** When Coop cannot create its run-files folder there, it
+  stops and names the folder instead of using the settings folder. Fix the folder's permissions.
+- **Session API.** A failed `POST /v1/sessions/{id}/prepare` answers 503, 409 or 500 with the code a
+  failed turn would carry, not a bare 500. Checkpoint capture and restore answer 409
+  `invalid_session_state` or 400 for requests they refuse. A completed turn records why the agent
+  stopped. Clients that treated every 500 as retryable should read the code.
+- **Helper images are rebuilt** (Go 1.27.4). A filtered project may ask for `coop net setup` once.
+- **A Gemini settings file from before v11 no longer picks the key.** Coop no longer reads
+  `profiles/<account>/settings.json` under `~/.config/coop/agents/gemini/` to choose between
+  `GEMINI_API_KEY` and `GOOGLE_API_KEY`. The key is chosen in `agents/env`: keep the one you want
+  there. A leftover file that selected `vertex-ai` no longer picks the Vertex key, and one that
+  selected `oauth-personal`, or nothing, no longer hides a key you set. The file is not changed or
+  deleted.
 
 ## v13.1.0: per-project tools, Git folders and Docker Engine 28
 

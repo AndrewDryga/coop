@@ -104,7 +104,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
-<li><a href="#unreleased-a-gemini-settings-file-from-before-v11-no-longer-picks-the-key">Unreleased: a Gemini settings file from before v11 no longer picks the key</a></li>
+<li><a href="#v1400-stricter-defaults-changed-exit-codes-and-session-api-answers">v14.0.0: stricter defaults, changed exit codes and session API answers</a></li>
 <li><a href="#v1310-per-project-tools-git-folders-and-docker-engine-28">v13.1.0: per-project tools, Git folders and Docker Engine 28</a></li>
 <li><a href="#v1300-old-host-state-is-refused-or-read-as-unknown">v13.0.0: old host state is refused or read as unknown</a></li>
 <li><a href="#v1300-old-session-store-data-is-refused-by-name">v13.0.0: old session store data is refused by name</a></li>
@@ -133,12 +133,41 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
-</section><section class="doc-section reference-section" id="unreleased-a-gemini-settings-file-from-before-v11-no-longer-picks-the-key"><h2>Unreleased: a Gemini settings file from before v11 no longer picks the key</h2>
-<p>Coop no longer reads <code>profiles/&lt;account&gt;/settings.json</code> under <code>~/.config/coop/agents/gemini/</code> to
-choose between <code>GEMINI_API_KEY</code> and <code>GOOGLE_API_KEY</code>. The key is chosen in <code>agents/env</code>: keep the
-one you want there. A leftover file that selected <code>vertex-ai</code> no longer picks the Vertex key, and
-one that selected <code>oauth-personal</code>, or nothing, no longer hides a key you set. The file is not
-changed or deleted.</p>
+</section><section class="doc-section reference-section" id="v1400-stricter-defaults-changed-exit-codes-and-session-api-answers"><h2>v14.0.0: stricter defaults, changed exit codes and session API answers</h2>
+<ul>
+<li><strong><code>coop build</code> refuses while <code>COOP_IMAGE</code> is set.</strong> Unset it to build this project; the override
+image is never rebuilt.</li>
+<li><strong><code>project.yaml</code> can only lower the process cap.</strong> A <code>box.pids</code> that raises or removes the cap is
+refused. Set <code>COOP_PIDS</code> yourself to raise it.</li>
+<li><strong>An agent&#39;s <code>coop tasks claim</code> over a task you claimed at a terminal needs <code>--force</code>.</strong> Scripts
+that relied on the silent takeover add the flag.</li>
+<li><strong>MCP settings are checked at launch for every agent.</strong> A Grok or Gemini launch refuses a header
+that names an environment variable that is not set, as Codex already did, and any launch refuses
+a header or env value that is not a string. Set the variable or fix the value in <code>mcp.json</code>.</li>
+<li><strong>With eBPF protection a box cannot rename a file onto a secret name</strong> such as <code>.env</code> or
+<code>key.pem</code>. A tool in the box that saves a new secret by writing a temporary file and renaming it
+must write inside a hidden folder.</li>
+<li><strong>Options that were silently ignored are refused.</strong> <code>coop fork --loop</code> and <code>-d</code> refuse
+<code>--continue</code> and <code>--new</code>, and <code>coop context</code> refuses a second <code>--task</code>.</li>
+<li><strong>Exit codes.</strong> <code>coop context</code> with an unreadable <code>.agent/project.yaml</code>, <code>coop presets init</code> that
+cannot write, and the <code>coop sessions</code> commands with no home folder exit 1, not 2. <code>coop eval run</code>
+exits 2, not 1, when its options make the plan impossible.</li>
+<li><strong><code>coop update</code> checks the release signature when cosign is installed</strong> and refuses a release
+whose signature is missing or does not verify.</li>
+<li><strong>Run files stay in the state folder.</strong> When Coop cannot create its run-files folder there, it
+stops and names the folder instead of using the settings folder. Fix the folder&#39;s permissions.</li>
+<li><strong>Session API.</strong> A failed <code>POST /v1/sessions/{id}/prepare</code> answers 503, 409 or 500 with the code a
+failed turn would carry, not a bare 500. Checkpoint capture and restore answer 409
+<code>invalid_session_state</code> or 400 for requests they refuse. A completed turn records why the agent
+stopped. Clients that treated every 500 as retryable should read the code.</li>
+<li><strong>Helper images are rebuilt</strong> (Go 1.27.4). A filtered project may ask for <code>coop net setup</code> once.</li>
+<li><strong>A Gemini settings file from before v11 no longer picks the key.</strong> Coop no longer reads
+<code>profiles/&lt;account&gt;/settings.json</code> under <code>~/.config/coop/agents/gemini/</code> to choose between
+<code>GEMINI_API_KEY</code> and <code>GOOGLE_API_KEY</code>. The key is chosen in <code>agents/env</code>: keep the one you want
+there. A leftover file that selected <code>vertex-ai</code> no longer picks the Vertex key, and one that
+selected <code>oauth-personal</code>, or nothing, no longer hides a key you set. The file is not changed or
+deleted.</li>
+</ul>
 </section><section class="doc-section reference-section" id="v1310-per-project-tools-git-folders-and-docker-engine-28"><h2>v13.1.0: per-project tools, Git folders and Docker Engine 28</h2>
 <ul>
 <li><strong><code>COOP_NO_ASDF</code> is retired.</strong> A <code>coop.conf</code> that still sets it stops every command except
