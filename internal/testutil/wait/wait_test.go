@@ -38,4 +38,9 @@ func TestForReturnsWhenTheConditionHoldsAndNamesWhatDidNot(t *testing.T) {
 	if !strings.Contains(r.failed, "a marker nobody writes did not happen within 30ms") {
 		t.Fatalf("failure message = %q; want the missing event and the deadline named", r.failed)
 	}
+	r = &recorder{}
+	ForFile(r, "/nonexistent/marker")
+	if !strings.Contains(r.failed, "/nonexistent/marker appearing did not happen within 30ms") {
+		t.Fatalf("ForFile failure message = %q; want it to read as one sentence", r.failed)
+	}
 }

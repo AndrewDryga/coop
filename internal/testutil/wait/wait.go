@@ -43,7 +43,7 @@ func For(t testing.TB, what string, condition func() bool) {
 // ForFile is For on the existence of path.
 func ForFile(t testing.TB, path string) {
 	t.Helper()
-	For(t, path+" did not appear", func() bool {
+	For(t, path+" appearing", func() bool {
 		_, err := os.Stat(path)
 		return err == nil
 	})
