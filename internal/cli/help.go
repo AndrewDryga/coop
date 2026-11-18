@@ -1071,12 +1071,13 @@ Usage: coop tasks claim <id> [--tasks <path>]... [<options>]
 OPTIONS
   --as <label>  name the person or agent working on it
   --pid <n>     bind the claim to an existing process
-  --force       take over a claim held by another live process
+  --force       take over a person's claim or another live process's
 
   Moves a todo task to in progress. An agent's claim normally follows its
-  process. A claim made at a terminal stays until you release or finish it.
-  Taking over with --force ends the other process's lease, and that
-  process can no longer finish, block or release the task.
+  process. A claim made at a terminal stays until you release or finish it;
+  an agent's claim over it is refused without --force. Taking over a
+  process's claim with --force ends its lease, and that process can no
+  longer finish, block or release the task.
 
   A blocked task must return to todo first, through coop tasks unblock, even
   when its decision is answered. Completed tasks stay in the archive.

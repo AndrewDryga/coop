@@ -222,45 +222,57 @@ func TestAForcedClaimEndsTheDisplacedLeaseAndNamesItsHolder(t *testing.T) {
 	}
 }
 
-// An agent's claim over a person's says whose it took, in its output and in log.md, as it does over
-// a process's, forced or not. A person has no process, so no lease ends and nothing is marked: the
-// mark an earlier forced claim left on a process stays. A person who claims again what is theirs
-// takes it from nobody.
+// An agent's plain claim of a task a person claimed at a terminal is refused, naming the person and
+// --force, and the person's claim stays. With --force it says whose it took, in its output and in
+// log.md, as it does over a process's. A person has no process, so no lease ends and nothing is
+// marked: the mark an earlier forced claim left on a process stays. A person who claims again what is
+// theirs takes it from nobody.
 func TestAnAgentsClaimOverAPersonsClaimNamesThePerson(t *testing.T) {
 	t.Setenv("USER", "alice")
 	me := selfActor(t, "claude")
 	qa, _ := sleeperActor(t, "qa")
-	for name, force := range map[string]bool{"forced": true, "plain": false} {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
-			claim := func(actor ClaimActor, force bool) string {
-				t.Helper()
-				return captureStderr(t, func() {
-					if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
-						t.Fatalf("claim by %+v (force %t) = %d, %v", actor, force, code, err)
-					}
-				})
-			}
-			claim(qa, false)
-			claim(ClaimActor{}, true) // alice, at a terminal, takes it from qa, which is then marked as displaced
-
-			out := claim(me, force)
-			if want := "  Took over from alice.\n"; !strings.Contains(out, want) || strings.Contains(out, "Already in progress") {
-				t.Fatalf("claim output =\n%s\nwant it to say %q", out, want)
-			}
-			item, _ := mustCurrentTask(t, root, "x")
-			want := fmt.Sprintf("- Claimed by claude (PID %d), taking it over from alice\n", me.PID)
-			if log := readFileString(filepath.Join(item.Dir, "log.md")); !strings.Contains(log, want) {
-				t.Fatalf("log.md =\n%s\nwant it to contain %q", log, want)
-			}
-			if rec, _ := taskOwned(t, root, "x"); rec.ActorPID != me.PID || rec.TakenFromPID != qa.PID {
-				t.Fatalf("owner after the claim = %+v, want claude's claim with qa still marked as displaced", rec)
+	root := t.TempDir()
+	writeTaskFile(t, filepath.Join(root, StateTodo, "x", "task.md"), "# X\n")
+	claim := func(actor ClaimActor, force bool) string {
+		t.Helper()
+		return captureStderr(t, func() {
+			if code, err := tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: actor, force: force}); code != 0 || err != nil {
+				t.Fatalf("claim by %+v (force %t) = %d, %v", actor, force, code, err)
 			}
 		})
 	}
+	claim(qa, false)
+	claim(ClaimActor{}, true) // alice, at a terminal, takes it from qa, which is then marked as displaced
 
-	root := t.TempDir()
+	// A plain claim leaves a person's claim alone and names the person and --force.
+	var code int
+	var err error
+	refusal := captureStderr(t, func() {
+		code, err = tasksFolderMoveWith(root, []string{"x"}, StateInProgress, "claim", claimOptions{actor: me})
+	})
+	if code == 0 || !errors.Is(err, errTaskClaimedByOther) ||
+		!strings.Contains(refusal+err.Error(), "alice claimed it at a terminal") ||
+		!strings.Contains(refusal+err.Error(), "coop tasks claim x --force") {
+		t.Fatalf("plain claim over alice's = %d, %v\n%s\nwant a refusal naming alice and --force", code, err, refusal)
+	}
+	if rec, _ := taskOwned(t, root, "x"); rec.ActorPID != 0 || rec.TakenFromPID != qa.PID {
+		t.Fatalf("owner after the refused claim = %+v, want alice's claim kept", rec)
+	}
+
+	out := claim(me, true)
+	if want := "  Took over from alice.\n"; !strings.Contains(out, want) || strings.Contains(out, "Already in progress") {
+		t.Fatalf("claim output =\n%s\nwant it to say %q", out, want)
+	}
+	item, _ := mustCurrentTask(t, root, "x")
+	want := fmt.Sprintf("- Claimed by claude (PID %d), taking it over from alice\n", me.PID)
+	if log := readFileString(filepath.Join(item.Dir, "log.md")); !strings.Contains(log, want) {
+		t.Fatalf("log.md =\n%s\nwant it to contain %q", log, want)
+	}
+	if rec, _ := taskOwned(t, root, "x"); rec.ActorPID != me.PID || rec.TakenFromPID != qa.PID {
+		t.Fatalf("owner after the claim = %+v, want claude's claim with qa still marked as displaced", rec)
+	}
+
+	root = t.TempDir()
 	writeTaskFile(t, filepath.Join(root, StateTodo, "mine", "task.md"), "# Mine\n")
 	for range 2 {
 		out := captureStderr(t, func() {

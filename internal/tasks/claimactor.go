@@ -7,7 +7,8 @@ import (
 )
 
 // ClaimActor is the process a claim is bound to and the label the queue shows for it. A zero PID
-// means the claim is bound to nothing — a person's claim, which only that person releases.
+// means the claim is bound to nothing — a person's claim, which only that person releases, and which
+// an agent's claim takes over only with --force.
 type ClaimActor struct {
 	Label      string
 	PID        int

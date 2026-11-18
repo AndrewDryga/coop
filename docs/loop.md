@@ -81,11 +81,13 @@ passed. It can also resume an in-progress task that no co:op process, such as a 
 
 `coop tasks claim <id>` records you as the owner and exits, without keeping a lock open. The loop
 leaves your task alone and shows the owner and the `coop tasks release <id>` command. Your claim
-never expires: only an explicit `release`, `block`, `unblock` or `done` clears it.
+never expires: only an explicit `release`, `block`, `unblock` or `done` clears it. An agent's
+`coop tasks claim <id>` over it is refused and names you, on the host as in a box.
 
-`coop tasks claim <id> --force` takes over a claim that another running process holds. It ends that
-process's `coop tasks lease`, and that process can no longer complete, block, release or lease the
-task, or claim it back without `--force`, from the host or from a box.
+`coop tasks claim <id> --force` takes over a person's claim, or a claim that another running
+process holds. Over a running process's claim, it ends that process's `coop tasks lease`, and that
+process can no longer complete, block, release or lease the task, or claim it back without
+`--force`, from the host or from a box.
 
 Stop every running co:op process, such as `coop loop`, before a major-version upgrade. Processes
 from different major versions can't share a task queue.

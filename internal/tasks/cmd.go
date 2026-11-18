@@ -743,10 +743,11 @@ var errForceCloseNeedsTerminal = &ui.UsageError{
 
 var errTaskClaimedByOther = errors.New("task is claimed by another live process")
 
-// competingClaim reports whether an existing claim blocks a new one: only a claim bound to a
-// process that is still alive and is not the claimer's own does. A person's claim (no process) or
-// a claim whose process is gone is taken over without --force — the point of binding is to tell
-// "someone is on this" from "someone was". The claim's result still says whose it replaced.
+// competingClaim reports whether an existing process-bound claim blocks a new one: only a claim
+// bound to a process that is still alive and is not the claimer's own does. A claim whose process is
+// gone is taken over without --force — the point of binding is to tell "someone is on this" from
+// "someone was". A person's claim (no process) is not one: a person re-takes their own, and
+// claimTaskOwnerRecord refuses an agent's plain claim over it. The result says whose it replaced.
 func competingClaim(existing TaskOwnerRecord, actor ClaimActor) bool {
 	if existing.Kind != TaskOwnerHuman || existing.ActorPID == 0 || !ownerProcessLive(existing) {
 		return false
@@ -806,8 +807,12 @@ func claimTaskOwnerRecord(root, id string, opts claimOptions) (claimTakeover, er
 	case refused != nil:
 		return claimTakeover{}, refused
 	case previous.ActorPID == 0 && opts.actor.PID != 0:
-		// A person's claim blocks nobody and has no process to mark as displaced, so the mark below
-		// stays as it was. The agent's claim over it still says whose it was.
+		// A claim made at a terminal is a person saying the task is theirs, so an agent's claim takes
+		// it only with --force, as in a box. It has no process to mark as displaced, so the mark below
+		// stays as it was; the claim over it still says whose it was.
+		if !opts.force {
+			return claimTakeover{}, personClaimRefusal(id, previous)
+		}
 		takeover = claimTakeover{from: &previous}
 	case competingClaim(previous, opts.actor):
 		if !opts.force {
@@ -851,6 +856,18 @@ func liveClaimRefusal(verb, id string, record TaskOwnerRecord) error {
 	return &drawnRefusal{
 		usage: ui.CommandFailed("Could not "+verb+" "+safe, "It is "+TaskOwnerLabel(record)+", "+running+".", rows...),
 		err:   fmt.Errorf("%w: %s is %s", errTaskClaimedByOther, id, TaskOwnerLabel(record)),
+	}
+}
+
+// personClaimRefusal refuses an agent's plain claim of a task a person claimed at a terminal. That
+// claim stays until the person releases or finishes it; --force takes it over.
+func personClaimRefusal(id string, record TaskOwnerRecord) error {
+	safe := ui.SafeInline(id)
+	who := claimHolder(record, false)
+	return &drawnRefusal{
+		usage: ui.CommandFailed("Could not claim "+safe, ui.SafeInline(who)+" claimed it at a terminal, and it stays theirs until they release or finish it.",
+			[2]string{"Take it over:", "coop tasks claim " + safe + " --force"}),
+		err: fmt.Errorf("%w: %s is %s", errTaskClaimedByOther, id, TaskOwnerLabel(record)),
 	}
 }
 

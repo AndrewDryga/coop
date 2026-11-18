@@ -44,6 +44,8 @@ func TestParseLeaseArgs(t *testing.T) {
 	}
 }
 
+// inProgressTask claims a new task at a terminal, as a person. An agent's claim of it after takes
+// --force.
 func inProgressTask(t *testing.T, root, id string) Item {
 	t.Helper()
 	writeTaskFile(t, filepath.Join(root, StateTodo, id, "task.md"), "# "+id+"\n")
@@ -621,7 +623,7 @@ func TestAPersonsLeaseNamesThePerson(t *testing.T) {
 func TestListShowsAHeldLeaseBesideTheClaim(t *testing.T) {
 	root := t.TempDir()
 	item := inProgressTask(t, root, "both")
-	if code, err := tasksFolderMoveWith(root, []string{"both"}, StateInProgress, "claim", claimOptions{actor: selfActor(t, "codex")}); code != 0 || err != nil {
+	if code, err := tasksFolderMoveWith(root, []string{"both"}, StateInProgress, "claim", claimOptions{actor: selfActor(t, "codex"), force: true}); code != 0 || err != nil {
 		t.Fatalf("bound claim = %d, %v", code, err)
 	}
 	lease, _, err := TryTaskLease(root, item, TaskLeaseOwner{RunID: "lease:codex", PID: os.Getpid(), Provider: "codex", Target: "codex"})
@@ -639,7 +641,7 @@ func TestLeaseBindsToTheTasksClaimantWhenItsOwnAncestryIsGone(t *testing.T) {
 	root := t.TempDir()
 	me := selfActor(t, "claude")
 	inProgressTask(t, root, "mine")
-	if _, err := claimTaskOwnerRecord(root, "mine", claimOptions{actor: me}); err != nil {
+	if _, err := claimTaskOwnerRecord(root, "mine", claimOptions{actor: me, force: true}); err != nil {
 		t.Fatal(err)
 	}
 	// The holder found no agent above itself (its tool-call shell already exited): it follows the
@@ -656,7 +658,7 @@ func TestLeaseBindsToTheTasksClaimantWhenItsOwnAncestryIsGone(t *testing.T) {
 	// then holds until the task moves or it is stopped.
 	inProgressTask(t, root, "stale")
 	stale := ClaimActor{Label: "codex", PID: me.PID, StartToken: processidentity.StartToken(1)}
-	if _, err := claimTaskOwnerRecord(root, "stale", claimOptions{actor: stale}); err != nil {
+	if _, err := claimTaskOwnerRecord(root, "stale", claimOptions{actor: stale, force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if req := bindLeaseToClaimant(root, leaseRequest{id: "stale"}); req.actor.PID != 0 || req.claimant {
@@ -706,7 +708,7 @@ func TestLeaseNeverActsOnAnotherSystemsProcess(t *testing.T) {
 
 	inProgressTask(t, root, "far")
 	far := ClaimActor{Label: "codex", PID: bystander.PID, StartToken: starttoken.Foreign()}
-	if _, err := claimTaskOwnerRecord(root, "far", claimOptions{actor: far}); err != nil {
+	if _, err := claimTaskOwnerRecord(root, "far", claimOptions{actor: far, force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if req := bindLeaseToClaimant(root, leaseRequest{id: "far"}); req.actor.PID != 0 || req.claimant {
