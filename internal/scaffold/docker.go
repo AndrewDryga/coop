@@ -144,7 +144,8 @@ var dockerSkipDirs = map[string]bool{
 
 // detectDocker scans the repo (root + its immediate subdirs) for Dockerfiles and compose
 // files, skipping coop's own and heavy/irrelevant dirs. It takes entries in name order, whatever
-// order the volume lists them in, because coop init points at the first file it finds.
+// order the volume lists them in, and a folder's own files before its subfolders', because coop
+// init points at the first file it finds and a root Dockerfile is the likelier one.
 //
 // A box can swap a folder it can write for a FIFO or a link after the scan lists the root. Each
 // folder is opened from the root without following a link or waiting on a FIFO, so the scan
@@ -166,6 +167,7 @@ func detectDocker(repo string) dockerFinds {
 		}
 		afterListed(rel)
 		slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+		var subdirs []string
 		for _, e := range entries {
 			name := e.Name()
 			switch {
@@ -173,14 +175,17 @@ func detectDocker(repo string) dockerFinds {
 				if rel != "" || strings.HasPrefix(name, ".") || dockerSkipDirs[name] {
 					continue // one level down only, and never into hidden or heavy folders
 				}
-				if child, err := safefile.OpenDir(dir, name); err == nil {
-					scan(child, name)
-					_ = child.Close()
-				}
+				subdirs = append(subdirs, name)
 			case isDockerfile(name):
 				f.dockerfiles = append(f.dockerfiles, filepath.Join(rel, name))
 			case isComposeFile(name):
 				f.composes = append(f.composes, filepath.Join(rel, name))
+			}
+		}
+		for _, name := range subdirs {
+			if child, err := safefile.OpenDir(dir, name); err == nil {
+				scan(child, name)
+				_ = child.Close()
 			}
 		}
 	}

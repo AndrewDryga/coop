@@ -174,6 +174,26 @@ func TestDetectDockerSetup(t *testing.T) {
 		t.Fatalf("detected setup = %+v, want the repo's own Dockerfile and Compose file", setup)
 	}
 
+	// The root's own files win over a folder's, even one whose name sorts first.
+	if err := os.MkdirAll(filepath.Join(repo, "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Dockerfile", "docker-compose.yml"} {
+		if err := os.WriteFile(filepath.Join(repo, "api", name), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "0ops"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "0ops", "Dockerfile"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setup = DetectDockerSetup(repo)
+	if setup == nil || setup.Dockerfile != "Dockerfile" || setup.Compose != "docker-compose.yml" {
+		t.Fatalf("detected setup = %+v, want the root's own files over api/ and 0ops/", setup)
+	}
+
 	// A repo that already has .agent/Dockerfile → nothing to suggest.
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
 		t.Fatal(err)
