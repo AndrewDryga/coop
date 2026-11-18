@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 14.0.0
 
 - **Coop is built with Go 1.27.4.** It fixes a published net/http server crash (GO-2026-6859) that
