@@ -385,6 +385,16 @@ func TestLoadReviewReadsOnlyTheReviewStack(t *testing.T) {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
+	// A problem in the block names the file's own line, in the words Parse uses.
+	for body, want := range map[string]string{
+		"box: {}\n\nreview:\n  compose: x.yml\n  composer: x.yml\n": `line 5: unknown setting "composer"`,
+		"gate: make\nreview:\n  env: [CI]\n":                        `line 3: a list should be a group of settings`,
+	} {
+		_, err := LoadReview(writeProject(t, body))
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "project.Review") {
+			t.Errorf("LoadReview(%q) = %v, want %q", body, err, want)
+		}
+	}
 }
 
 // Members can nest, so a path under terraform/environments/va1/blitz-apps sits inside two declared

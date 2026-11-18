@@ -194,14 +194,18 @@ func LoadReview(repo string) (Review, error) {
 	}
 	var review Review
 	if doc.Review.Kind != 0 {
-		block, err := yaml.Marshal(&doc.Review)
-		if err != nil {
-			return Review{}, fmt.Errorf("%s: %w", File, err)
+		// Node.Decode has no KnownFields, so unknown keys are refused here. Decoding the node
+		// itself, not a re-rendered copy, keeps every reported line the file's own.
+		if doc.Review.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(doc.Review.Content); i += 2 {
+				if key := doc.Review.Content[i]; key.Value != "compose" && key.Value != "env" {
+					return Review{}, fmt.Errorf("%s: %w", File, &yaml.TypeError{Errors: []string{
+						fmt.Sprintf("line %d: unknown setting %q", key.Line, key.Value)}})
+				}
+			}
 		}
-		dec := yaml.NewDecoder(bytes.NewReader(block))
-		dec.KnownFields(true)
-		if err := dec.Decode(&review); err != nil && !errors.Is(err, io.EOF) {
-			return Review{}, fmt.Errorf("%s: review: %w", File, err)
+		if err := doc.Review.Decode(&review); err != nil {
+			return Review{}, fmt.Errorf("%s: %w", File, yamltext.Plain(err))
 		}
 	}
 	if review.Compose, err = projectRelPath("review.compose", review.Compose); err != nil {
