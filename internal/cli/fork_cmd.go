@@ -396,6 +396,17 @@ func parseForkCreate(args []string) (forkArgs, error) {
 	if fa.worker && !fa.agentSet && fa.preset == "" {
 		return fa, ui.CommandFailed("Cannot start the detached fork worker", "It did not receive the parent's target or preset. Coop starts this worker itself, so this is a bug in Coop.")
 	}
+	// --continue/--new choose the interactive session; a loop starts its own sessions.
+	if fa.loop && !fa.worker && (fa.cont || fa.newSession) {
+		session, loop := "--continue", "--loop"
+		if fa.newSession {
+			session = "--new"
+		}
+		if fa.detach {
+			loop = "--detach"
+		}
+		return fa, ui.ConflictingOptions(session, loop, "coop fork")
+	}
 	// --peer names loop peers; an interactive fork has no ad-hoc peer set (name them on a loop).
 	if len(fa.peers) > 0 && !fa.loop {
 		return fa, ui.OptionNeedsAnother("--peer", "--loop", "coop fork")

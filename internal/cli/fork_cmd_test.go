@@ -29,6 +29,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const testForkSessionStoreID = "store_test"
@@ -1411,6 +1412,22 @@ func TestParseForkContinue(t *testing.T) {
 	}
 	if _, err := parseForkCreate([]string{"demo", "codex", "--continue", "--new"}); err == nil || !strings.Contains(err.Error(), `Cannot combine "--continue" and "--new"`) {
 		t.Errorf("parseForkCreate(--continue --new) = %v, want the two options refused together", err)
+	}
+	// A loop starts its own sessions, so the interactive session choice would do nothing.
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"demo", "codex", "--loop", "--continue"}, `Cannot combine "--continue" and "--loop"`},
+		{[]string{"demo", "codex", "-c", "--loop"}, `Cannot combine "--continue" and "--loop"`},
+		{[]string{"demo", "codex", "--loop", "--new"}, `Cannot combine "--new" and "--loop"`},
+		{[]string{"demo", "codex", "-d", "-c"}, `Cannot combine "--continue" and "--detach"`},
+		{[]string{"demo", "codex", "--new", "--detach"}, `Cannot combine "--new" and "--detach"`},
+	} {
+		var usage *ui.UsageError
+		if _, err := parseForkCreate(tc.args); !errors.As(err, &usage) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("parseForkCreate(%v) = %v, want usage error %s", tc.args, err, tc.want)
+		}
 	}
 }
 

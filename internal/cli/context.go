@@ -45,6 +45,7 @@ func (a *app) cmdContext(args []string) (int, error) {
 	}
 	var changed, asJSON, rendered bool
 	var taskID string
+	var taskSet bool
 	var paths []string
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
@@ -54,10 +55,16 @@ func (a *app) cmdContext(args []string) (int, error) {
 			asJSON = true
 		case arg == "--rendered":
 			rendered = true
-		case arg == "--task":
-			taskID, i = args[i+1], i+1
-		case strings.HasPrefix(arg, "--task="):
-			taskID = strings.TrimPrefix(arg, "--task=")
+		case arg == "--task", strings.HasPrefix(arg, "--task="):
+			if taskSet {
+				return 2, ui.RepeatedOption("--task", "coop context")
+			}
+			taskSet = true
+			if arg == "--task" {
+				taskID, i = args[i+1], i+1
+			} else {
+				taskID = strings.TrimPrefix(arg, "--task=")
+			}
 		case strings.HasPrefix(arg, "-") && arg != "-":
 			return 2, unknownOptionErr(arg, "coop context", []string{"--changed", "--task", "--tasks", "--json", "--rendered"})
 		default:

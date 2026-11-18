@@ -2,11 +2,14 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func contextTaskFixture(t *testing.T, first, second string) (string, *app) {
@@ -168,7 +171,7 @@ func TestContextTaskSelectionPreservesScopeOrder(t *testing.T) {
 	var code int
 	var err error
 	out := captureStdout(t, func() {
-		code, err = a.cmdContext([]string{"--json", "explicit.go", "--changed", "--task=absent", "--task", "shared", "--tasks=b/.agent/tasks"})
+		code, err = a.cmdContext([]string{"--json", "explicit.go", "--changed", "--task", "shared", "--tasks=b/.agent/tasks"})
 	})
 	if code != 0 || err != nil {
 		t.Fatalf("context=(%d, %v)", code, err)
@@ -182,6 +185,22 @@ func TestContextTaskSelectionPreservesScopeOrder(t *testing.T) {
 	}
 	if len(got.Files) != 2 || got.Files[1].Reason != "route **/*.go → explicit.go" {
 		t.Fatalf("route reason/order changed: %+v", got.Files)
+	}
+}
+
+// Context reads one task; a second --task would otherwise silently replace the first.
+func TestContextRefusesARepeatedTask(t *testing.T) {
+	_, a := contextTaskFixture(t, "shared", "shared")
+	for _, args := range [][]string{
+		{"--task", "absent", "--task", "shared"},
+		{"--task=absent", "--task", "shared"},
+		{"--task", "shared", "--task=shared"},
+	} {
+		code, err := a.cmdContext(args)
+		var usage *ui.UsageError
+		if code != 2 || !errors.As(err, &usage) || !strings.Contains(err.Error(), `Option "--task" can only be used once in "coop context"`) {
+			t.Errorf("context %v = (%d, %v), want the repeated --task refused", args, code, err)
+		}
 	}
 }
 
