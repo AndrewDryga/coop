@@ -64,6 +64,51 @@ func TestLocalCheckScopesCoverReverseConsumers(t *testing.T) {
 	}
 }
 
+// ./... skips testdata folders, so a fixture program the suites build gets vet and Staticcheck only
+// if lint names it. Every testdata folder holding Go source must be in TESTDATA_PACKAGES.
+func TestLintCoversEveryTestdataProgram(t *testing.T) {
+	data, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var declared []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if packages, ok := strings.CutPrefix(line, "TESTDATA_PACKAGES := "); ok {
+			declared = strings.Fields(packages)
+		}
+	}
+	if len(declared) == 0 {
+		t.Fatal("the Makefile declares no TESTDATA_PACKAGES")
+	}
+	var found []string
+	for _, top := range []string{"cmd", "internal", "tools"} {
+		err := filepath.WalkDir(filepath.Join("..", top), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || !slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "testdata") {
+				return nil
+			}
+			pkg := "./" + filepath.ToSlash(strings.TrimPrefix(filepath.Dir(path), ".."+string(filepath.Separator)))
+			if !slices.Contains(found, pkg) {
+				found = append(found, pkg)
+			}
+			return nil
+		})
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	slices.Sort(found)
+	slices.Sort(declared)
+	if !slices.Equal(found, declared) {
+		t.Errorf("TESTDATA_PACKAGES = %v, want every testdata program: %v", declared, found)
+	}
+}
+
 func localScopeProblems(graph map[string][]string, roots, declared []string) []string {
 	needed := map[string]bool{}
 	for _, root := range roots {

@@ -12,6 +12,9 @@ LDFLAGS := -s -w -X github.com/AndrewDryga/coop/internal/cli.Version=$(VERSION)
 STATICCHECK_MODFILE := tools/staticcheck.mod
 # VET_TAGS are the build tags vet and staticcheck add, so the tagged suites are linted too.
 VET_TAGS := filesystemruntimee2e,acpe2e,boxruntimee2e,networkruntimee2e,providere2e,providerlivee2e,reviewwritee2e
+# ./... skips testdata folders, so lint names the fixture programs the suites build and run.
+# TestLintCoversEveryTestdataProgram keeps this list complete.
+TESTDATA_PACKAGES := ./internal/acpproxy/testdata/acpfixture ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli/testdata/providerfixture
 STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
 STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
 GOVULNCHECK_VERSION := v1.9.0
@@ -73,17 +76,17 @@ lint: fmt-check ## gofmt check + go vet + Staticcheck at the pinned version, for
 # Coop ships Linux and macOS and CI runs Linux, while this gate often runs on a Mac, where a
 # *_linux.go file never compiles. So each check below covers both platforms, whichever host runs
 # it — with cgo off, which the tree never uses, so the other platform never needs a C toolchain.
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet ./... || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet ./... $(TESTDATA_PACKAGES) || exit 1; done
 # The e2e/live files sit behind build tags, so the pass above never compiles them. Every tag in the
 # tree in one pass.
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags $(VET_TAGS) ./... || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os go vet -tags $(VET_TAGS) ./... $(TESTDATA_PACKAGES) || exit 1; done
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck is not installed — run: make install-staticcheck"; exit 1; }
 	@staticcheck -version | grep -qF "($(patsubst v%,%,$(STATICCHECK_VERSION)))" || { echo "$$(staticcheck -version) is not the pinned $(STATICCHECK_VERSION) — run: make install-staticcheck"; exit 1; }
 	@staticcheck -debug.version | awk '$$1 == "golang.org/x/tools@$(STATICCHECK_XTOOLS_VERSION)" {found=1} END {exit !found}' || { echo "staticcheck needs the pinned Go importer $(STATICCHECK_XTOOLS_VERSION) — run: make install-staticcheck"; exit 1; }
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck ./... || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck ./... $(TESTDATA_PACKAGES) || exit 1; done
 	@# Again with go vet's tag set: the scripted and runtime suites live behind build tags, and two
 	@# files are only built without them, so neither pass covers everything alone.
-	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck -tags $(VET_TAGS) ./... || exit 1; done
+	@for os in linux darwin; do CGO_ENABLED=0 GOOS=$$os staticcheck -tags $(VET_TAGS) ./... $(TESTDATA_PACKAGES) || exit 1; done
 
 # Prints the pinned Staticcheck version for anyone who wants the pin without reading this file.
 staticcheck-version:
