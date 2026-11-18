@@ -2543,8 +2543,8 @@ func (s *Service) GetOutputArtifact(ctx context.Context, sessionID, turnID, arti
 	return s.store.GetOutputArtifact(ctx, sessionID, turnID, artifactID)
 }
 
-func (s *Service) ListEvents(ctx context.Context, sessionID string, after int64, limit int) ([]session.Event, error) {
-	return s.store.ListEvents(ctx, sessionID, after, limit)
+func (s *Service) ListEvents(ctx context.Context, sessionID string, after int64, limit, maxBytes int) ([]session.Event, error) {
+	return s.store.ListEventPage(ctx, sessionID, after, limit, maxBytes)
 }
 
 func (s *Service) ExtendBudget(ctx context.Context, key string, req session.ExtendBudgetRequest) (session.Session, error) {

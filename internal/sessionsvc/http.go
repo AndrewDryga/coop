@@ -1097,25 +1097,20 @@ func (h *sessionHTTPHandler) listEvents(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	events, err := h.service.ListEvents(r.Context(), sessionID, after, limit)
+	// Payloads are what make an event readable rather than merely countable,
+	// but they are individually bounded at 256 KiB and a page holds up to a
+	// thousand of them, so a page has to be bounded by bytes as well as by
+	// count. The store stops reading at the budget. Returning a short page is
+	// correct: the caller pages by sequence and the next request resumes
+	// exactly where this one stopped. The store always returns at least one
+	// event, or a single large payload would wedge the cursor forever.
+	events, err := h.service.ListEvents(r.Context(), sessionID, after, limit, sessionEventPageBytes)
 	if err != nil {
 		writeSessionServiceError(w, err)
 		return
 	}
 	result := make([]EventDTO, 0, len(events))
-	// Payloads are what make an event readable rather than merely countable,
-	// but they are individually bounded at 256 KiB and a page holds up to a
-	// thousand of them, so a page has to be bounded by bytes as well as by
-	// count. Returning a short page is correct: the caller pages by sequence
-	// and the next request resumes exactly where this one stopped. Always
-	// return at least one event, or a single large payload would wedge the
-	// cursor forever.
-	budget := sessionEventPageBytes
 	for _, event := range events {
-		if len(result) > 0 && budget-len(event.Payload) < 0 {
-			break
-		}
-		budget -= len(event.Payload)
 		result = append(result, publicEvent(event))
 	}
 	writeSessionJSON(w, http.StatusOK, result)

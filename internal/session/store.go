@@ -42,6 +42,8 @@ type Store struct {
 
 	closeOnce sync.Once
 	closeErr  error
+
+	eventRowScanned func() // test hook: counts rows ListEventPage reads
 }
 
 func Open(root string) (*Store, error) {
@@ -3568,7 +3570,15 @@ func (s *Store) appendEventTx(ctx context.Context, tx *sql.Tx, sessionID, turnID
 }
 
 func (s *Store) ListEvents(ctx context.Context, sessionID string, after int64, limit int) ([]Event, error) {
-	if sessionID == "" || after < 0 {
+	return s.ListEventPage(ctx, sessionID, after, limit, 0)
+}
+
+// ListEventPage is ListEvents bounded by payload bytes too: it stops reading rows once the next
+// payload would pass maxBytes, so a page of large events no longer reads rows only to drop them.
+// The first row is always returned, or one large payload would stall the cursor. A maxBytes of 0
+// means no byte bound.
+func (s *Store) ListEventPage(ctx context.Context, sessionID string, after int64, limit, maxBytes int) ([]Event, error) {
+	if sessionID == "" || after < 0 || maxBytes < 0 {
 		return nil, &Error{Code: CodeInvalidRequest, Detail: "invalid event cursor"}
 	}
 	if limit == 0 {
@@ -3589,12 +3599,22 @@ func (s *Store) ListEvents(ctx context.Context, sessionID string, after int64, l
 	}
 	defer rows.Close()
 	var events []Event
+	budget := maxBytes
 	for rows.Next() {
+		if s.eventRowScanned != nil {
+			s.eventRowScanned()
+		}
 		var event Event
 		var eventType string
 		var occurredAt int64
 		if err := rows.Scan(&event.ID, &event.SessionID, &event.Sequence, &event.TurnID, &eventType, &event.Version, &occurredAt, &event.Payload); err != nil {
 			return nil, fmt.Errorf("scan event: %w", err)
+		}
+		if maxBytes > 0 {
+			if len(events) > 0 && budget < len(event.Payload) {
+				break
+			}
+			budget -= len(event.Payload)
 		}
 		event.Type = EventType(eventType)
 		event.OccurredAt = fromUnixNano(occurredAt)
