@@ -396,3 +396,58 @@ func TestAnOlderSetupRecordIsRefusedByName(t *testing.T) {
 		t.Fatalf("listing with an older setup record = %v, %v; want it skipped", records, err)
 	}
 }
+
+// Only a record a newer equal one replaced is pruned, and only once it is old: a lone record of its
+// kind stays however old, a recent superseded one stays, and a use mark whose record is gone goes.
+func TestRemoveSupersededQualificationsKeepsEachKindsNewest(t *testing.T) {
+	smoke, _ := qualificationFixture(t)
+	newest, err := smoke.Complete(smokeDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := newest.CompletedAt.Add(time.Minute)
+	write := func(q Qualification) Qualification {
+		t.Helper()
+		q.ID = qualificationID(q)
+		data, err := json.Marshal(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := smoke.store.publish("qualification-"+q.ID+".json", data, false); err != nil {
+			t.Fatal(err)
+		}
+		return q
+	}
+	stale := newest
+	stale.CompletedAt = now.Add(-ExecutionRetention - time.Hour)
+	stale = write(stale)
+	recent := newest
+	recent.CompletedAt = now.Add(-time.Hour)
+	recent = write(recent)
+	lone := newest
+	lone.Clients = lone.Clients[:1]
+	lone.CompletedAt = stale.CompletedAt
+	lone = write(lone)
+	orphan := strings.Repeat("c", 64)
+	if err := smoke.store.publish(qualificationHeldRecord(orphan), []byte("{}"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := smoke.store.setRecordTime(qualificationHeldRecord(orphan), stale.CompletedAt); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := smoke.store.RemoveSupersededQualifications(context.Background(), now)
+	if err != nil || removed != 1 {
+		t.Fatalf("removed %d, %v; want the one stale superseded record", removed, err)
+	}
+	if _, err := smoke.store.Qualification(stale.ID); err == nil {
+		t.Fatal("the stale superseded record survived")
+	}
+	for _, id := range []string{newest.ID, recent.ID, lone.ID} {
+		if _, err := smoke.store.Qualification(id); err != nil {
+			t.Fatalf("record %s was removed: %v", id, err)
+		}
+	}
+	if _, err := smoke.store.root.Lstat(qualificationHeldRecord(orphan)); err == nil {
+		t.Fatal("a use mark without its record survived")
+	}
+}

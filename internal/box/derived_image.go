@@ -323,7 +323,7 @@ func FilteredImageIdentity(ctx context.Context, rt runtime.Runtime, capture *Cap
 	if capture == nil || capture.Store == nil {
 		return "", errors.New("filtered image identity requires a host capture")
 	}
-	q, err := capture.Store.Qualification(capture.QualificationID)
+	q, err := capture.Store.HoldQualification(ctx, capture.QualificationID)
 	if err != nil {
 		return "", err
 	}

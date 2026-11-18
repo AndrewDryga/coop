@@ -385,3 +385,50 @@ func TestSessionImageIdentityUsesFreshProofWhenTheOldPairIsGone(t *testing.T) {
 		})
 	}
 }
+
+// A setup prunes the records newer equal ones replaced, but never one a holder still uses: a box
+// start marks its capture's record used, and an unsealed run names its own. A record nothing used
+// for ExecutionRetention goes; the newest of its kind always stays.
+func TestSetupPrunesSupersededRecordsButSparesHeldAndRunning(t *testing.T) {
+	_, _, candidate, _ := qualificationInventoryFixture(t)
+	store, err := networkstate.Open(filepath.Join(t.TempDir(), "network"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	old := now.Add(-networkstate.ExecutionRetention - 30*24*time.Hour)
+	unused := writeQualificationFixture(t, store, candidate, egress.ClientACP, old)
+	held := writeQualificationFixture(t, store, candidate, egress.ClientACP, old.Add(time.Hour))
+	running := writeQualificationFixture(t, store, candidate, egress.ClientACP, old.Add(2*time.Hour))
+	newest := writeQualificationFixture(t, store, candidate, egress.ClientACP, now)
+
+	// A loop or an editor holding the old record starts a box on it.
+	mode := egress.Filtered
+	project := t.TempDir()
+	policy, err := store.Admit(project, networkstate.Admission{InvocationMode: &mode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := &CapturedEgress{Store: store, Project: project, Fingerprint: policy.Fingerprint, QualificationID: held.ID}
+	if _, err := capturedNetworkCandidate(capture, policy, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A run launched on another old record has not sealed yet.
+	if _, err := store.CreateExecution(t.Context(), networkstate.ExecutionSpec{Project: project, PolicyFingerprint: policy.Fingerprint,
+		Runtime: "docker", DaemonID: candidate.Runtime.DaemonID, Endpoint: candidate.Runtime.Endpoint, QualificationID: running.ID,
+		ClientImage: candidate.ClientImage, GatewayImage: candidate.GatewayImage}); err != nil {
+		t.Fatal(err)
+	}
+
+	if removed := pruneSetupRecords(t.Context(), store, now); removed != 1 {
+		t.Fatalf("pruned %d records, want only the unused one", removed)
+	}
+	if _, err := store.Qualification(unused.ID); err == nil {
+		t.Fatal("a superseded record nothing used survived")
+	}
+	for name, id := range map[string]string{"held": held.ID, "running": running.ID, "newest": newest.ID} {
+		if _, err := store.Qualification(id); err != nil {
+			t.Fatalf("the %s record was pruned: %v", name, err)
+		}
+	}
+}

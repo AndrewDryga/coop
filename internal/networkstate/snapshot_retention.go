@@ -75,13 +75,18 @@ func (s *Store) touchAdmitted(fingerprint string) error {
 // time on the marker's own name, never through a link, and reports a missing
 // marker as os.ErrNotExist. The caller holds lockSnapshots.
 func (s *Store) setAdmittedTime(fingerprint string, used time.Time) error {
+	return s.setRecordTime(admittedRecord(fingerprint), used)
+}
+
+// setRecordTime sets a use marker's time on its own name, never through a link.
+func (s *Store) setRecordTime(name string, used time.Time) error {
 	dir, err := s.root.Open(".")
 	if err != nil {
 		return err
 	}
 	defer dir.Close()
 	at := unix.NsecToTimespec(used.UnixNano())
-	return unix.UtimesNanoAt(int(dir.Fd()), admittedRecord(fingerprint), []unix.Timespec{at, at}, unix.AT_SYMLINK_NOFOLLOW)
+	return unix.UtimesNanoAt(int(dir.Fd()), name, []unix.Timespec{at, at}, unix.AT_SYMLINK_NOFOLLOW)
 }
 
 // RemoveUnusedSnapshots deletes the snapshots retention may let go: an admission

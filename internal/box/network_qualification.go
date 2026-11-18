@@ -30,7 +30,8 @@ func capturedNetworkCandidate(capture *CapturedEgress, policy egress.Snapshot, s
 		}
 		return smoke.authority.Candidate(), nil
 	}
-	qualification, err := capture.Store.Qualification(capture.QualificationID)
+	// Each box start marks the record used, so a loop or an editor that holds one keeps it.
+	qualification, err := capture.Store.HoldQualification(context.Background(), capture.QualificationID)
 	if err != nil {
 		return networkstate.CandidateSpec{}, errors.New("this host's network setup record disappeared while the box was starting — run it again")
 	}

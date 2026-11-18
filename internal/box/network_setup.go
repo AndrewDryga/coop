@@ -125,10 +125,21 @@ func SetupNetwork(ctx context.Context, cfg *config.Config, rt runtime.Runtime, o
 	var record networkstate.Qualification
 	err = store.LockSetup(ctx, func() error {
 		var err error
-		record, err = qualifyNetworkHost(ctx, cfg, rt, store, project, out, errOut)
-		return err
+		if record, err = qualifyNetworkHost(ctx, cfg, rt, store, project, out, errOut); err != nil {
+			return err
+		}
+		pruneSetupRecords(ctx, store, time.Now())
+		return nil
 	})
 	return record, err
+}
+
+// pruneSetupRecords removes the setup records the newest ones replaced and nothing
+// still uses. It is housekeeping: a record it cannot judge or remove stays for the
+// next setup, and the setup it follows has succeeded either way.
+func pruneSetupRecords(ctx context.Context, store *networkstate.Store, now time.Time) int {
+	removed, _ := store.RemoveSupersededQualifications(ctx, now)
+	return removed
 }
 
 func qualifyNetworkHost(ctx context.Context, cfg *config.Config, rt runtime.Runtime, store *networkstate.Store, project string, out, errOut io.Writer) (networkstate.Qualification, error) {

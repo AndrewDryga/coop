@@ -585,7 +585,9 @@ Each run also keeps a copy of the rules it started with, which the `--run` optio
 removes the saved copy of a launch's rules only when no retained run record refers to it and no
 launch has used it for 90 days. It keeps the copy a worker session was created with for the whole
 session. An editor session that starts no box for 90 days may need to be started again. A copy made
-by `coop net setup` is removed along with that check's run record.
+by `coop net setup` is removed along with that check's run record. Each `coop net setup` also
+keeps a record of what it proved. When a newer setup proves the same images, co:op removes the
+older record once no running box uses it and nothing has used it for 90 days.
 
 `coop net check <url-or-host>` tells you whether the rules would allow a normal new run in this
 project to reach a destination. It gives one answer and one reason, based on the approved project

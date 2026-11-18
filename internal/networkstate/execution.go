@@ -498,7 +498,10 @@ type ExecutionSummary struct {
 	// PolicyFingerprint names the snapshot this run enforced; snapshot retention
 	// keeps every snapshot a listed run names.
 	PolicyFingerprint string
-	StartedAt         time.Time
+	// QualificationID names the setup record the run launched on; setup-record
+	// retention keeps every one an unsealed run names.
+	QualificationID string
+	StartedAt       time.Time
 	// EndedAt is when the receipt was sealed; zero until Final.
 	EndedAt               time.Time
 	Final, CleanupPending bool
@@ -508,8 +511,8 @@ type ExecutionSummary struct {
 // same summary, so the listing and the removal can never disagree about it.
 func summarize(record Execution) ExecutionSummary {
 	summary := ExecutionSummary{ID: record.ID, Epoch: record.Epoch, Project: record.Project, SessionID: record.SessionID, AttemptID: record.AttemptID,
-		PolicyFingerprint: record.Snapshot.PolicyFingerprint,
-		StartedAt:         record.StartedAt, Final: record.Receipt != nil, CleanupPending: inspectedCleanup(record) != "complete"}
+		PolicyFingerprint: record.Snapshot.PolicyFingerprint, QualificationID: record.QualificationID,
+		StartedAt: record.StartedAt, Final: record.Receipt != nil, CleanupPending: inspectedCleanup(record) != "complete"}
 	if record.Receipt != nil {
 		summary.EndedAt = *record.Receipt.EndedAt
 	}

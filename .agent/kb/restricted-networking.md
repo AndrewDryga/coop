@@ -18,7 +18,11 @@ gateway. Five boring layers stand between that mode and `docker run`:
    Each capture is published once as `snapshot-<fingerprint>.json`. One a project admission created
    carries an `admitted-` marker and goes once no run record names it and nothing admitted or
    loaded it for 90 days, serialized on `snapshot-lock`; a controller job's stays for good, and so
-   does one from before markers ([[network-consumers]]).
+   does one from before markers ([[network-consumers]]). A setup record
+   (`qualification-<id>.json`) gets the same treatment: every capture and box start that uses
+   one marks it (`HoldQualification`, `qualification-held-<id>.json`), and `SetupNetwork` removes,
+   under `qualification-lock`, a record a newer one with the same image pair and clients replaced
+   once no unsealed run names it and nothing used it for 90 days (`RemoveSupersededQualifications`).
 3. **Admission** — `box.AdmitNetwork` (box/network_admission.go) resolves the posture and, for
    filtered mode only, captures the frozen policy the gateway will enforce. Once the mode resolves
    to filtered, `checkFilteredRuntime` is the first gate: a runtime that cannot serve the gateway is
@@ -421,6 +425,7 @@ Traps:
 direct runs and remote sessions consume one.
 
 ## Changelog
+- 2026-11-17 — setup records are marked used by every capture and box start and pruned after a setup once superseded and unused for 90 days (task 2026-11-17-stop-host-setup-records-from-piling-up-until-no).
 - 2026-11-17 — dropped stale client versions (Gemini 0.59.0, Grok 1.0.25; the pins are 0.67.0 and 1.0.77) and added the files the card's named symbols live in to sources (audit K5-4, K5-5; checked internal/agent/gemini.go, grok.go and each symbol with grep).
 - 2026-11-17 — a pre-marker snapshot always stays: origin-based setup marking is gone (audit NS-9).
 - 2026-11-17 — names the production mount check `validateMountsContext` (audit B2-20).

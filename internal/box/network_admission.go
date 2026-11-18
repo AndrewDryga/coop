@@ -726,6 +726,10 @@ func currentQualification(ctx context.Context, docker *runtime.Docker, store *ne
 			}
 		}
 		if present {
+			// The capture holds this record from now on: mark it used so retention keeps it.
+			if _, err := store.HoldQualification(ctx, qualification.ID); err != nil {
+				continue
+			}
 			return &qualification, nil
 		}
 	}

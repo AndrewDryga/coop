@@ -418,7 +418,7 @@ func EditorBoxReadiness(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	case capture.BrokenFile:
 		return ErrProjectNotAdmitted
 	}
-	q, err := capture.Store.Qualification(capture.QualificationID)
+	q, err := capture.Store.HoldQualification(ctx, capture.QualificationID)
 	if err != nil {
 		return err
 	}

@@ -279,6 +279,12 @@ const retainedQualifications = 256
 // most retainedQualifications of them. It lists the private directory and
 // performs no probe, canary or runtime mutation.
 func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
+	return s.qualifications(ctx, retainedQualifications)
+}
+
+// qualifications lists the current records, newest first, at most limit of them
+// (every one for a limit of 0).
+func (s *Store) qualifications(ctx context.Context, limit int) ([]Qualification, error) {
 	if err := s.intactAuthority(); err != nil {
 		return nil, err
 	}
@@ -321,16 +327,160 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 			return nil, err
 		}
 		result = append(result, q)
-		if len(result) > 2*retainedQualifications {
-			result = newestQualifications(result) // bounded memory however many records the folder holds
+		if limit > 0 && len(result) > 2*limit {
+			result = newestQualifications(result, limit) // bounded memory however many records the folder holds
 		}
 	}
-	return newestQualifications(result), nil
+	return newestQualifications(result, limit), nil
 }
 
-func newestQualifications(records []Qualification) []Qualification {
+func newestQualifications(records []Qualification, limit int) []Qualification {
 	slices.SortFunc(records, func(a, b Qualification) int { return b.CompletedAt.Compare(a.CompletedAt) })
-	return records[:min(len(records), retainedQualifications)]
+	if limit > 0 {
+		records = records[:min(len(records), limit)]
+	}
+	return records
+}
+
+// Every setup writes a new record, so a host set up again and again would
+// collect them without end. A record another one replaces (the same image pair
+// and client builds, proved later) is removed once nothing has used it for
+// ExecutionRetention and no unsealed run names it. Whoever holds a record for
+// later launches (a capture, a session, a loop or an editor) marks it used each
+// time it reads it (qualification-held-<id>.json), the way admitted snapshots
+// are marked, so a live holder's record is never removed under it.
+
+func qualificationHeldRecord(id string) string { return "qualification-held-" + id + ".json" }
+
+type heldQualification struct {
+	Version int    `json:"version"`
+	ID      string `json:"id"`
+}
+
+// lockQualifications orders a holder's mark against retention's last look before
+// it removes a record: the record is either marked before that look or found
+// gone after it, never removed in between.
+func (s *Store) lockQualifications(ctx context.Context, operation func() error) error {
+	ctx, cancel := context.WithTimeout(ctx, ExecutionLockTimeout)
+	defer cancel()
+	return s.lockFile(ctx, "qualification-lock", operation)
+}
+
+// HoldQualification is Qualification for a holder that will launch on the
+// record: it reads the record and marks it used now, so retention keeps it.
+func (s *Store) HoldQualification(ctx context.Context, id string) (Qualification, error) {
+	var q Qualification
+	err := s.lockQualifications(ctx, func() error {
+		var err error
+		if q, err = s.Qualification(id); err != nil {
+			return err
+		}
+		data, err := json.Marshal(heldQualification{Version: 1, ID: id})
+		if err != nil {
+			return err
+		}
+		if err := s.publish(qualificationHeldRecord(id), data, false); !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		return s.setRecordTime(qualificationHeldRecord(id), time.Now())
+	})
+	if err != nil {
+		return Qualification{}, err
+	}
+	return q, nil
+}
+
+// RemoveSupersededQualifications removes the setup records a newer equal record
+// replaced, which no unsealed run names and nothing used within
+// ExecutionRetention before now, and the use marks whose record is gone. A run
+// listing it cannot read whole removes nothing. It reports how many records it
+// removed; one it could not judge or remove stays for the next pass.
+func (s *Store) RemoveSupersededQualifications(ctx context.Context, now time.Time) (int, error) {
+	page, err := (&Evidence{files: s}).ExecutionInventory()
+	if err != nil {
+		return 0, err
+	}
+	if len(page.UnreadableNames) > 0 {
+		return 0, errors.New("a network run record is unreadable, so no setup record is removed")
+	}
+	inUse := map[string]bool{}
+	for _, run := range page.Executions {
+		if !run.Final || run.CleanupPending {
+			inUse[run.QualificationID] = true
+		}
+	}
+	records, err := s.qualifications(ctx, 0)
+	if err != nil {
+		return 0, err
+	}
+	newest := map[string]bool{} // records arrive newest first
+	present := map[string]bool{}
+	removed := 0
+	var failures []error
+	for _, q := range records {
+		present[q.ID] = true
+		same, err := json.Marshal(struct {
+			Candidate CandidateSpec     `json:"candidate"`
+			Clients   []QualifiedClient `json:"clients"`
+		}{q.Candidate, q.Clients})
+		if err != nil {
+			return removed, err
+		}
+		if !newest[string(same)] {
+			newest[string(same)] = true
+			continue
+		}
+		if inUse[q.ID] || now.Sub(q.CompletedAt) <= ExecutionRetention {
+			continue
+		}
+		gone, err := s.removeUnusedQualification(ctx, q.ID, now, true)
+		if gone {
+			removed++
+		}
+		failures = append(failures, err)
+	}
+	if names, err := s.root.Open("."); err == nil {
+		all, _ := names.Readdirnames(-1)
+		_ = names.Close()
+		for _, name := range all {
+			id, held := strings.CutPrefix(name, "qualification-held-")
+			id, named := strings.CutSuffix(id, ".json")
+			if held && named && lowerHex(id, 64) && !present[id] {
+				_, err := s.removeUnusedQualification(ctx, id, now, false)
+				failures = append(failures, err)
+			}
+		}
+	}
+	return removed, errors.Join(failures...)
+}
+
+// removeUnusedQualification looks at the record's use mark once more under the
+// lock, where no holder can mark it, and removes the record (when record is set)
+// and then its mark. A mark used inside the window, or one that is not a private
+// regular file, keeps both.
+func (s *Store) removeUnusedQualification(ctx context.Context, id string, now time.Time, record bool) (bool, error) {
+	removed := false
+	err := s.lockQualifications(ctx, func() error {
+		mark, err := s.root.Lstat(qualificationHeldRecord(id))
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+		case err != nil:
+			return err
+		case privateInfo(mark, false) != nil || now.Sub(mark.ModTime()) <= ExecutionRetention:
+			return nil
+		}
+		if record {
+			if err := s.root.Remove("qualification-" + id + ".json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			removed = true
+		}
+		if err := s.root.Remove(qualificationHeldRecord(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	})
+	return removed, err
 }
 
 // RequireLaunch is the per-host preflight match. The release's bundle metadata

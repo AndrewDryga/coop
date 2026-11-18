@@ -247,7 +247,7 @@ func CapturedEgressFromReference(cfg *config.Config, spec RunSpec, reference Ses
 		_ = store.Close()
 		return nil, errors.New("this session's network rules are not filtered ones")
 	}
-	if _, err := store.Qualification(reference.Qualification); err != nil {
+	if _, err := store.HoldQualification(networkAdmissionContext(spec), reference.Qualification); err != nil {
 		_ = store.Close()
 		return nil, errors.Join(errors.New("this host is no longer set up the way this session was started — run 'coop net setup'"), err)
 	}
