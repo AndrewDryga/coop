@@ -59,6 +59,21 @@ func ReadForkTarget(ws string) string {
 	return agent
 }
 
+func forkPresetFile(ws string) string { return filepath.Join(ws, ".coop", "preset") }
+
+// SaveForkPreset notes the preset a fork was made with, or last switched to, beside its saved
+// target: the target holds only the lead's provider, and a launch that names none runs the
+// preset again (lead model and account, roles, ladder) instead of that provider bare. A launch
+// that names a plain target clears it with ClearForkPreset.
+func SaveForkPreset(ws, name string) error { return saveForkMeta(ws, forkPresetFile(ws), name) }
+
+// ReadForkPreset is that preset's name, or "" for a fork made from a plain target (or by a Coop
+// that did not save one).
+func ReadForkPreset(ws string) string { return readForkMeta(ws, forkPresetFile(ws)) }
+
+// ClearForkPreset removes the note when a launch switches the fork to a plain target.
+func ClearForkPreset(ws string) error { return removeForkMeta(ws, forkPresetFile(ws)) }
+
 // targetProvider is the provider slot of a target: what comes before the first ':', '/' or '@'.
 func targetProvider(target string) string {
 	if i := strings.IndexAny(target, ":/@"); i >= 0 {

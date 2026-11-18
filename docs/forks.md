@@ -201,6 +201,11 @@ model or account on its own. Pass a target to switch, and the fork remembers the
 saved account has been removed, co:op names the saved target and says how to pick another.
 `coop fork ls` shows each fork's agent.
 
+A fork made from a preset (`coop fork perf frontier`) remembers the preset the same way, and
+`coop fork perf` and `coop fork perf --loop -d` run it again with its lead's model and account, its
+roles and its ladder. If the preset no longer loads, co:op names it and stops. An editor session
+does not run presets yet, so `coop fork perf acp` on such a fork asks you to name a target.
+
 Reopening a fork also resumes the last conversation. co:op saves a session ID for each fork,
 provider and account in the fork's git-excluded `.coop/` folder, and uses it to resume the exact
 session for the active account and the fork's directory inside the box.

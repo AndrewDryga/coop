@@ -492,7 +492,18 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 	// A saved target that cannot run is refused here, before anything is stopped or recreated.
 	rememberedAgent := false
 	if !fa.agentSet {
-		if saved := forkctl.ReadForkTarget(ws); saved != "" {
+		// A fork made from a preset reopens with that preset, as if it were typed: the saved target
+		// holds only its lead's provider, which would run with no roles, ladder, model or account.
+		if saved := forkctl.ReadForkPreset(ws); saved != "" {
+			p, err := a.loadRunPreset("coop fork", saved)
+			if err != nil {
+				refusal := savedForkErr(fa.name, "preset", saved, err)
+				return refusalExit(refusal), refusal
+			}
+			fa.preset, fa.agent = saved, p.Lead().Provider
+			a.applyPreset(p, fa.agent)
+			rememberedAgent = existed && !fa.worker
+		} else if saved := forkctl.ReadForkTarget(ws); saved != "" {
 			if err := a.useSavedForkTarget(&fa, saved); err != nil {
 				return refusalExit(err), err
 			}
@@ -831,6 +842,14 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		if err := forkctl.SaveForkTarget(ws, forkTarget(fa.agent, fa.model, fa.effort, fa.credential).String()); err != nil {
 			return -1, fmt.Errorf("save fork target before launch: %w — fix ownership or permissions of %s and retry", err, filepath.Join(ws, ".coop"))
 		}
+		// The preset beside it, or none: naming a plain target switches the fork off its preset.
+		saveErr := forkctl.ClearForkPreset(ws)
+		if fa.preset != "" {
+			saveErr = forkctl.SaveForkPreset(ws, fa.preset)
+		}
+		if saveErr != nil {
+			return -1, fmt.Errorf("save fork preset before launch: %w — fix ownership or permissions of %s and retry", saveErr, filepath.Join(ws, ".coop"))
+		}
 	}
 	if fa.loop {
 		// A loop reports its own state and keeps its own log, so a note that an earlier interactive
@@ -995,17 +1014,17 @@ func (a *app) savedForkTarget(name, saved string) (agents.Target, error) {
 		err = a.requireProfile(target.Provider, target.Account())
 	}
 	if err != nil {
-		return agents.Target{}, savedForkTargetErr(name, saved, err)
+		return agents.Target{}, savedForkErr(name, "target", saved, err)
 	}
 	return target, nil
 }
 
-// savedForkTargetErr refuses a launch whose fork has a saved target that cannot run: the target, why,
-// and how to pick another. Whatever the refusal behind it offers to fix the cause (an account's
-// sign-in) comes first.
-func savedForkTargetErr(name, saved string, cause error) *ui.UsageError {
+// savedForkErr refuses a launch whose fork has a saved target or preset (kind) that cannot run: what
+// was saved, why, and how to pick another. Whatever the refusal behind it offers to fix the cause (an
+// account's sign-in, a preset's file) comes first.
+func savedForkErr(name, kind, saved string, cause error) *ui.UsageError {
 	refusal := &ui.UsageError{
-		Headline: fmt.Sprintf("Fork %q cannot use its saved target %q", name, saved),
+		Headline: fmt.Sprintf("Fork %q cannot use its saved %s %q", name, kind, saved),
 		Cause:    safeErrorText(cause),
 		ExitCode: 1,
 	}
@@ -1048,7 +1067,10 @@ func (a *app) forkLaunchCmd(fa forkArgs, ws string, existed bool, rememberedAgen
 		}
 	}
 	var rows []string
-	if rememberedAgent {
+	switch {
+	case rememberedAgent && fa.preset != "":
+		rows = append(rows, "Preset: "+fa.preset+" (saved for this fork)")
+	case rememberedAgent:
 		rows = append(rows, "Agent: "+forkTarget(fa.agent, fa.model, fa.effort, fa.credential).String()+" (saved for this fork)")
 	}
 	if (existed && !fa.fresh && !fa.newSession) || fa.cont {
@@ -1354,6 +1376,19 @@ func (a *app) forkACPTarget(name string) (agents.Target, error) {
 	ws := forkspace.Workspace(repo, name)
 	if !pathExists(ws) {
 		return agents.Target{}, missingACPForkErr(name)
+	}
+	// An editor session runs no preset yet. A fork made from one is refused by name rather than
+	// opened on its lead's provider bare, with no roles, ladder, model or account.
+	if saved := forkctl.ReadForkPreset(ws); saved != "" {
+		return agents.Target{}, &ui.UsageError{
+			Headline: fmt.Sprintf("Fork %q was made from preset %q, which an editor session cannot run", name, saved),
+			Cause:    "coop fork " + name + " acp runs one agent, so it would drop the preset's roles, models and accounts.",
+			Rows: [][2]string{
+				{"Run the preset:", "coop fork " + name},
+				{"Pick a target:", "coop fork " + name + " acp <target>"},
+			},
+			ExitCode: 1,
+		}
 	}
 	if saved := forkctl.ReadForkTarget(ws); saved != "" {
 		return a.savedForkTarget(name, saved)
