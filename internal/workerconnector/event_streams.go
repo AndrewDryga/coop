@@ -224,12 +224,10 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 	e.pruneCreateOriginRetries(targets)
 	batches := make([]workerproto.EventBatch, 0, len(targets))
 	remainingEvents, remainingBytes := maximumPollEvents, min(maximumPollBytes, maximumBytes)
-	lastScanned := ""
+	lastScanned, stoppedEarly := "", false
 	for index, target := range targets {
-		if collectionCtx.Err() != nil {
-			break
-		}
-		if index == maximumEventPage || remainingEvents == 0 || remainingBytes == 0 {
+		if collectionCtx.Err() != nil || index == maximumEventPage || remainingEvents == 0 || remainingBytes == 0 {
+			stoppedEarly = true
 			break
 		}
 		lastScanned = target.sessionRef
@@ -291,7 +289,9 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 		remainingEvents -= len(batchEvents)
 		remainingBytes -= batchBytes
 	}
-	if lastScanned != "" {
+	// The cursor only matters when a scan stops before the end: the next one then starts after
+	// the last target served. A complete scan leaves it alone instead of fsyncing it every poll.
+	if stoppedEarly && lastScanned != "" {
 		issues = errors.Join(issues, e.journal.advanceEventScan(lastScanned))
 	}
 	return batches, issues

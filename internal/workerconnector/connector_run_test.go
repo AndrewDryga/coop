@@ -524,6 +524,33 @@ func TestEventStreamScanGivesEveryBoundSessionAChanceToPublish(t *testing.T) {
 	})
 }
 
+// A scan that serves every session has no one to be fair to next time, so it leaves the cursor
+// alone instead of rewriting and fsyncing it every poll.
+func TestCompleteEventStreamScanDoesNotRewriteTheCursor(t *testing.T) {
+	now := time.Date(2026, 9, 4, 18, 0, 0, 0, time.UTC)
+	api := &multiEventAPI{events: map[string][]workerproto.SessionEvent{}}
+	executor, err := NewExecutor(ExecutorConfig{
+		API: api, JournalDir: t.TempDir(), Now: func() time.Time { return now }, WorkerID: "worker-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"session-a", "session-b"} {
+		if err := executor.journal.writeEventStream(executor.journal.eventStreamPath(id), eventStream{
+			Version: eventStreamVersion, SessionRef: id, PlacementGeneration: 1, CoopSessionID: id,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		api.events[id] = []workerproto.SessionEvent{{ID: "evt-1", SessionID: id, Sequence: 1, Type: "model.thought", Version: 1, OccurredAt: now}}
+	}
+	if batches := executor.pendingEventBatches(context.Background(), maximumPollBytes); len(batches) != 2 {
+		t.Fatalf("complete scan batches = %+v", batches)
+	}
+	if _, err := os.Stat(executor.journal.eventScanPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("complete scan wrote the cursor: %v", err)
+	}
+}
+
 func TestEventStreamScanDeadlinePreservesRotation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		api := &blockedEventAPI{}
@@ -673,6 +700,71 @@ func (f *failingThenHealthyTransport) Poll(_ context.Context, poll workerproto.P
 		Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: f.now,
 		AcknowledgedResultCommandIDs: []string{}, Commands: []workerproto.Command{}, EventAcknowledgements: []workerproto.EventAcknowledgement{},
 	}, nil
+}
+
+// slowStorageAPI is a daemon whose storage measurement never finishes and which counts how often
+// its capabilities are read.
+type slowStorageAPI struct {
+	capabilityReads atomic.Int64
+}
+
+func (a *slowStorageAPI) Do(ctx context.Context, request Request) (json.RawMessage, error) {
+	switch request.Path {
+	case "/v1/storage":
+		<-ctx.Done()
+		return nil, ctx.Err()
+	case "/v1/capabilities":
+		a.capabilityReads.Add(1)
+		return json.RawMessage(`{"job_spec_versions":[2],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2]}`), nil
+	default:
+		return nil, errors.New("unexpected private request " + request.Path)
+	}
+}
+
+// A storage measurement that never answers must not hold the poll loop: polls keep their
+// interval, so commands still start and results and lease renewals still go out. Capabilities,
+// a constant of the running daemon, are read once per connection.
+func TestConnectorKeepsPollingWhileStorageIsSlow(t *testing.T) {
+	api := &slowStorageAPI{}
+	executor, err := NewExecutor(ExecutorConfig{API: api, JournalDir: t.TempDir(), Now: time.Now, WorkerID: "worker-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reports := NewLiveReports(api)
+	var polls atomic.Int64
+	transport := pollTransportFunc(func(_ context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+		polls.Add(1)
+		return workerproto.Response{
+			Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: time.Now(),
+			AcknowledgedResultCommandIDs: []string{}, Commands: []workerproto.Command{}, EventAcknowledgements: []workerproto.EventAcknowledgement{},
+		}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	connector, err := NewConnector(ConnectorConfig{
+		Executor: executor, Now: time.Now, Transport: transport,
+		Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello {
+			current := hello(clock)
+			current.Capabilities = reports.Capabilities(ctx)
+			current.Storage = reports.Storage(ctx)
+			return current
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- connector.Run(ctx, 10*time.Millisecond, func(error) {}) }()
+	wait.For(t, "polls while storage is measured", func() bool { return polls.Load() >= 5 })
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatal("connector did not stop")
+	}
+	if reads := api.capabilityReads.Load(); reads != 1 {
+		t.Fatalf("capabilities read %d times, want once per connection", reads)
+	}
 }
 
 func TestPollOnceKeepsExecutingPastOneUnexecutableCommand(t *testing.T) {

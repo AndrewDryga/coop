@@ -24,20 +24,27 @@ type sessionCapabilities struct {
 // LiveCapabilities adds implementation capabilities only after the exact local
 // session daemon proves them, so a hello never claims more than the daemon answers.
 func LiveCapabilities(ctx context.Context, api API) []workerproto.Capability {
+	result, _ := readCapabilities(ctx, api)
+	return result
+}
+
+// readCapabilities is LiveCapabilities that also says whether the daemon answered, so a caller
+// may keep a proven answer and ask again after a failed one.
+func readCapabilities(ctx context.Context, api API) ([]workerproto.Capability, bool) {
 	result := []workerproto.Capability{}
 	if api == nil {
-		return result
+		return result, false
 	}
 
 	raw, err := api.Do(ctx, Request{Method: "GET", Path: "/v1/capabilities"})
 	if err != nil {
-		return result
+		return result, false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	var document sessionCapabilities
 	if decoder.Decode(&document) != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		return result
+		return result, false
 	}
 	if proves(document.ProjectRuntimeVersions, 1) {
 		result = append(result, workerproto.Capability{Name: "project-runtime", Version: "1"})
@@ -61,7 +68,7 @@ func LiveCapabilities(ctx context.Context, api API) []workerproto.Capability {
 	if proves(document.ReviewCommitMessageVersions, 1) {
 		result = append(result, workerproto.Capability{Name: "review-commit-message", Version: "1"})
 	}
-	return result
+	return result, true
 }
 
 // proves accepts only the exact single version this connector speaks. A daemon publishing a

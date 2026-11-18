@@ -87,7 +87,9 @@ incomplete tree.
 
 Each hello message can carry a `storage` object that reports disk space on the volume holding the
 worker's fork workspaces. The connector reads it from the daemon's
-[`GET /v1/storage`](#health) endpoint and forwards it unchanged.
+[`GET /v1/storage`](#health) endpoint and forwards it unchanged. The read runs in the background, so
+a slow measurement never delays a poll: each hello carries the last report, and the first hello
+after the worker connects may have none. Use `measured_at` to see how old it is.
 
 ```json
 {

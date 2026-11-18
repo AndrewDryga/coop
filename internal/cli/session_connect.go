@@ -267,14 +267,17 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 		return 1, err
 	}
 	sandbox := sha256.Sum256([]byte(cfg.BaseImage))
+	// Storage and capabilities stay off the poll path: a slow storage measurement must not stall
+	// command starts, result delivery or lease renewal (see workerconnector.LiveReports).
+	reports := workerconnector.NewLiveReports(privateAPI)
 	hello := func(ctx context.Context, clock time.Time) workerproto.WorkerHello {
 		capacity := workerconnector.LiveCapacity(ctx, privateAPI)
 		return workerproto.WorkerHello{
 			ID: identity.ID, WorkspaceRef: identity.WorkspaceRef, ProtocolVersion: "2",
 			BuildVersion: resolveVersion(), ClockAt: clock.UTC(), State: capacity.State,
 			SandboxDigest: hex.EncodeToString(sandbox[:]),
-			Capabilities:  workerconnector.LiveCapabilities(ctx, privateAPI),
-			Storage:       workerconnector.LiveStorage(ctx, privateAPI),
+			Capabilities:  reports.Capabilities(ctx),
+			Storage:       reports.Storage(ctx),
 			Capacity:      capacity,
 		}
 	}

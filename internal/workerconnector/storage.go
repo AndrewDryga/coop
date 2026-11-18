@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"sync"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -44,4 +45,58 @@ func LiveStorage(ctx context.Context, api API) *workerproto.Storage {
 		return nil
 	}
 	return &storage
+}
+
+// LiveReports keeps the hello's two slow or constant reads off the poll path. The poll loop is one
+// goroutine that also starts commands, delivers results and renews leases, and /v1/storage can
+// wait up to the private API's one-minute timeout while the daemon re-measures the state tree or a
+// job source is removed. So Storage never waits: it returns the last report and refreshes it in
+// the background, one refresh at a time. Capabilities are a constant of the running daemon: once
+// it answers, that answer holds for the connection.
+type LiveReports struct {
+	api API
+
+	mu           sync.Mutex
+	storage      *workerproto.Storage
+	refreshing   bool
+	capabilities []workerproto.Capability
+}
+
+func NewLiveReports(api API) *LiveReports { return &LiveReports{api: api} }
+
+// Storage returns the last storage report, nil until the first one arrives, and starts a refresh
+// unless one is already running. The refresh stops when ctx ends.
+func (r *LiveReports) Storage(ctx context.Context) *workerproto.Storage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.refreshing {
+		r.refreshing = true
+		go func() {
+			storage := LiveStorage(ctx, r.api)
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.refreshing = false
+			if storage != nil || ctx.Err() == nil {
+				r.storage = storage
+			}
+		}()
+	}
+	return r.storage
+}
+
+// Capabilities reads the daemon's capabilities until it answers once, then keeps that answer.
+func (r *LiveReports) Capabilities(ctx context.Context) []workerproto.Capability {
+	r.mu.Lock()
+	cached := r.capabilities
+	r.mu.Unlock()
+	if cached != nil {
+		return cached
+	}
+	capabilities, answered := readCapabilities(ctx, r.api)
+	if answered {
+		r.mu.Lock()
+		r.capabilities = capabilities
+		r.mu.Unlock()
+	}
+	return capabilities
 }

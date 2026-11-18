@@ -195,6 +195,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-17 — the hello's storage and capabilities come from `LiveReports` (`storage.go`): storage is the last report, refreshed in the background one at a time, so a slow `/v1/storage` no longer stalls the single poll goroutine; capabilities are read once the daemon answers, then kept for the connection. The event scan cursor is written only when a scan stops early (audit WC-7/WC-8; settled-origin retirement and the uncertain-origin backoff are still open).
 - 2026-11-17 — the api_request tunnel filters `GET /v1/sessions/{id}/events` through the narration projection and cuts `GET /v1/storage` to its `storage` object (audit WC-2, owner choice A).
 - 2026-11-17 — a held create's retry caps at 15 s, not 2 min, and the disk-space wait holds the same way (audit K6-8; checked internal/workerconnector/first_download_waits.go).
 - 2026-11-07 — a saved identity is bound to its controller in one spelling, and an expired one and a file open
