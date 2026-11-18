@@ -80,6 +80,16 @@ func PolicyScan(repo, ref string) ([]string, error) {
 	// so the merge gate can't drift from the shadow denylist.
 	shadowed := box.NewShadowDecider(repo)
 	surfaces := configuredSurfaces(repo)
+	entries, err := forkEntries(repo, ref, changes)
+	if err != nil {
+		return nil, err
+	}
+	var blobs *forkspace.BlobReader // started at the first file whose content is read
+	defer func() {
+		if blobs != nil {
+			_ = blobs.Close()
+		}
+	}()
 	unreadable := map[string]bool{} // each .coopignore coop cannot read is one warning, not one per file
 	var warns []string
 	for _, change := range changes {
@@ -91,7 +101,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 				changed = p
 			}
 		}
-		if changed != "" && (change.Status == "D" || !notRegularCoopignore(repo, ref, change.Path)) {
+		if changed != "" && (change.Status == "D" || !notRegularCoopignore(change.Path, entries[change.Path].mode)) {
 			warns = append(warns, ui.SafeInline(changed)+" — the fork changes a .coopignore, which decides what boxes are shown")
 		}
 		if change.Status == "D" { // deleting any other file is never a concern
@@ -116,7 +126,7 @@ func PolicyScan(repo, ref string) ([]string, error) {
 			warns = append(warns, "secret-like file: "+label)
 		}
 		// The fork's own policy file must stay one coop can read, or every later launch refuses.
-		if notRegularCoopignore(repo, ref, path) {
+		if notRegularCoopignore(path, entries[path].mode) {
 			warns = append(warns, label+" — the fork makes a .coopignore something other than a regular file, which Coop cannot read")
 		}
 		// Files that change what runs on the HOST the moment a human touches the merged tree — a
@@ -135,29 +145,27 @@ func PolicyScan(repo, ref string) ([]string, error) {
 		if queue := forkTaskQueuePath(repo, path); queue != "" {
 			warns = append(warns, label+" — the fork adds or changes a task in the "+queue+" queue; tasks come from the host, not a fork")
 		}
-		entry, err := forkspace.GitOutput(repo, "ls-tree", "-z", ref, "--", ":(literal)"+path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
-		}
-		metadata, foundPath, ok := strings.Cut(entry, "\t")
-		if !ok || foundPath != path+"\x00" {
+		entry, ok := entries[path]
+		if !ok {
 			return nil, fmt.Errorf("read %s from the fork: Git did not return the exact file", label)
 		}
-		if strings.HasPrefix(metadata, "160000 ") {
+		if entry.mode == "160000" {
 			continue // a submodule's commit: the fork changed which one, and has no content here to read
 		}
-		size, err := gitBlobSize(repo, ref, path)
-		if err != nil {
-			return nil, err
-		}
-		if size > 5<<20 {
-			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", size>>20, label))
+		if entry.size > policyReadLimit {
+			warns = append(warns, fmt.Sprintf("large file (%dMB): %s", entry.size>>20, label))
 			continue // don't read a huge blob's content
 		}
-		content, err := forkspace.GitOutput(repo, "show", ref+":"+path)
+		if blobs == nil {
+			if blobs, err = forkspace.GitBlobs(context.Background(), repo); err != nil {
+				return nil, fmt.Errorf("read %s from the fork: %w", path, err)
+			}
+		}
+		data, err := blobs.Read(entry.object, policyReadLimit)
 		if err != nil {
 			return nil, fmt.Errorf("read %s from the fork: %w", path, err)
 		}
+		content := string(data)
 		if strings.IndexByte(content, 0) >= 0 { // skip binaries
 			continue
 		}
@@ -203,9 +211,10 @@ func forkAddedLines(repo, ref string, change gitdiff.Change) (gitdiff.LineRanges
 	return nil, fmt.Errorf("read the fork's changes to %s: %w", ui.SafeInline(change.Path), err)
 }
 
-// notRegularCoopignore reports whether the fork's change at path leaves a .coopignore, in any case,
-// that is not a regular file: a link named .coopignore, or anything inside a folder named .coopignore.
-func notRegularCoopignore(repo, ref, path string) bool {
+// notRegularCoopignore reports whether the fork's change at path, whose mode in the fork is mode
+// ("" when Git did not list it), leaves a .coopignore, in any case, that is not a regular file: a
+// link named .coopignore, or anything inside a folder named .coopignore.
+func notRegularCoopignore(path, mode string) bool {
 	slash := filepath.ToSlash(path)
 	parts := strings.Split(slash, "/")
 	for _, folder := range parts[:len(parts)-1] {
@@ -216,16 +225,70 @@ func notRegularCoopignore(repo, ref, path string) bool {
 	if !box.IsCoopignoreName(parts[len(parts)-1]) {
 		return false
 	}
-	mode, _, _ := strings.Cut(forkspace.GitOut(repo, "ls-tree", "-z", ref, "--", ":(literal)"+path), " ")
 	return mode != "" && mode != "100644" && mode != "100755"
 }
 
-func gitBlobSize(repo, ref, path string) (int64, error) {
-	out, err := forkspace.GitOutErr(repo, "cat-file", "-s", ref+":"+path)
-	if err != nil {
-		return 0, fmt.Errorf("read the size of %s in the fork: %w", path, err)
+// policyReadLimit is the largest file PolicyScan reads; a larger one is named as large instead.
+const policyReadLimit = 5 << 20
+
+// forkEntry is one file of the fork's tree: its mode, object and size (-1 for a submodule).
+type forkEntry struct {
+	mode, object string
+	size         int64
+}
+
+// forkPathspecBytes bounds the pathspecs of one ls-tree, well under any system's argument limit.
+const forkPathspecBytes = 64 << 10
+
+// forkEntries lists the files changes leaves in the fork at ref, by path, from `git ls-tree -r -l`,
+// which carries each one's size: one Git process per 64 KiB of paths, where reading them one by one
+// took two per file. A path Git does not list is missing from the map.
+func forkEntries(repo, ref string, changes []gitdiff.Change) (map[string]forkEntry, error) {
+	entries := map[string]forkEntry{}
+	var specs []string
+	size := 0
+	flush := func() error {
+		if len(specs) == 0 {
+			return nil
+		}
+		out, err := forkspace.GitOutput(repo, append([]string{"ls-tree", "-r", "-l", "-z", "--full-tree", ref, "--"}, specs...)...)
+		if err != nil {
+			return fmt.Errorf("read the fork's files: %w", err)
+		}
+		for _, record := range strings.Split(out, "\x00") {
+			if record == "" {
+				continue
+			}
+			header, path, ok := strings.Cut(record, "\t")
+			fields := strings.Fields(header)
+			if !ok || len(fields) != 4 {
+				return fmt.Errorf("read the fork's files: Git listed %q", ui.SafeInline(record))
+			}
+			n := int64(-1)
+			if fields[3] != "-" {
+				if n, err = strconv.ParseInt(fields[3], 10, 64); err != nil || n < 0 {
+					return fmt.Errorf("read the fork's files: Git listed %q", ui.SafeInline(record))
+				}
+			}
+			entries[path] = forkEntry{mode: fields[0], object: fields[2], size: n}
+		}
+		specs, size = nil, 0
+		return nil
 	}
-	return strconv.ParseInt(out, 10, 64)
+	for _, change := range changes {
+		if change.Status == "D" {
+			continue
+		}
+		spec := ":(literal)" + change.Path
+		if size+len(spec) > forkPathspecBytes {
+			if err := flush(); err != nil {
+				return nil, err
+			}
+		}
+		specs = append(specs, spec)
+		size += len(spec)
+	}
+	return entries, flush()
 }
 
 // addedLifecycleScript returns the name of an npm lifecycle script that a bare `npm install` runs

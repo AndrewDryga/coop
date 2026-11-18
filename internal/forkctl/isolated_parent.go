@@ -34,7 +34,12 @@ type isolatedParent struct {
 	Content  string   `json:"content"`
 }
 
-type isolatedTreeEntry struct{ mode, object, path string }
+// isolatedTreeEntry is one file of a tree. size is the blob's size when the tree was listed with
+// sizes (isolatedSizedTree), -1 for a submodule there, and 0 otherwise.
+type isolatedTreeEntry struct {
+	mode, object, path string
+	size               int64
+}
 
 // The states of the parent a publication will not start from that a person can fix at once: detached,
 // locked, or different from its last commit (parentDirtyError). parentRefusal draws them for the one
@@ -84,7 +89,23 @@ func observed(repo string, args ...string) (string, error) {
 }
 
 func isolatedTree(repo, commit string) ([]isolatedTreeEntry, error) {
-	data, err := forkspace.ObserveGit(context.Background(), repo, "ls-tree", "-r", "--full-tree", "-z", commit)
+	return listIsolatedTree(repo, commit, false)
+}
+
+// isolatedSizedTree is isolatedTree with each blob's size, which costs Git a lookup per blob: the
+// history scan reads it instead of asking for every changed file's size on its own.
+func isolatedSizedTree(repo, commit string) ([]isolatedTreeEntry, error) {
+	return listIsolatedTree(repo, commit, true)
+}
+
+func listIsolatedTree(repo, commit string, sized bool) ([]isolatedTreeEntry, error) {
+	args := []string{"ls-tree", "-r", "--full-tree", "-z", commit}
+	want := 3
+	if sized {
+		args = []string{"ls-tree", "-r", "-l", "--full-tree", "-z", commit}
+		want = 4
+	}
+	data, err := forkspace.ObserveGit(context.Background(), repo, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,13 +117,22 @@ func isolatedTree(repo, commit string) ([]isolatedTreeEntry, error) {
 		}
 		header, path, ok := strings.Cut(string(record), "\t")
 		fields := strings.Fields(header)
-		if !ok || len(fields) != 3 || !forkspace.ValidObjectID(fields[2]) || !safeIsolatedTreePath(path) {
+		if !ok || len(fields) != want || !forkspace.ValidObjectID(fields[2]) || !safeIsolatedTreePath(path) {
 			return nil, errors.New("isolated publication has an invalid or reserved Git tree path")
 		}
 		if fields[0] != "100644" && fields[0] != "100755" && fields[0] != "120000" && fields[0] != "160000" {
 			return nil, fmt.Errorf("isolated publication refuses tree mode %s at %q", fields[0], path)
 		}
-		entries = append(entries, isolatedTreeEntry{fields[0], fields[2], path})
+		entry := isolatedTreeEntry{mode: fields[0], object: fields[2], path: path}
+		if sized {
+			entry.size = -1 // a submodule's commit, which has no size here
+			if fields[3] != "-" {
+				if entry.size, err = strconv.ParseInt(fields[3], 10, 64); err != nil || entry.size < 0 {
+					return nil, fmt.Errorf("isolated publication cannot read the size of %q", path)
+				}
+			}
+		}
+		entries = append(entries, entry)
 		folded := hostsurface.Key(path)
 		if old, exists := paths[folded]; exists && old != path {
 			return nil, fmt.Errorf("isolated tree has case or normalization aliases %q and %q", old, path)

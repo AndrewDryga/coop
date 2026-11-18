@@ -8,7 +8,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -244,27 +243,53 @@ func nestedSourcesRefusal(path string) *ui.UsageError {
 func validateIsolatedHistory(repo, authority, upstream, head string) error {
 	shadowed := box.NewShadowDecider(authority)
 	surfaces := configuredSurfaces(authority)
-	commits, err := observed(repo, "rev-list", "--reverse", upstream+".."+head)
+	// One rev-list names every incoming commit with its parents, and each commit's tree is listed once
+	// with its sizes: a commit whose first parent is the commit before it compares against the tree
+	// already listed. File contents come through one cat-file, started at the first file read.
+	history, err := observed(repo, "rev-list", "--reverse", "--parents", upstream+".."+head)
 	if err != nil {
 		return err
 	}
-	for _, commit := range strings.Fields(commits) {
-		after, err := isolatedTree(repo, commit)
+	var blobs *forkspace.BlobReader
+	defer func() {
+		if blobs != nil {
+			_ = blobs.Close()
+		}
+	}()
+	// read is the content of a blob of at most isolatedFileLimit bytes, less one final newline: the
+	// one-shot read this replaces trimmed it, and the scan judges the same text it did.
+	read := func(object string) (string, error) {
+		if blobs == nil {
+			var err error
+			if blobs, err = forkspace.ObserveBlobs(context.Background(), repo); err != nil {
+				return "", err
+			}
+		}
+		data, err := blobs.Read(object, isolatedFileLimit)
+		return strings.TrimSuffix(string(data), "\n"), err
+	}
+	var previousCommit string
+	var previousTree []isolatedTreeEntry
+	for _, line := range strings.Split(history, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		commit := fields[0]
+		after, err := isolatedSizedTree(repo, commit)
 		if err != nil {
 			return err
 		}
-		parents, err := observed(repo, "rev-list", "--parents", "-n", "1", commit)
-		if err != nil {
-			return err
-		}
-		fields := strings.Fields(parents)
 		if len(fields) < 2 {
 			return errors.New("isolated incoming history has no qualified parent")
 		}
-		before, err := isolatedTree(repo, fields[1])
-		if err != nil {
-			return err
+		before := previousTree
+		if fields[1] != previousCommit {
+			if before, err = isolatedSizedTree(repo, fields[1]); err != nil {
+				return err
+			}
 		}
+		previousCommit, previousTree = commit, after
 		old := map[string]isolatedTreeEntry{}
 		for _, entry := range before {
 			old[entry.path] = entry
@@ -294,20 +319,15 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 					"Its name matches a secret or a .coopignore rule, and Coop will not merge a secret from an isolated fork.",
 					"Remove it from the fork's commits.")
 			}
-			sizeText, err := observed(repo, "cat-file", "-s", entry.object)
-			if err != nil {
-				return err
+			if entry.size < 0 {
+				return fmt.Errorf("read the size of %q from the fork", entry.path)
 			}
-			size, err := strconv.ParseInt(sizeText, 10, 64)
-			if err != nil || size < 0 {
-				return errors.Join(fmt.Errorf("read the size of %q from the fork", entry.path), err)
-			}
-			if size > isolatedFileLimit {
+			if entry.size > isolatedFileLimit {
 				return isolatedRefusal(fmt.Sprintf("The fork adds %q, a file over 5 MiB", entry.path),
 					"Coop reads every file it merges from an isolated fork, and 5 MiB is the most it reads.",
 					"Keep it out of the fork's commits and add it in your own checkout.")
 			}
-			content, err := observed(repo, "cat-file", "blob", entry.object)
+			content, err := read(entry.object)
 			if err != nil {
 				return err
 			}
@@ -319,16 +339,11 @@ func validateIsolatedHistory(repo, authority, upstream, head string) error {
 				}
 				oldContent := ""
 				if present && previous.mode != "120000" {
-					oldSize, err := observed(repo, "cat-file", "-s", previous.object)
-					if err != nil {
-						return err
+					if previous.size < 0 || previous.size > isolatedFileLimit {
+						return errors.New("previous package lifecycle scripts are uninspectable")
 					}
-					n, err := strconv.ParseInt(oldSize, 10, 64)
-					if err != nil || n < 0 || n > isolatedFileLimit {
-						return errors.Join(errors.New("previous package lifecycle scripts are uninspectable"), err)
-					}
-					oldContent, err = observed(repo, "cat-file", "blob", previous.object)
-					if err != nil {
+					var err error
+					if oldContent, err = read(previous.object); err != nil {
 						return err
 					}
 				}
