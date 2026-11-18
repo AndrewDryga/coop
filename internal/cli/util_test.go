@@ -31,15 +31,15 @@ func TestGitSignOutput(t *testing.T) {
 	t.Setenv("GIT_TRACE", "")
 
 	var stderr bytes.Buffer
-	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
-		t.Fatalf("successful gitSignTo = %v", err)
+	if out, err := gitSignOut(context.Background(), &stderr, t.TempDir(), os.Environ(), "commit-tree", "-S"); err != nil || out != "git stdout" {
+		t.Fatalf("successful gitSignOut = %q, %v", out, err)
 	}
 	if stderr.Len() != 0 {
-		t.Errorf("successful gitSignTo leaked output: %q", stderr.String())
+		t.Errorf("successful gitSignOut leaked output: %q", stderr.String())
 	}
 	t.Setenv("GIT_TRACE", "0")
-	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
-		t.Fatalf("GIT_TRACE=0 gitSignTo = %v", err)
+	if _, err := gitSignOut(context.Background(), &stderr, t.TempDir(), os.Environ(), "commit-tree", "-S"); err != nil {
+		t.Fatalf("GIT_TRACE=0 gitSignOut = %v", err)
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("GIT_TRACE=0 should stay quiet: %q", stderr.String())
@@ -47,23 +47,21 @@ func TestGitSignOutput(t *testing.T) {
 
 	t.Setenv("FAKE_GIT_FAIL", "1")
 	stderr.Reset()
-	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err == nil {
-		t.Fatal("failed gitSignTo returned nil")
+	if _, err := gitSignOut(context.Background(), &stderr, t.TempDir(), os.Environ(), "commit-tree", "-S"); err == nil {
+		t.Fatal("failed gitSignOut returned nil")
 	}
-	for _, want := range []string{"git stdout", "git diagnostic"} {
-		if !strings.Contains(stderr.String(), want) {
-			t.Errorf("failed gitSignTo output %q missing %q", stderr.String(), want)
-		}
+	if !strings.Contains(stderr.String(), "git diagnostic") {
+		t.Errorf("failed gitSignOut output %q missing the diagnostic", stderr.String())
 	}
 
 	t.Setenv("FAKE_GIT_FAIL", "")
 	t.Setenv("GIT_TRACE", "1")
 	stderr.Reset()
-	if err := gitSignTo(context.Background(), &stderr, t.TempDir(), "rebase", "--gpg-sign"); err != nil {
-		t.Fatalf("traced gitSignTo = %v", err)
+	if _, err := gitSignOut(context.Background(), &stderr, t.TempDir(), os.Environ(), "commit-tree", "-S"); err != nil {
+		t.Fatalf("traced gitSignOut = %v", err)
 	}
 	if !strings.Contains(stderr.String(), "git diagnostic") {
-		t.Errorf("traced gitSignTo did not replay output: %q", stderr.String())
+		t.Errorf("traced gitSignOut did not replay output: %q", stderr.String())
 	}
 }
 

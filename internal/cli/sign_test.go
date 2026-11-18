@@ -933,3 +933,108 @@ func TestSignUnpushedCleansUpWhenInterrupted(t *testing.T) {
 		t.Errorf("interrupted signing left a worktree entry:\n%s", list)
 	}
 }
+
+// Signing writes no tracked file anywhere: on a large repository a checkout of every file, on every
+// cycle that signs, was seconds of disk work. The signing program looks through the scratch area
+// while git waits on it, so a pass that checked files out there is caught in the act.
+func TestSignUnpushedWritesNoTrackedFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	scratch := t.TempDir()
+	ran, found := filepath.Join(dir, "ran"), filepath.Join(dir, "found")
+	const marker = "tracked-content-7f3a"
+	program := filepath.Join(dir, "look-gpg")
+	script := "#!/bin/sh\n: > " + ran + "\ngrep -rl " + marker + " " + scratch + " > " + found + "\nexit 1\n"
+	if err := os.WriteFile(program, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	globalCfg := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(globalCfg, []byte("[gpg]\n\tprogram = "+program+"\n[user]\n\tsigningkey = test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "nosystem"))
+	t.Setenv("TMPDIR", scratch)
+
+	repo := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "T")
+	run("config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte(marker+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "tracked.txt")
+	run("commit", "-q", "-m", "base")
+	run("commit", "-q", "--allow-empty", "-m", "box work")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD~1")
+
+	a := &app{cfg: &config.Config{RepoOverride: repo}}
+	captureStderr(t, func() {
+		if _, err := a.signUnpushed(repo, base); err == nil {
+			t.Error("signing with a program that refuses reported success")
+		}
+	})
+	if !pathExists(ran) {
+		t.Fatal("git never ran the signing program")
+	}
+	if hits, err := os.ReadFile(found); err != nil || len(hits) != 0 {
+		t.Errorf("the signing scratch held tracked file contents while git signed: %q (%v)", hits, err)
+	}
+}
+
+// A re-signed commit keeps its author (name, email, date and zone) and its exact message bytes,
+// including a missing final newline; the committer is yours, as a rebase made it.
+func TestSignUnpushedKeepsAuthorAndMessage(t *testing.T) {
+	repo, git := signingRepo(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	tree := forkspace.GitOut(repo, "rev-parse", "HEAD^{tree}")
+	cmd := exec.Command("git", "commit-tree", tree, "-p", base)
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Box Agent", "GIT_AUTHOR_EMAIL=box@example.test", "GIT_AUTHOR_DATE=1700000000 +0530")
+	message := "box work\n\nbody line  \nCoop-Task: demo"
+	cmd.Stdin = strings.NewReader(message)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsigned := strings.TrimSpace(string(out))
+	git("update-ref", "refs/heads/main", unsigned)
+	before, err := readSignedContent(repo, unsigned)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{cfg: &config.Config{}}
+	if n, err := a.signUnpushed(repo, base); err != nil || n != 1 {
+		t.Fatalf("signUnpushed = %d, %v; want 1 commit signed", n, err)
+	}
+	head := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if head == unsigned || !hasSignature(repo, head) {
+		t.Fatalf("HEAD %s was not replaced by a signed copy", head)
+	}
+	after, err := readSignedContent(repo, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before || before.message != message {
+		t.Errorf("signed content = %+v, want %+v with message %q", after, before, message)
+	}
+	if got := forkspace.GitOut(repo, "show", "-s", "--format=%cn <%ce>", "HEAD"); got != "T <t@t>" {
+		t.Errorf("committer = %q, want the configured identity", got)
+	}
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD^"); got != base {
+		t.Errorf("signed copy's parent = %s, want %s", got, base)
+	}
+}

@@ -148,12 +148,13 @@ func commitSigned(raw string) bool {
 	return false
 }
 
-// signUnpushed signs the unsigned commits of base..HEAD in a clean detached linked worktree,
-// starting at the first unsigned one (signingStart), and returns how many commits it rewrote. The
-// active checkout's index and files are never touched, so unrelated staged, unstaged, untracked, or
-// secret-decoy dirt cannot block signing. The candidate must preserve the exact HEAD tree, and the
-// checked-out branch advances only through an old-SHA compare-and-swap after the temporary
-// worktree is removed.
+// signUnpushed signs the unsigned commits of base..HEAD, starting at the first unsigned one
+// (signingStart), and returns how many commits it rewrote. Each commit is written again with
+// `commit-tree -S` from its own tree, author and message onto the signed copy of its parent, so no
+// file is checked out anywhere: the active checkout's index and files are never touched, unrelated
+// staged, unstaged, untracked, or secret-decoy dirt cannot block signing, and no repository filter
+// or driver runs. The candidate must preserve every tree, author and message, and the checked-out
+// branch advances only through an old-SHA compare-and-swap.
 func (a *app) signUnpushed(repo, base string) (int, error) {
 	branchRef := forkspace.GitOut(repo, "symbolic-ref", "--quiet", "HEAD")
 	if !strings.HasPrefix(branchRef, "refs/heads/") {
@@ -172,8 +173,8 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 	if base, err = signingStart(repo, branchRef, base, oldHead); err != nil {
 		return 0, err
 	}
-	// Re-signing rebases what it rewrites, which would linearize a merge. A signed merge below the
-	// first unsigned commit is not rewritten, so only this part has to be linear.
+	// Re-signing replays each commit onto its signed parent, which would linearize a merge. A signed
+	// merge below the first unsigned commit is not rewritten, so only this part has to be linear.
 	if merges := forkspace.GitOut(repo, "rev-list", "--merges", base+".."+oldHead); merges != "" {
 		return 0, ui.CommandFailed("Could not sign these commits", "The selected range contains a merge commit.",
 			[2]string{"", "Choose a linear range with --from."},
@@ -184,54 +185,30 @@ func (a *app) signUnpushed(repo, base string) (int, error) {
 		return 0, nil
 	}
 	oldTrees := rangeTrees(repo, base, oldHead)
+	oldCommits := strings.Fields(forkspace.GitOut(repo, "rev-list", "--reverse", base+".."+oldHead))
+	if len(oldCommits) != n {
+		return 0, errors.New("could not list the commits to sign; refusing to update the branch")
+	}
 
-	// Ctrl-C at a passphrase prompt must still remove the scratch checkout and its worktree entry:
-	// the signals are held for this pass and stop git through ctx, so the deferred cleanup runs.
+	// Ctrl-C at a passphrase prompt must still remove the scratch folder: the signals are held for
+	// this pass and stop git through ctx, so the deferred cleanup runs.
 	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	tempRoot, err := os.MkdirTemp("", "coop-sign-")
 	if err != nil {
-		return 0, fmt.Errorf("create signing worktree: %w", err)
+		return 0, fmt.Errorf("create signing scratch: %w", err)
 	}
-	worktree := filepath.Join(tempRoot, "worktree")
-	added := false
-	defer func() {
-		if added {
-			_ = forkspace.GitRefCommand(context.Background(), repo, "worktree", "remove", "--force", worktree).Run()
+	defer os.RemoveAll(tempRoot)
+	newHead := base
+	for _, commit := range oldCommits {
+		if newHead, err = resignCommit(ctx, repo, tempRoot, commit, newHead); err != nil {
+			return 0, err
 		}
-		_ = os.RemoveAll(tempRoot)
-	}()
-
-	// The worktree list lives in the real git dir, so it is added there — without a checkout: the
-	// files are then populated under the trusted view of the new worktree, so the repository's
-	// config can name no filter or driver for that checkout to run.
-	if err := forkspace.GitRefCommand(context.Background(), repo, "worktree", "add", "--no-checkout", "--detach", "--quiet", worktree, oldHead).Run(); err != nil {
-		return 0, fmt.Errorf("create clean signing worktree: %w", err)
 	}
-	added = true
-	if _, err := forkspace.GitOutErr(worktree, "reset", "--hard", "--quiet", oldHead); err != nil {
-		return 0, fmt.Errorf("populate clean signing worktree: %w", err)
-	}
-	// -f stays: base is the exact parent of the first commit to sign, and without it git reports the
-	// branch up to date and signs nothing.
-	args := append(append([]string{}, forkspace.TrustedSignArgs()...), "rebase", "-f", "--gpg-sign", base)
-	if err := gitSign(ctx, worktree, args...); err != nil {
-		_ = forkspace.GitRun(worktree, "rebase", "--abort") // leave no rebase state behind for the next signing worktree in this slot
-		return 0, signingFailure{fmt.Errorf("could not re-sign %s..HEAD: %w", base, err)}
-	}
-	newHead := forkspace.GitOut(worktree, "rev-parse", "--verify", "HEAD^{commit}")
-	newTrees := rangeTrees(worktree, base, newHead)
+	newTrees := rangeTrees(repo, base, newHead)
 	if newHead == "" || oldTrees == "" || newTrees == "" || oldTrees != newTrees {
 		return 0, errors.New("re-signing changed one or more committed trees; refusing to update the branch")
 	}
-	oldCommits := strings.Fields(forkspace.GitOut(repo, "log", "--reverse", "--format=%H", base+".."+oldHead))
-	if len(oldCommits) != n {
-		return 0, errors.New("could not list the commits to sign; refusing to update the branch")
-	}
-	if err := forkspace.GitRefCommand(context.Background(), repo, "worktree", "remove", "--force", worktree).Run(); err != nil {
-		return 0, fmt.Errorf("remove signing worktree before updating the branch: %w", err)
-	}
-	added = false
 	if err := os.RemoveAll(tempRoot); err != nil {
 		return 0, fmt.Errorf("remove signing scratch before updating the branch: %w", err)
 	}
@@ -275,6 +252,73 @@ type signingFailure struct{ err error }
 
 func (f signingFailure) Error() string { return f.err.Error() }
 func (f signingFailure) Unwrap() error { return f.err }
+
+// signedContent is what re-signing must keep of a commit: its tree, author line, encoding and
+// message bytes. The parent, committer and signature are what change.
+type signedContent struct{ tree, author, encoding, message string }
+
+// readSignedContent reads one raw commit object. Header continuation lines (a signature) start
+// with a space and are skipped.
+func readSignedContent(repo, commit string) (signedContent, error) {
+	raw, err := gitOutputBytes(repo, "cat-file", "commit", commit)
+	if err != nil {
+		return signedContent{}, fmt.Errorf("read commit %s: %w", commit, err)
+	}
+	header, message, _ := strings.Cut(string(raw), "\n\n")
+	c := signedContent{message: message}
+	for _, line := range strings.Split(header, "\n") {
+		if key, value, ok := strings.Cut(line, " "); ok {
+			switch key {
+			case "tree":
+				c.tree = value
+			case "author":
+				c.author = value
+			case "encoding":
+				c.encoding = value
+			}
+		}
+	}
+	if c.tree == "" || c.author == "" {
+		return signedContent{}, fmt.Errorf("commit %s has no tree or author", commit)
+	}
+	return c, nil
+}
+
+// resignCommit writes commit again onto parent with `commit-tree -S`, keeping its tree, author,
+// encoding and message, and returns the new commit. Git takes the committer from your config, as a
+// rebase does. The copy is read back and refused unless it kept all four.
+func resignCommit(ctx context.Context, repo, scratch, commit, parent string) (string, error) {
+	old, err := readSignedContent(repo, commit)
+	if err != nil {
+		return "", err
+	}
+	// "Name <email> <seconds> <zone>": git's ident line, split where commit-tree reads it back.
+	lt, gt := strings.IndexByte(old.author, '<'), strings.LastIndexByte(old.author, '>')
+	if lt < 0 || gt < lt {
+		return "", fmt.Errorf("commit %s has an author git cannot read", commit)
+	}
+	env := append(os.Environ(),
+		"GIT_AUTHOR_NAME="+strings.TrimSuffix(old.author[:lt], " "),
+		"GIT_AUTHOR_EMAIL="+old.author[lt+1:gt],
+		"GIT_AUTHOR_DATE="+strings.TrimSpace(old.author[gt+1:]))
+	messageFile := filepath.Join(scratch, "message")
+	if err := os.WriteFile(messageFile, []byte(old.message), 0o600); err != nil {
+		return "", fmt.Errorf("write commit message for signing: %w", err)
+	}
+	args := forkspace.TrustedSignArgs()
+	if old.encoding != "" {
+		args = append(args, "-c", "i18n.commitEncoding="+old.encoding)
+	}
+	args = append(args, "commit-tree", "-S", "-p", parent, "-F", messageFile, old.tree)
+	signed, err := gitSignOut(ctx, os.Stderr, repo, env, args...)
+	if err != nil {
+		return "", signingFailure{fmt.Errorf("could not re-sign %s: %w", commit, err)}
+	}
+	if kept, err := readSignedContent(repo, signed); err != nil || kept != old {
+		return "", fmt.Errorf("re-signing %s changed its tree, author or message; refusing to update the branch", commit)
+	}
+	return signed, nil
+}
 
 // shouldSignOnExit decides whether an interactive/run box's exit should trigger a host-side re-sign
 // of the commits it made: only when you sign by default and it's NOT a fork (fork-merge re-signs at

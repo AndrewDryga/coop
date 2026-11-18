@@ -14,21 +14,25 @@ interactive or `coop run` box (`signOnBoxExit`, HEAD before the session), and `c
 
 The requested base only bounds what may change. `signingStart` walks the range parents first
 (`rev-list --reverse --topo-order --header`) and moves the base past the signed commits the range starts with,
-so the rebase begins at the first unsigned commit. Until 2026-10-15 every pass ran `rebase -f` from
+so signing begins at the first unsigned commit. Until 2026-10-15 every pass ran `rebase -f` from
 the requested base and re-signed everything: the end-of-run sweep rewrote every commit since the run
 started, including commits pushed mid-run and outside agents' commits in the same checkout, and
 orphaned every SHA anyone had recorded. Its comment called it "normally a no-op"; now it is one.
 
 Traps:
-- **`-f` must stay.** The start is the exact parent of the first commit to sign; without `-f`, git
-  reports the branch up to date and signs nothing.
+- **No checkout.** Since 2026-11-17 each commit is written again with `commit-tree -S` from its own
+  tree, author (name, email, date via `GIT_AUTHOR_*`), encoding and message bytes onto the signed
+  copy of its parent (`resignCommit`); the committer comes from your config, as the old
+  `rebase -f --gpg-sign` made it. Each copy is read back and refused unless those four match, and
+  the range's trees are compared again. The old rebase populated a linked worktree with every
+  tracked file first: 12.6-19.9 s on a 30,000-file repository against 0.17-0.24 s now.
 - **Only the leading signed run is skipped.** A signed commit above an unsigned one is replayed with
   it, because its parent changes. Per-cycle signing (the owner's choice) keeps that window small.
 - **Pushed means reachable from `<branch>@{upstream}`**, the remote-tracking ref. When the first
   unsigned commit is pushed, the pass refuses (`pushedCommitRefusal`) instead of signing around
   it; plain `coop sign` starts at the upstream, so it is the fix the refusal names. The check runs
-  twice, before the rebase and again under the ref-authority lock just before the compare-and-swap,
-  because a push can land while the rebase runs (seconds, or minutes at a pinentry prompt). No
+  twice, before signing and again under the ref-authority lock just before the compare-and-swap,
+  because a push can land while signing runs (seconds, or minutes at a pinentry prompt). No
   upstream, or a gone tracking ref, leaves no local record of what was pushed, so the requested
   range stands. Use the short branch name: `refs/heads/main@{upstream}` does not resolve.
 - **Signed means a `gpgsig` or `gpgsig-sha256` header** (`commitSigned`), read from the header only
@@ -43,7 +47,7 @@ Traps:
 - **Merges are refused only in the rewritten part**, after trimming: `signingStart` walks the range in
   `--topo-order`, so a signed merge among the leading signed commits (a mid-run `git pull`) stays
   below the start and the pass signs what is above it. A merge at or above the first unsigned commit
-  would be linearized by the rebase, so that pass is refused as before (`signBase` no longer checks).
+  would be linearized by re-signing, so that pass is refused as before (`signBase` no longer checks).
 - The tree-equality check and the old-SHA compare-and-swap guard the rewritten tail unchanged.
   Pending final review records no commit IDs (it finds each task's commit by trailer), and the
   reviewed content a round records (each covered commit's change, author and message) survives
@@ -64,6 +68,9 @@ Regressions: `TestSignUnpushedStartsAtTheFirstUnsignedCommit`, `TestSignUnpushed
 `TestCommitSigned`, all in `internal/cli`.
 
 ## Changelog
+- 2026-11-17 — signing writes no files: `commit-tree -S` per commit replaced the linked worktree and
+  `rebase -f` (task 2026-11-17-re-sign-box-commits-without-writing-the-whole-tr). Committer handling
+  is unchanged. Regressions: `TestSignUnpushedWritesNoTrackedFiles`, `TestSignUnpushedKeepsAuthorAndMessage`.
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-06 — the review packet maps re-signed commits old → new when their trees match, read
   from the swap's reflog message (task 2026-11-05-keep-gate-evidence-valid-when-coop-re-signs-a-ta).

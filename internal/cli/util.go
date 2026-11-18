@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
@@ -80,26 +81,24 @@ func gitOutputBytes(dir string, args ...string) ([]byte, error) {
 	return out, forkspace.GitStalled(cmd, err)
 }
 
-// gitSign runs a hardened git command (like a rebase with signing), wiring Stdin
-// so a TTY pinentry still works, but capturing CombinedOutput to silence benign chatter.
-// The captured output is replayed to Stderr only on failure, or if GIT_TRACE is set.
-func gitSign(ctx context.Context, dir string, args ...string) error {
-	return gitSignTo(ctx, os.Stderr, dir, args...)
-}
-
-func gitSignTo(ctx context.Context, stderr io.Writer, dir string, args ...string) error {
-	cmd, err := forkspace.GitCommand(ctx, dir, args...)
+// gitSignOut runs a hardened git command that signs (commit-tree -S) with env as its environment,
+// wiring Stdin so a TTY pinentry still works, and returns its trimmed stdout. Its stderr is captured
+// to silence benign chatter and replayed to stderr only on failure, or if GIT_TRACE is set.
+func gitSignOut(ctx context.Context, stderr io.Writer, dir string, env []string, args ...string) (string, error) {
+	cmd, err := forkspace.GitCommandWithEnv(ctx, dir, env, args...)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cmd.WaitDelay = time.Second // a signing helper git left behind must not hold a cancelled pass open
 	cmd.Stdin = os.Stdin
-	out, err := cmd.CombinedOutput()
+	var diagnostics bytes.Buffer
+	cmd.Stderr = &diagnostics
+	out, err := cmd.Output()
 	trace := strings.TrimSpace(os.Getenv("GIT_TRACE"))
 	if err != nil || (trace != "" && trace != "0" && !strings.EqualFold(trace, "false")) {
-		_, _ = stderr.Write(out)
+		_, _ = stderr.Write(diagnostics.Bytes())
 	}
-	return err
+	return strings.TrimSpace(string(out)), err
 }
 
 // hasYes reports whether args carry the -y/--yes confirmation-skip flag that destructive commands
