@@ -657,17 +657,31 @@ func (r Runtime) RemoveImage(ctx context.Context, image string) error {
 	return nil
 }
 
-// NetworkIDs lists the ids of the networks matching every filter (`label=key`, `label=key=value`,
-// `name=<regex>`), running or not. Apple container has no compose and no networks coop creates,
-// so it reads as none. A query failure stays an error, never an empty list.
-func (r Runtime) NetworkIDs(ctx context.Context, filters ...string) ([]string, error) {
+// Network is one network from a Networks listing: its full id, its name, and the labels asked for.
+type Network struct {
+	ID, Name string
+	Labels   map[string]string
+}
+
+// Networks lists the networks matching every filter (`label=key`, `label=key=value`, `id=<id>`),
+// each with its full id, its name and the values of the named labels, in one runtime call: a sweep
+// that inspected each network for its label paid one call per network on the host, other
+// projects' included. Each line is a JSON array, so no label value can forge another network; a
+// line it cannot read fails the whole listing. Apple container has no compose and no networks coop
+// creates, so it reads as none. A query failure stays an error, never an empty list.
+func (r Runtime) Networks(ctx context.Context, filters []string, names ...string) ([]Network, error) {
 	if r.kind() == runtimeAppleContainer {
 		return nil, nil
 	}
-	args := []string{"network", "ls", "-q"}
+	fields := []string{"{{json .ID}}", "{{json .Name}}"}
+	for _, name := range names {
+		fields = append(fields, `{{json (.Label "`+name+`")}}`)
+	}
+	args := []string{"network", "ls", "--no-trunc"}
 	for _, f := range filters {
 		args = append(args, "--filter", f)
 	}
+	args = append(args, "--format", "["+strings.Join(fields, ",")+"]")
 	out, err := r.serviceNetworkOutput(ctx, args...)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -675,39 +689,35 @@ func (r Runtime) NetworkIDs(ctx context.Context, filters ...string) ([]string, e
 		}
 		return nil, fmt.Errorf("run: %s %s: %w", r.Name, strings.Join(args, " "), commandOutputError(err, nil))
 	}
-	return strings.Fields(string(out)), nil
-}
-
-// NetworkLabel reads one label of a network; "" when the network carries no such label.
-func (r Runtime) NetworkLabel(ctx context.Context, id, key string) (string, error) {
-	out, err := contextCommand(ctx, r.Name, "network", "inspect", "-f", `{{index .Labels "`+key+`"}}`, id).Output()
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
+	var networks []Network
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
 		}
-		return "", fmt.Errorf("run: %s network inspect %s: %w", r.Name, id, commandOutputError(err, nil))
+		var values []string
+		if err := json.Unmarshal([]byte(line), &values); err != nil || len(values) != len(names)+2 || values[0] == "" || values[1] == "" {
+			return nil, fmt.Errorf("unreadable network listing from %s network ls", r.Name)
+		}
+		labels := make(map[string]string, len(names))
+		for i, name := range names {
+			if values[i+2] != "" {
+				labels[name] = values[i+2]
+			}
+		}
+		networks = append(networks, Network{ID: values[0], Name: values[1], Labels: labels})
 	}
-	return strings.TrimSpace(string(out)), nil
+	return networks, nil
 }
 
 // ContainerIDsOnNetwork lists every container attached to the network, stopped ones included —
 // a stopped compose service still reconnects to it on the next start — and created ones that never
 // started. Docker gives a container its network's id only when it starts, so until then only the
 // network's name finds it. By id alone, a sweep removed the network a sibling fork's launch had
-// just prepared with `compose up --no-start`, and that launch failed (2026-11-05).
-func (r Runtime) ContainerIDsOnNetwork(ctx context.Context, id string) ([]string, error) {
-	out, err := r.serviceNetworkOutput(ctx, "network", "inspect", "-f", "{{.Name}}", id)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, fmt.Errorf("run: %s network inspect %s: %w", r.Name, id, commandOutputError(err, out))
-	}
+// just prepared with `compose up --no-start`, and that launch failed (2026-11-05). The network
+// comes from a Networks listing, which already carries its name.
+func (r Runtime) ContainerIDsOnNetwork(ctx context.Context, network Network) ([]string, error) {
 	// Two filters on one key match either: the id finds a container that ran, the name one that did not.
-	filters := []string{"network=" + id}
-	if name := strings.TrimSpace(string(out)); name != "" {
-		filters = append(filters, "network="+name)
-	}
+	filters := []string{"network=" + network.ID, "network=" + network.Name}
 	if r.composeEndpoint != "" {
 		args := []string{"ps", "-q", "-a"}
 		for _, filter := range filters {

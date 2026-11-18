@@ -41,6 +41,18 @@ ps)
 		[ "$previous" = --format ] && format=$arg
 		previous=$arg
 	done
+	for filter do
+		case "$filter" in
+		network=*)
+			# A network marked to vanish before this call is gone by the time it reads.
+			if grep -qF '"vanish":"ps"' "$COOP_TEST_NETWORKS/${filter#network=}" 2>/dev/null; then
+				rm -f "$COOP_TEST_NETWORKS/${filter#network=}"
+				echo "Error response from daemon: network ${filter#network=} not found" >&2
+				exit 1
+			fi
+			;;
+		esac
+	done
 	for f in "$COOP_TEST_BOXES"/*; do
 		[ -e "$f" ] || continue
 		match=1
@@ -85,10 +97,17 @@ rm)
 network)
 	# One file per network under $COOP_TEST_NETWORKS/<id>: its labels JSON, its name under "name". A
 	# container is attached to a network when its labels carry "network":"<id>", as one that ran, or
-	# "network":"<name>", as one only created (see the ps filter above).
+	# "network":"<name>", as one only created (see the ps filter above). A network whose "vanish" is
+	# "ps" or "rm" is removed by someone else just before that call reaches it.
 	case "$2" in
 	ls)
 		shift 2
+		format=
+		previous=
+		for arg do
+			[ "$previous" = --format ] && format=$arg
+			previous=$arg
+		done
 		for f in "$COOP_TEST_NETWORKS"/*; do
 			[ -e "$f" ] || continue
 			match=1
@@ -101,23 +120,28 @@ network)
 				label=*)
 					grep -qF "\"${filter#label=}\":" "$f" || match=0
 					;;
+				id=*)
+					[ "$(basename "$f")" = "${filter#id=}" ] || match=0
+					;;
 				esac
 			done
-			[ "$match" = 1 ] && printf '%s\n' "$(basename "$f")"
+			[ "$match" = 1 ] || continue
+			# The id and the name, then each label the format names, as one JSON array.
+			line="[\"$(basename "$f")\",\"$(sed -n 's/.*"name":"\([^"]*\)".*/\1/p' "$f")\""
+			for name in $(printf '%s' "$format" | grep -o '.Label "[^"]*"' | sed 's/^.Label "//; s/"$//'); do
+				line="$line,\"$(sed -n "s/.*\"$name\":\"\([^\"]*\)\".*/\1/p" "$f")\""
+			done
+			printf '%s]\n' "$line"
 		done
 		;;
-	inspect)
-		# A network marked "vanish" is removed by someone else just before this inspect reads it.
-		if grep -qF '"vanish":"yes"' "$COOP_TEST_NETWORKS/$5" 2>/dev/null; then
-			rm -f "$COOP_TEST_NETWORKS/$5"
-			echo "Error response from daemon: network $5 not found" >&2
+	rm)
+		if grep -qF '"vanish":"rm"' "$COOP_TEST_NETWORKS/$3" 2>/dev/null; then
+			rm -f "$COOP_TEST_NETWORKS/$3"
+		fi
+		if [ ! -e "$COOP_TEST_NETWORKS/$3" ]; then
+			echo "Error response from daemon: network $3 not found" >&2
 			exit 1
 		fi
-		key=$(printf '%s' "$4" | sed 's/.*"\(.*\)".*/\1/')
-		[ "$4" = '{{.Name}}' ] && key=name
-		sed -n "s/.*\"$key\":\"\([^\"]*\)\".*/\1/p" "$COOP_TEST_NETWORKS/$5"
-		;;
-	rm)
 		rm -f "$COOP_TEST_NETWORKS/$3"
 		;;
 	esac
@@ -731,7 +755,7 @@ func TestReapOrphanNetworksRemovesOnlyUnusedCoopNetworks(t *testing.T) {
 		t.Fatalf("remaining networks = %v, want %v", got, want)
 	}
 	events := fakeRuntimeEvents(t)
-	if !strings.Contains(events, "network ls -q --filter label="+composeProjectLabel+"\n") {
+	if !strings.Contains(events, "network ls --no-trunc --filter label="+composeProjectLabel+" --format ") {
 		t.Errorf("sweep did not list compose networks by label:\n%s", events)
 	}
 	if strings.Contains(events, "network=theirs") || strings.Contains(events, "network rm theirs") {
@@ -761,24 +785,62 @@ func TestReapOrphanNetworksKeepsANetworkWhoseContainersAreOnlyCreated(t *testing
 	}
 }
 
-// A network another process removes between the listing and its label read is gone, not a reason
-// to give up on every other network: the sweep relists and goes on.
+// A network another process removes after the listing is gone, not a reason to give up on every
+// other network: the sweep relists, proves it gone, and goes on — whether it vanished before its
+// container check or before its removal.
 func TestReapOrphanNetworksSkipsANetworkRemovedMidSweep(t *testing.T) {
+	for _, when := range []string{"ps", "rm"} {
+		t.Run(when, func(t *testing.T) {
+			rt, _ := fakeRuntime(t)
+			addFakeNetwork(t, "unused", "coop-emisar-a922f3c5_default", "coop-emisar-a922f3c5")
+			data, err := json.Marshal(map[string]string{"name": "coop-portal-b1c2d3e4_default", composeProjectLabel: "coop-portal-b1c2d3e4", "vanish": when})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(os.Getenv("COOP_TEST_NETWORKS"), "a-vanishing"), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			n, err := ReapOrphanNetworks(context.Background(), rt)
+			if err != nil || n != 1 {
+				t.Fatalf("ReapOrphanNetworks = (%d, %v), want (1, nil)", n, err)
+			}
+			if got := remainingFakeNetworks(t); len(got) != 0 {
+				t.Fatalf("remaining networks = %v, want none", got)
+			}
+		})
+	}
+}
+
+// A container check that fails on a network that is still there is a real failure, not a vanish.
+func TestReapOrphanNetworksFailsWhenAPresentNetworkCannotBeChecked(t *testing.T) {
 	rt, _ := fakeRuntime(t)
 	addFakeNetwork(t, "unused", "coop-emisar-a922f3c5_default", "coop-emisar-a922f3c5")
-	data, err := json.Marshal(map[string]string{"name": "coop-portal-b1c2d3e4_default", composeProjectLabel: "coop-portal-b1c2d3e4", "vanish": "yes"})
-	if err != nil {
-		t.Fatal(err)
+	t.Setenv("COOP_TEST_FAILURE", "ps")
+	if n, err := ReapOrphanNetworks(context.Background(), rt); err == nil || n != 0 {
+		t.Fatalf("ReapOrphanNetworks = (%d, %v), want a failure and nothing removed", n, err)
 	}
-	if err := os.WriteFile(filepath.Join(os.Getenv("COOP_TEST_NETWORKS"), "a-vanishing"), data, 0o644); err != nil {
-		t.Fatal(err)
+	if got := remainingFakeNetworks(t); !slices.Equal(got, []string{"unused"}) {
+		t.Fatalf("remaining networks = %v, want the network untouched", got)
 	}
-	n, err := ReapOrphanNetworks(context.Background(), rt)
-	if err != nil || n != 1 {
+}
+
+// Every loop, fork and build start sweeps networks inside a short budget. Other projects' compose
+// networks cost nothing past the one listing; each of coop's costs its container check and removal.
+// The sweep used to inspect every compose network on the host for its project label.
+func TestReapOrphanNetworksCallsDoNotGrowWithForeignNetworks(t *testing.T) {
+	rt, _ := fakeRuntime(t)
+	addFakeNetwork(t, "unused", "coop-emisar-a922f3c5_default", "coop-emisar-a922f3c5")
+	for i := range 20 {
+		project := "someone-else-" + strconv.Itoa(i)
+		addFakeNetwork(t, "theirs-"+strconv.Itoa(i), project+"_default", project)
+	}
+	if n, err := ReapOrphanNetworks(context.Background(), rt); err != nil || n != 1 {
 		t.Fatalf("ReapOrphanNetworks = (%d, %v), want (1, nil)", n, err)
 	}
-	if got := remainingFakeNetworks(t); len(got) != 0 {
-		t.Fatalf("remaining networks = %v, want none", got)
+	events := strings.Split(strings.TrimSpace(fakeRuntimeEvents(t)), "\n")
+	// One listing, then the coop network's container check and its removal.
+	if len(events) != 3 {
+		t.Fatalf("runtime calls = %d, want 3:\n%s", len(events), strings.Join(events, "\n"))
 	}
 }
 

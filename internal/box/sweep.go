@@ -392,23 +392,14 @@ var coopComposeProjectName = regexp.MustCompile(`^coop-[a-z0-9_-]*-[0-9a-f]{8}(-
 // and Docker's default address pool holds only about thirty of them. Anyone else's compose networks
 // are never inspected for removal.
 func ReapOrphanNetworks(ctx context.Context, rt runtime.Runtime) (int, error) {
-	ids, err := rt.NetworkIDs(ctx, "label="+composeProjectLabel)
+	networks, err := rt.Networks(ctx, []string{"label=" + composeProjectLabel}, composeProjectLabel)
 	if err != nil {
 		return 0, err
 	}
-	var ours []string
-	for _, id := range ids {
-		project, err := rt.NetworkLabel(ctx, id, composeProjectLabel)
-		if err != nil {
-			// A compose down or another sweep can remove a listed network before this read. Only a
-			// relisting that no longer shows it proves it gone; anything else still fails the sweep.
-			if still, listErr := rt.NetworkIDs(ctx, "label="+composeProjectLabel); listErr != nil || slices.Contains(still, id) {
-				return 0, err
-			}
-			continue
-		}
-		if coopComposeProjectName.MatchString(project) {
-			ours = append(ours, id)
+	var ours []runtime.Network
+	for _, network := range networks {
+		if coopComposeProjectName.MatchString(network.Labels[composeProjectLabel]) {
+			ours = append(ours, network)
 		}
 	}
 	return removeUnusedNetworks(ctx, rt, ours)

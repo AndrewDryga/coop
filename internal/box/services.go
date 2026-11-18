@@ -618,29 +618,43 @@ func StopServicesForOwner(ctx context.Context, rt runtime.Runtime, workspace, po
 // stopped — is attached to any more, and reports how many it removed. Compose recreates a network
 // on the next start, so nothing is lost; a network still in use is left alone.
 func RemoveProjectNetworks(ctx context.Context, rt runtime.Runtime, project string) (int, error) {
-	ids, err := rt.NetworkIDs(ctx, "label="+composeProjectLabel+"="+project)
+	networks, err := rt.Networks(ctx, []string{"label=" + composeProjectLabel + "=" + project})
 	if err != nil {
 		return 0, fmt.Errorf("list %s networks: %w", project, err)
 	}
-	return removeUnusedNetworks(ctx, rt, ids)
+	return removeUnusedNetworks(ctx, rt, networks)
 }
 
-func removeUnusedNetworks(ctx context.Context, rt runtime.Runtime, ids []string) (int, error) {
+func removeUnusedNetworks(ctx context.Context, rt runtime.Runtime, networks []runtime.Network) (int, error) {
 	removed := 0
-	for _, id := range ids {
-		users, err := rt.ContainerIDsOnNetwork(ctx, id)
+	for _, network := range networks {
+		users, err := rt.ContainerIDsOnNetwork(ctx, network)
 		if err != nil {
-			return removed, fmt.Errorf("list containers on network %s: %w", id, err)
+			if networkGone(ctx, rt, network) {
+				continue
+			}
+			return removed, fmt.Errorf("list containers on network %s: %w", network.ID, err)
 		}
 		if len(users) > 0 {
 			continue
 		}
-		if err := rt.RemoveNetwork(ctx, id); err != nil {
+		if err := rt.RemoveNetwork(ctx, network.ID); err != nil {
+			if networkGone(ctx, rt, network) {
+				continue
+			}
 			return removed, err
 		}
 		removed++
 	}
 	return removed, nil
+}
+
+// networkGone reports whether a network a call just failed on is no longer there: a compose down or
+// another sweep can remove a listed network at any moment. Only a relisting that no longer shows it
+// proves it gone; a failed relisting proves nothing, so the caller keeps the original error.
+func networkGone(ctx context.Context, rt runtime.Runtime, network runtime.Network) bool {
+	still, err := rt.Networks(ctx, []string{"id=" + network.ID})
+	return err == nil && !slices.ContainsFunc(still, func(n runtime.Network) bool { return n.ID == network.ID })
 }
 
 func runCompose(rt runtime.Runtime, stdout, stderr io.Writer, action string, args []string) error {

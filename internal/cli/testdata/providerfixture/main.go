@@ -459,13 +459,13 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 		return runtimeCommand{Kind: "inspect"}, nil
 	}
 	// The orphan-NETWORK sweep lists compose networks by label before any box work (box.
-	// ReapOrphanNetworks). The fixture has no networks, so it answers with none — which is also
-	// what proves the sweep asks once and then leaves the runtime alone.
+	// ReapOrphanNetworks, and a session's project cleanup) in one call that prints each network's
+	// id, name and labels (runtime.Networks). The fixture has no networks, so it answers with none —
+	// which is also what proves the sweep asks once and then leaves the runtime alone.
 	if len(args) > 0 && args[0] == "network" {
-		if len(args) != 4 || args[1] != "ls" || args[2] != "-q" || args[3] != "--filter" {
-			if len(args) != 5 || args[1] != "ls" || args[2] != "-q" || args[3] != "--filter" || !strings.HasPrefix(args[4], "label=") {
-				return runtimeCommand{}, fmt.Errorf("unsupported network command %q", strings.Join(args, " "))
-			}
+		if len(args) != 7 || args[1] != "ls" || args[2] != "--no-trunc" || args[3] != "--filter" ||
+			!strings.HasPrefix(args[4], "label=") || args[5] != "--format" || !strings.HasPrefix(args[6], `[{{json .ID}},{{json .Name}}`) {
+			return runtimeCommand{}, fmt.Errorf("unsupported network command %q", strings.Join(args, " "))
 		}
 		return runtimeCommand{Kind: "network-ls"}, nil
 	}

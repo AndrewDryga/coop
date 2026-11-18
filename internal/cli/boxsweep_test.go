@@ -64,7 +64,7 @@ func TestSweepOrphanBoxesRunsOncePerRepo(t *testing.T) {
 		t.Fatalf("orphan listings = %d, want one per repo:\n%s", got, sweepEvents(t, events))
 	}
 	// Networks are not per repo: one listing per process, however many repos start.
-	if got := strings.Count(sweepEvents(t, events), "network ls -q --filter label=com.docker.compose.project\n"); got != 1 {
+	if got := strings.Count(sweepEvents(t, events), "network ls --no-trunc --filter label=com.docker.compose.project --format "); got != 1 {
 		t.Fatalf("network listings = %d, want one per process:\n%s", got, sweepEvents(t, events))
 	}
 }

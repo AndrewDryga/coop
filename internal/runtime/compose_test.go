@@ -200,7 +200,7 @@ func TestFrozenComposeNetworkCleanupStaysOnSameDaemon(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
 		"case \"$*\" in\n" +
-		"  *'network ls -q '*) echo owned-network ;;\n" +
+		"  *'network ls --no-trunc '*) echo '[\"owned-network\",\"fixture_default\"]' ;;\n" +
 		"  *'ps -q -a --filter network='*) echo stopped-container ;;\n" +
 		"esac\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -213,14 +213,14 @@ func TestFrozenComposeNetworkCleanupStaysOnSameDaemon(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix:///other.sock")
 	operations := []func() error{
 		func() error {
-			ids, err := rt.NetworkIDs(t.Context(), "label=com.docker.compose.project=fixture")
-			if err == nil && (len(ids) != 1 || ids[0] != "owned-network") {
-				t.Fatalf("network inventory = %v", ids)
+			networks, err := rt.Networks(t.Context(), []string{"label=com.docker.compose.project=fixture"})
+			if err == nil && (len(networks) != 1 || networks[0].ID != "owned-network" || networks[0].Name != "fixture_default") {
+				t.Fatalf("network inventory = %v", networks)
 			}
 			return err
 		},
 		func() error {
-			ids, err := rt.ContainerIDsOnNetwork(t.Context(), "owned-network")
+			ids, err := rt.ContainerIDsOnNetwork(t.Context(), Network{ID: "owned-network", Name: "fixture_default"})
 			if err == nil && (len(ids) != 1 || ids[0] != "stopped-container") {
 				t.Fatalf("attached container inventory = %v", ids)
 			}

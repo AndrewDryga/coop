@@ -128,7 +128,7 @@ func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + strconv.Quote(recorder) + "\n" +
 		"case \"$*\" in *label=*) [ \"$1\" = ps ] && echo owned-sidecar ;; esac\n" +
-		"if [ \"$1\" = network ] && [ \"$2\" = ls ]; then echo net-1; fi\n"
+		"if [ \"$1\" = network ] && [ \"$2\" = ls ]; then echo '[\"net-1\",\"net-1-name\"]'; fi\n"
 	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -149,9 +149,8 @@ func TestStopSessionServicesUsesImmutableOwnershipLabels(t *testing.T) {
 	want := "ps -q -a --filter label=com.docker.compose.project=" + ComposeProject(repo) +
 		" --filter label=com.docker.compose.project.working_dir=" + filepath.Join(repo, ".agent") + "\n" +
 		"rm -f owned-sidecar\n" +
-		"network ls -q --filter label=com.docker.compose.project=" + ComposeProject(repo) + "\n" +
-		"network inspect -f {{.Name}} net-1\n" +
-		"ps -q -a --filter network=net-1\n" +
+		"network ls --no-trunc --filter label=com.docker.compose.project=" + ComposeProject(repo) + " --format [{{json .ID}},{{json .Name}}]\n" +
+		"ps -q -a --filter network=net-1 --filter network=net-1-name\n" +
 		"network rm net-1\n"
 	if got := string(data); got != want {
 		t.Fatalf("service cleanup calls = %q, want %q", got, want)
@@ -640,7 +639,7 @@ func TestDownServicesUsesCurrentProjectAndVolumePolicy(t *testing.T) {
 		t.Fatalf("runtime calls = %q, want Compose down then project network inventory", calls)
 	}
 	assertComposeSnapshotCall(t, calls[0], repo, "down --remove-orphans --volumes")
-	if calls[1] != "network ls -q --filter label=com.docker.compose.project="+ComposeProject(repo) {
+	if calls[1] != "network ls --no-trunc --filter label=com.docker.compose.project="+ComposeProject(repo)+" --format [{{json .ID}},{{json .Name}}]" {
 		t.Fatalf("network inventory = %q, want the current project", calls[1])
 	}
 }
@@ -670,9 +669,9 @@ func TestDownServicesCleansOnlyUnusedProjectNetworks(t *testing.T) {
 			}
 			script += " ;;\nesac\n" +
 				"case \"$*\" in\n" +
-				"  'network ls '*) printf '%s\\n' unused running stopped ;;\n" +
-				"  'ps -q -a --filter network=running') echo live-container ;;\n" +
-				"  'ps -q -a --filter network=stopped') echo stopped-container ;;\n" +
+				"  'network ls '*) printf '%s\\n' '[\"unused\",\"unused-name\"]' '[\"running\",\"running-name\"]' '[\"stopped\",\"stopped-name\"]' ;;\n" +
+				"  'ps -q -a --filter network=running '*) echo live-container ;;\n" +
+				"  'ps -q -a --filter network=stopped '*) echo stopped-container ;;\n" +
 				"esac\n"
 			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
@@ -693,14 +692,14 @@ func TestDownServicesCleansOnlyUnusedProjectNetworks(t *testing.T) {
 				}
 				return
 			}
-			want := "network ls -q --filter label=com.docker.compose.project=" + ComposeProject(repo)
+			want := "network ls --no-trunc --filter label=com.docker.compose.project=" + ComposeProject(repo) + " --format [{{json .ID}},{{json .Name}}]"
 			if len(calls) < 2 || calls[1] != want {
 				t.Fatalf("missing exact-project network inventory %q: %s", want, data)
 			}
 			if tc.failure == "" {
-				want := []string{want, "network inspect -f {{.Name}} unused", "ps -q -a --filter network=unused", "network rm unused",
-					"network inspect -f {{.Name}} running", "ps -q -a --filter network=running",
-					"network inspect -f {{.Name}} stopped", "ps -q -a --filter network=stopped"}
+				want := []string{want, "ps -q -a --filter network=unused --filter network=unused-name", "network rm unused",
+					"ps -q -a --filter network=running --filter network=running-name",
+					"ps -q -a --filter network=stopped --filter network=stopped-name"}
 				if !slices.Equal(calls[1:], want) {
 					t.Fatalf("network cleanup = %q, want %q", calls[1:], want)
 				}
@@ -733,7 +732,7 @@ func TestDownServicesFileVolumesDeletesOnlyReviewedTargets(t *testing.T) {
 		t.Fatalf("runtime calls = %q, want Compose down, project network inventory and one exact volume removal", calls)
 	}
 	assertComposeSnapshotCall(t, calls[0], repo, "down --remove-orphans")
-	if calls[1] != "network ls -q --filter label=com.docker.compose.project="+ComposeProject(repo) {
+	if calls[1] != "network ls --no-trunc --filter label=com.docker.compose.project="+ComposeProject(repo)+" --format [{{json .ID}},{{json .Name}}]" {
 		t.Fatalf("network inventory = %q, want the current project", calls[1])
 	}
 	if calls[2] != "volume rm reviewed-data" {
