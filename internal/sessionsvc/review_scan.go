@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -39,6 +41,11 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		return nil, err
 	}
 	reader := bufio.NewReaderSize(output, 16<<10)
+	// One cat-file and one check-attr serve every changed file: a process per file made a review
+	// of thousands of files start thousands of processes before the patch bound refused it.
+	blobs := &reviewGitBatch{ctx: ctx, repository: repository, args: []string{"cat-file", "--batch"}}
+	attributes := &reviewGitBatch{ctx: ctx, repository: repository,
+		args: []string{"check-attr", "--cached", "-z", "--stdin", "filter"}}
 	shadowed := box.NewShadowDecider(repository)
 	unreadable := map[string]bool{} // each .coopignore coop cannot read is one finding, not one per file
 	var findings []string
@@ -103,20 +110,21 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		}
 		var content []byte
 		var secret bool
-		content, secret, err = scanReviewBlob(ctx, repository, fields[3])
+		err = blobs.blob(fields[3], func(blob io.Reader) (err error) {
+			content, secret, err = scanReviewContent(ctx, blob)
+			return err
+		})
 		if err != nil {
 			break
 		}
 		if oid, size, pointer := forkspace.ParseLFSPointer(content); pointer {
-			var attributes []byte
-			var truncated bool
-			attributes, truncated, err = runSessionCompanionGitContext(ctx, repository, 32<<10,
-				"check-attr", "--cached", "-z", "filter", "--", path)
-			if err != nil || truncated {
+			var filter string
+			filter, err = attributes.filter(path)
+			if err != nil {
 				err = errors.Join(err, errors.New("cannot verify review LFS attributes"))
 				break
 			}
-			if string(attributes) == path+"\x00filter\x00lfs\x00" {
+			if filter == path+"\x00filter\x00lfs\x00" {
 				content, secret, err = scanReviewLFS(ctx, repository, oid, size)
 				if err != nil {
 					break
@@ -129,10 +137,18 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 		if filepath.Base(path) == "package.json" && content == nil {
 			add(path + " cannot be inspected for automatic install scripts")
 		} else if filepath.Base(path) == "package.json" {
-			old, _, readErr := runSessionCompanionGitContext(ctx, repository, 5<<20, "show", parent+":"+path)
-			if readErr != nil && fields[4] != "A" {
-				err = readErr
-				break
+			// The delta's old blob is parent:path, read here like the new one; an added file has none.
+			var old []byte
+			if fields[4] != "A" {
+				previous := &sessionWorkspaceLimitedWriter{limit: 5 << 20}
+				err = blobs.blob(fields[2], func(blob io.Reader) error {
+					_, err := io.Copy(previous, reviewScanReader{ctx, blob})
+					return err
+				})
+				if err != nil {
+					break
+				}
+				old = previous.buf.Bytes()
 			}
 			if script := addedReviewLifecycle(old, content); script != "" {
 				add(path + " adds a " + script + " script — npm runs it automatically on install")
@@ -142,7 +158,7 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 	if err != nil {
 		_ = command.Process.Kill()
 	}
-	err = errors.Join(err, command.Wait(), ctx.Err())
+	err = errors.Join(err, blobs.close(err != nil), attributes.close(err != nil), command.Wait(), ctx.Err())
 	if err == nil && attributesChanged {
 		// Attributes can activate an unchanged pointer, including when a nested
 		// override is deleted. In that case the pointer delta alone is insufficient.
@@ -157,23 +173,103 @@ func scanReviewCandidate(ctx context.Context, repository, parent, candidate stri
 	return boundedSessionReviewFindings(findings), err
 }
 
-func scanReviewBlob(ctx context.Context, repository, oid string) ([]byte, bool, error) {
-	command, err := forkspace.GitCommandWithEnv(ctx, repository, sessionCompanionGitEnv(), "cat-file", "blob", oid)
+// reviewGitBatch is one git process, started on first use with the same trusted environment as the
+// diff, that answers one request per line or NUL on its stdin: cat-file --batch or check-attr
+// --stdin. Both flush each answer to a pipe, so the scan reads it before writing the next.
+type reviewGitBatch struct {
+	ctx        context.Context
+	repository string
+	args       []string
+	command    *exec.Cmd
+	input      io.WriteCloser
+	output     *bufio.Reader
+}
+
+func (b *reviewGitBatch) request(line string) error {
+	if b.command == nil {
+		command, err := forkspace.GitCommandWithEnv(b.ctx, b.repository, sessionCompanionGitEnv(), b.args...)
+		if err != nil {
+			return err
+		}
+		input, err := command.StdinPipe()
+		if err != nil {
+			return err
+		}
+		output, err := command.StdoutPipe()
+		if err != nil {
+			return err
+		}
+		if err := command.Start(); err != nil {
+			return err
+		}
+		b.command, b.input, b.output = command, input, bufio.NewReaderSize(output, 64<<10)
+	}
+	_, err := io.WriteString(b.input, line)
+	return err
+}
+
+// blob hands read exactly the blob's bytes; whatever read leaves is drained, so the next answer
+// starts where it should.
+func (b *reviewGitBatch) blob(oid string, read func(io.Reader) error) error {
+	if err := b.request(oid + "\n"); err != nil {
+		return err
+	}
+	header, err := b.output.ReadString('\n')
 	if err != nil {
-		return nil, false, err
+		return err
 	}
-	output, err := command.StdoutPipe()
-	if err != nil {
-		return nil, false, err
+	fields := strings.Fields(header)
+	if len(fields) != 3 || fields[0] != oid || fields[1] != "blob" {
+		return fmt.Errorf("review blob %s is unavailable: %q", oid, strings.TrimSpace(header))
 	}
-	if err := command.Start(); err != nil {
-		return nil, false, err
+	size, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil || size < 0 {
+		return fmt.Errorf("review blob %s has no size: %q", oid, strings.TrimSpace(header))
 	}
-	content, secret, err := scanReviewContent(ctx, output)
-	if err != nil {
-		_ = command.Process.Kill()
+	blob := io.LimitReader(b.output, size)
+	err = read(blob)
+	if _, drainErr := io.Copy(io.Discard, blob); drainErr != nil {
+		return errors.Join(err, drainErr)
 	}
-	return content, secret, errors.Join(err, command.Wait(), ctx.Err())
+	if end, endErr := b.output.ReadByte(); endErr != nil || end != '\n' {
+		return errors.Join(err, endErr, errors.New("malformed review blob answer"))
+	}
+	return err
+}
+
+// filter returns check-attr's answer for path as git printed it: path, "filter" and the value,
+// each ending in NUL, within the 32 KiB a single check-attr's answer had.
+func (b *reviewGitBatch) filter(path string) (string, error) {
+	if err := b.request(path + "\x00"); err != nil {
+		return "", err
+	}
+	var answer strings.Builder
+	for range 3 {
+		field, err := b.output.ReadSlice(0)
+		if err != nil {
+			return "", err
+		}
+		answer.Write(field)
+	}
+	if answer.Len() > 32<<10 {
+		return "", errors.New("review attribute answer is too long")
+	}
+	return answer.String(), nil
+}
+
+// close ends the process, killing it first when the scan stopped early.
+func (b *reviewGitBatch) close(stopped bool) error {
+	if b.command == nil {
+		return nil
+	}
+	if stopped {
+		_ = b.command.Process.Kill()
+	}
+	err := errors.Join(b.input.Close(), b.command.Wait())
+	if stopped {
+		return nil // the scan's own error says why
+	}
+	return err
 }
 
 func scanReviewLFS(ctx context.Context, repository, oid string, size int64) ([]byte, bool, error) {

@@ -3,6 +3,8 @@ package sessionsvc
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -288,5 +290,67 @@ func TestReviewScanJudgesEverySpelling(t *testing.T) {
 		if !slices.ContainsFunc(findings, func(finding string) bool { return strings.Contains(finding, want) }) {
 			t.Errorf("findings = %q; want one naming %q", findings, want)
 		}
+	}
+}
+
+// A review used to start a git process per changed file, one more per LFS pointer and per
+// package.json; the scan now reads every file through one cat-file and one check-attr, and still
+// judges each LFS payload and a changed package.json against its previous version.
+func TestReviewScanStartsTheSameGitProcessesForAnyNumberOfFiles(t *testing.T) {
+	scan := func(files int) ([]string, int) {
+		repo, git := gitrepo.New(t)
+		sessionWorkspaceWrite(t, filepath.Join(repo, ".gitattributes"), "*.bin filter=lfs diff=lfs merge=lfs -text\n")
+		sessionWorkspaceWrite(t, filepath.Join(repo, "package.json"), `{"scripts":{"prepare":"make"}}`)
+		if err := os.Mkdir(filepath.Join(repo, "kept"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		sessionWorkspaceWrite(t, filepath.Join(repo, "kept/package.json"), `{"scripts":{"postinstall":"node a.js"}}`)
+		git("add", ".")
+		git("commit", "-qm", "base")
+		parent := gitOut(repo, "rev-parse", "HEAD")
+		for i := range files {
+			sessionWorkspaceWrite(t, filepath.Join(repo, fmt.Sprintf("file %03d.txt", i)), fmt.Sprintf("line %d\n", i))
+		}
+		for i := range 3 {
+			payload := fmt.Appendf(nil, "asset %d ghp_%s\n", i, strings.Repeat("Q7r9", 10))
+			oid := fmt.Sprintf("%x", sha256.Sum256(payload))
+			object := filepath.Join(repo, ".git", "lfs", "objects", oid[:2], oid[2:4], oid)
+			if err := os.MkdirAll(filepath.Dir(object), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(object, payload, 0600); err != nil {
+				t.Fatal(err)
+			}
+			sessionWorkspaceWrite(t, filepath.Join(repo, fmt.Sprintf("asset %d.bin", i)),
+				fmt.Sprintf("version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize %d\n", oid, len(payload)))
+		}
+		sessionWorkspaceWrite(t, filepath.Join(repo, "package.json"), `{"scripts":{"prepare":"make","postinstall":"node b.js"}}`)
+		sessionWorkspaceWrite(t, filepath.Join(repo, "kept/package.json"), `{"name":"kept","scripts":{"postinstall":"node a.js"}}`)
+		git("add", ".")
+		git("commit", "-qm", "candidate")
+		candidate := gitOut(repo, "rev-parse", "HEAD")
+		processes := countGitProcesses(t)
+		findings, err := scanReviewCandidate(context.Background(), repo, parent, candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return findings, processes("")
+	}
+	few, fewProcesses := scan(3)
+	many, manyProcesses := scan(300)
+	want := []string{
+		"possible secret in asset 0.bin — remove the credential before publication",
+		"possible secret in asset 1.bin — remove the credential before publication",
+		"possible secret in asset 2.bin — remove the credential before publication",
+		"package.json adds a postinstall script — npm runs it automatically on install",
+	}
+	for _, findings := range [][]string{few, many} {
+		if !slices.Equal(findings, want) {
+			t.Errorf("findings = %q, want %q", findings, want)
+		}
+	}
+	t.Logf("git processes: %d for 3 files, %d for 300", fewProcesses, manyProcesses)
+	if fewProcesses != manyProcesses || manyProcesses > 5 {
+		t.Errorf("3 files started %d git processes and 300 files %d; want the same few", fewProcesses, manyProcesses)
 	}
 }
