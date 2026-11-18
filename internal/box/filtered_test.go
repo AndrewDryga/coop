@@ -48,6 +48,8 @@ type filteredDaemonFixture struct {
 	earlyGuardEnd, failStartupPersistence  bool
 	notAttempted, refused                  string // roles whose create was never sent, or Docker refused
 	transientProbes, successfulProbes      int
+	execs                                  []string // the coop-net verb of every ExecRead, in order
+	observationLost                        bool     // `coop-net watch` passes its probe but prints no snapshot
 	stopGrace                              map[string]int
 	probeRecovered                         chan struct{}
 	attached                               chan struct{}
@@ -600,7 +602,9 @@ func (d *filteredDaemonFixture) observation(terminal bool) []byte {
 func (d *filteredDaemonFixture) ExecRead(_ context.Context, _ runtime.DockerRef, _ int, command ...string) ([]byte, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if command[len(command)-1] == "probe" {
+	verb := command[len(command)-1]
+	d.execs = append(d.execs, verb)
+	if verb == "probe" || verb == "watch" {
 		if d.earlyGuardEnd && d.f.resource("agent").State == "gone" {
 			return nil, errors.New("fixture collector already ended")
 		}
@@ -621,6 +625,9 @@ func (d *filteredDaemonFixture) ExecRead(_ context.Context, _ runtime.DockerRef,
 				}
 			}
 		default:
+		}
+		if verb == "watch" && !d.observationLost {
+			return d.observation(false), nil
 		}
 		return nil, nil
 	}

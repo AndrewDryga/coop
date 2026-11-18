@@ -514,10 +514,12 @@ func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc
 			cancel()
 			return err // an envelope that cannot follow the topology is not a slow probe
 		}
-		probe, stop := context.WithTimeout(ctx, 3*time.Second)
-		_, err := f.docker.ExecRead(probe, f.ref("guard"), 4096, "/usr/local/bin/coop-net", "probe")
-		stop()
+		// One exec answers both the liveness probe and the observation: `coop-net watch` exits non-zero
+		// only when the probe fails, and prints the snapshot when it could read one.
+		probe, stop := context.WithTimeout(ctx, 6*time.Second)
+		data, err := f.docker.ExecRead(probe, f.ref("guard"), networkgateway.MaxSnapshotBytes, "/usr/local/bin/coop-net", "watch")
 		if err != nil {
+			stop()
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -534,9 +536,10 @@ func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc
 		// Observation loss is not permission to open networking, nor an
 		// implicit stop-on-audit-loss policy. Retain the last producer time so
 		// readers can report stale/unavailable evidence without inventing zeros.
-		probe, stop = context.WithTimeout(ctx, 3*time.Second)
-		if snapshot, observeErr := f.observe(probe); observeErr == nil {
-			_ = f.accept(probe, snapshot)
+		if len(data) > 0 {
+			if snapshot, observeErr := f.readObservation(data); observeErr == nil {
+				_ = f.accept(probe, snapshot)
+			}
 		}
 		stop()
 	}

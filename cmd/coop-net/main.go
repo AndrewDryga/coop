@@ -68,6 +68,17 @@ func run() error {
 			return networkgateway.Failure("observation_unavailable")
 		}
 		return nil
+	case "watch":
+		// The host's once-a-second check in one exec: the probe decides the exit status, and the
+		// snapshot rides along when it can be read. A lost observation prints nothing and still
+		// exits 0, because it must neither end the run nor open networking.
+		if err := networkgateway.ProbeRuntime(ctx, config); err != nil {
+			return err
+		}
+		if value, err := networkgateway.ObserveRuntime(ctx, config); err == nil {
+			_ = json.NewEncoder(os.Stdout).Encode(value)
+		}
+		return nil
 	default:
 		return networkgateway.Failure("gateway_role_invalid")
 	}

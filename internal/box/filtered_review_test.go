@@ -90,6 +90,48 @@ func TestFilteredTransientHealthProbeDoesNotKillHealthyWork(t *testing.T) {
 	}
 }
 
+// A watched box costs one exec a tick: `coop-net watch` answers the probe and carries the snapshot.
+// A tick whose snapshot is lost is still a passed probe, so it neither ends the run nor costs a
+// second exec.
+func TestFilteredWatchUsesOneExecPerTick(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(map[bool]string{false: "observed", true: "observation lost"}[lost], func(t *testing.T) {
+			f, d := filteredFixture(t)
+			d.holdAgent, d.observationLost = true, lost
+			d.probeRecovered = make(chan struct{}, 1)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := f.launch(ctx, RunSpec{}, nil, nil, io.Discard, io.Discard); done <- err }()
+			for ticks := 0; ticks < 3; {
+				select {
+				case <-d.probeRecovered:
+					d.mu.Lock()
+					ticks = slices.Index(d.execs, "watch") + 1
+					if ticks > 0 {
+						ticks = len(d.execs) - ticks + 1
+					}
+					d.mu.Unlock()
+				case err := <-done:
+					t.Fatal("the watched run ended", err)
+				case <-ctx.Done():
+					t.Fatal("the watch never ticked three times")
+				}
+			}
+			cancel()
+			if err := <-done; !errors.Is(err, context.Canceled) {
+				t.Fatal("cancellation was lost", err)
+			}
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			first := slices.Index(d.execs, "watch")
+			if steady := d.execs[first:]; slices.ContainsFunc(steady, func(verb string) bool { return verb != "watch" }) {
+				t.Fatalf("the watch ran more than one exec a tick: %v", steady)
+			}
+		})
+	}
+}
+
 // A topology the run cannot follow still ends it: an unreadable or empty host inventory, a kernel
 // update the controller refuses, or an envelope past the qualified cap. Growth that CAN be applied
 // is covered by the tests below.
