@@ -11,6 +11,9 @@ func TestParseNamesSettingsNotGoTypes(t *testing.T) {
 		{"serve:\n  ports: [abc]\n", `line 2: "abc" should be a number`},
 		{"box: nope\n", `line 1: "nope" should be a group of settings`},
 		{"box:\n  egress_rules: nope\n", `line 2: "nope" should be a list`},
+		{"gate: [make, check]\n", `line 1: a list should be text`},
+		{"gate: {run: make}\n", `line 1: a group of settings should be text`},
+		{"box: [offline]\n", `line 1: a list should be a group of settings`},
 	} {
 		_, err := Parse([]byte(tc.file))
 		if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "project.Project") || strings.Contains(err.Error(), "!!") {

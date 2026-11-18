@@ -12,7 +12,8 @@ import (
 
 var (
 	yamlUnknownField = regexp.MustCompile(`(?s)field (.+) not found in type \S+$`)
-	yamlWrongType    = regexp.MustCompile("cannot unmarshal !!\\w+ `(.*)` into (\\S+)$")
+	// yaml quotes the value of a scalar only; a list or a mapping is named by its tag alone.
+	yamlWrongType = regexp.MustCompile("cannot unmarshal !!(\\w+)(?: `(.*)`)? into (\\S+)$")
 )
 
 // Plain rewords yaml's type problems for the person editing the file: it names the setting
@@ -26,7 +27,7 @@ func Plain(err error) error {
 	for i, problem := range problems.Errors {
 		problem = yamlUnknownField.ReplaceAllString(problem, `unknown setting "$1"`)
 		if match := yamlWrongType.FindStringSubmatch(problem); match != nil {
-			problem = strings.Replace(problem, match[0], `"`+match[1]+`" should be `+yamlExpected(match[2]), 1)
+			problem = strings.Replace(problem, match[0], yamlGiven(match[1], match[2])+" should be "+yamlExpected(match[3]), 1)
 		}
 		plain[i] = problem
 	}
@@ -65,6 +66,19 @@ func (e *fileProblems) Error() string {
 }
 
 func (e *fileProblems) Unwrap() error { return e.problems }
+
+// yamlGiven names what the file holds where the wrong type was found: the quoted value of a
+// scalar, or the kind of a list or mapping.
+func yamlGiven(tag, value string) string {
+	switch tag {
+	case "seq":
+		return "a list"
+	case "map":
+		return "a group of settings"
+	default:
+		return `"` + value + `"`
+	}
+}
 
 func yamlExpected(goType string) string {
 	switch {
