@@ -822,6 +822,15 @@ func TestThirdRejectedSemanticCandidateFailsWithoutPublishingItsMessage(t *testi
 		failed.AssistantMessage != "" || failed.Candidate != nil {
 		t.Fatalf("exhausted semantic turn = %+v", failed)
 	}
+	// A retry after a lost response must find the rejection applied, not refuse a turn that no
+	// longer awaits validation.
+	replayed, err := store.RejectTurnCandidate(ctx, RejectTurnCandidateRequest{
+		SessionID: sess.ID, TurnID: turn.ID, CandidateSHA256: staged.Candidate.SHA256,
+		Violations: []string{"unsupported healthy completion"},
+	})
+	if err != nil || replayed.State != TurnFailed || replayed.ErrorCode != CodeOutputContractFailed {
+		t.Fatalf("final rejection replay = %+v, %v", replayed, err)
+	}
 	for _, successor := range successors {
 		got, err := store.GetTurn(ctx, sess.ID, successor.ID)
 		if err != nil || got.State != TurnBudgetExhausted || got.ErrorCode != CodeBudgetExhausted || !got.StartedAt.IsZero() {

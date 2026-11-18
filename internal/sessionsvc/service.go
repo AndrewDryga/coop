@@ -2389,7 +2389,8 @@ func (s *Service) AcceptTurnCandidate(ctx context.Context, key, sessionID, turnI
 	request := struct {
 		SessionID, TurnID, Digest, Verdict string
 	}{sessionID, turnID, digest, "accept"}
-	turn, err := s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
+	applied := func(turn session.Turn) bool { return turn.SemanticAcceptanceApplied(digest) }
+	turn, err := s.validateTurnCandidateOperation(ctx, key, request, sessionID, turnID, applied, func() (session.Turn, error) {
 		unlock, err := s.lockAndReapAwaitingCandidateRuntime(ctx, sessionID, turnID, digest)
 		if err != nil {
 			return session.Turn{}, err
@@ -2410,7 +2411,8 @@ func (s *Service) RejectTurnCandidate(ctx context.Context, key string, req sessi
 		Request session.RejectTurnCandidateRequest
 		Verdict string
 	}{req, "reject"}
-	turn, err := s.validateTurnCandidateOperation(ctx, key, request, func() (session.Turn, error) {
+	applied := func(turn session.Turn) bool { return turn.SemanticRejectionApplied(req.CandidateSHA256) }
+	turn, err := s.validateTurnCandidateOperation(ctx, key, request, req.SessionID, req.TurnID, applied, func() (session.Turn, error) {
 		unlock, err := s.lockAndReapAwaitingCandidateRuntime(ctx, req.SessionID, req.TurnID, req.CandidateSHA256)
 		if err != nil {
 			return session.Turn{}, err
@@ -2428,6 +2430,8 @@ func (s *Service) validateTurnCandidateOperation(
 	ctx context.Context,
 	key string,
 	request any,
+	sessionID, turnID string,
+	applied func(session.Turn) bool,
 	apply func() (session.Turn, error),
 ) (session.Turn, error) {
 	unlock := s.lockOperation(key)
@@ -2450,7 +2454,24 @@ func (s *Service) validateTurnCandidateOperation(
 				&session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail})
 		}
 	}
-	turn, err := apply()
+	// Record the attempt before it can take effect: a crash then reconciles as uncertain, not as
+	// "interrupted before execution".
+	if op.State == session.OperationReserved {
+		intent, err := json.Marshal(request)
+		if err == nil {
+			err = s.store.MarkOperationRunning(ctx, op.ID, intent)
+		}
+		if err != nil {
+			return session.Turn{}, s.failServiceOperation(ctx, op.ID, err)
+		}
+	}
+	// A lost receipt leaves the decision applied but its operation unsettled. A retry, under this
+	// key or a new one, returns that settled turn instead of refusing a turn that no longer awaits
+	// validation. A turn settled with another verdict or digest still goes to apply and is refused.
+	turn, err := s.store.GetTurn(ctx, sessionID, turnID)
+	if err != nil || !applied(turn) {
+		turn, err = apply()
+	}
 	if err != nil {
 		return session.Turn{}, s.failServiceOperation(ctx, op.ID, err)
 	}
@@ -2889,6 +2910,17 @@ func (s *Service) executeRetireQuarantined(ctx context.Context, op session.Opera
 	sess, err := s.store.GetSession(ctx, req.SessionID)
 	if err != nil {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+	}
+	// Retirement leaves quarantine before its receipt is written, so a retry after a lost receipt
+	// settles on the durable retirement event at exactly the next revision.
+	if !s.sessionQuarantined(sess.ID) && sess.State == session.SessionDiscarded && sess.Revision == req.ExpectedRevision+1 {
+		retired, err := s.store.SessionRetiredFromQuarantine(ctx, sess.ID)
+		if err != nil {
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+		}
+		if retired {
+			return s.completeDiscardOperation(ctx, op.ID, sess)
+		}
 	}
 	if !s.sessionQuarantined(sess.ID) {
 		return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{

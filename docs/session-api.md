@@ -500,6 +500,11 @@ An acceptance must not include violations. co:op copies the stored candidate int
 `assistant_message` and returns a saved `validation_receipt`. A rejection asks the model to try
 again in the same provider session, as part of the same turn.
 
+If the response is lost, send the same decision again. Once a decision has taken effect, repeating
+the same verdict for the same digest returns the settled turn, with the same idempotency key or a
+new one, even if co:op lost its own record of the operation. A different verdict or digest for a
+settled turn is refused.
+
 Your controller can review up to three candidates that pass the schema check, and the model has up
 to three responses to produce valid output for each one. Responses that fail the schema check don't
 use up one of those review attempts.
@@ -1552,7 +1557,9 @@ This marks the session record as retired without deleting its workspace:
 - A turn that was active when the daemon lost ownership remains in history without changes.
 - The workspace, fork reservation, sidecar services and provider's ACP history are kept.
 
-A session that isn't quarantined is refused with `invalid_session_state`.
+A session that isn't quarantined is refused with `invalid_session_state`. The exception is a
+retry after a lost response: a session this endpoint already retired, at exactly the next revision,
+is returned as retired, with the same idempotency key or a new one.
 
 Retiring a record doesn't show that its runtime has stopped. Separately, the daemon looks for
 boxes with the exact `coop.run` labels derived from the store's session and turn IDs, and removes

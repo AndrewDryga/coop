@@ -678,6 +678,19 @@ type Turn struct {
 	ControllerToolsDigest string `json:"-"`
 }
 
+// SemanticAcceptanceApplied reports that the candidate with this digest was accepted, so a
+// retried acceptance can return the settled turn.
+func (t Turn) SemanticAcceptanceApplied(digest string) bool {
+	return digest != "" && t.State == TurnCompleted && t.ValidationReceipt != "" && t.CandidateSHA256 == digest
+}
+
+// SemanticRejectionApplied reports that the candidate with this digest was rejected. Only a
+// rejection writes ValidationError, and staging a newer candidate clears it and replaces the
+// digest, so the pair holds whether the turn was requeued, is running again, or failed.
+func (t Turn) SemanticRejectionApplied(digest string) bool {
+	return digest != "" && t.CandidateSHA256 == digest && t.ValidationError != ""
+}
+
 // TurnCandidate is a schema-valid result that still needs caller-owned
 // semantic validation. It is never copied into AssistantMessage until the
 // caller accepts this exact digest.

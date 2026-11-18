@@ -1334,6 +1334,29 @@ func (s *Store) RetiredQuarantinedSessions(ctx context.Context) ([]string, error
 	return ids, rows.Err()
 }
 
+// SessionRetiredFromQuarantine reports whether this session's discard was a quarantine
+// retirement, the durable proof a retried retirement settles on.
+func (s *Store) SessionRetiredFromQuarantine(ctx context.Context, sessionID string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT payload FROM events WHERE session_id = ? AND type = ?", sessionID, string(EventWorkspaceDiscarded))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	retired := false
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return false, err
+		}
+		var receipt struct{ Retired bool }
+		if err := json.Unmarshal(payload, &receipt); err != nil {
+			return false, err
+		}
+		retired = retired || receipt.Retired
+	}
+	return retired, rows.Err()
+}
+
 // ListRuntimeCleanupTurns returns turns whose runtime may still exist after their durable work is
 // recoverable. An exact runtime receipt outlives a terminal turn until teardown succeeds. An active
 // turn a crash stopped before it recorded a receipt stays eligible through its deterministic run ID.
@@ -2826,7 +2849,7 @@ func (s *Store) RejectTurnCandidate(ctx context.Context, req RejectTurnCandidate
 	if err != nil {
 		return Turn{}, fmt.Errorf("read candidate turn for rejection: %w", err)
 	}
-	if turn.State == TurnQueued && turn.CandidateSHA256 == req.CandidateSHA256 && turn.ValidationError != "" {
+	if turn.SemanticRejectionApplied(req.CandidateSHA256) {
 		return turn, nil
 	}
 	if turn.State != TurnAwaitingValidation || turn.Candidate == nil || sess.ActiveTurnID != turn.ID {
