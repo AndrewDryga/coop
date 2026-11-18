@@ -12,6 +12,82 @@
   writable session kept its attachments inside the fork, so review refused the session, discard
   read it as dirty and checkpoints copied the file. Every session now keeps them in private
   session state, and attachments 13.2.1 left in a writable fork move there on the next launch.
+- **`coop build` refuses while `COOP_IMAGE` is set.** It used to build the project's Dockerfile
+  under the image name you chose and replace that image. Every build now stops with "COOP_IMAGE
+  is set; unset it to build this project", including the builds `coop update` and an editor
+  session start. Unset `COOP_IMAGE` to build.
+- **A project's `box.pids` can only lower the process cap.** A `box.pids` in
+  `.agent/project.yaml` that raises the 4096-process cap, removes it or sets 0 is now ignored,
+  and the launch says so once. A box can edit that file, so it may only tighten the cap. To
+  raise or remove it, set your own `COOP_PIDS`, which still wins.
+- **An agent's `coop tasks claim` no longer takes over a person's claim.** On the host, an
+  agent's plain claim of a task a person claimed at a terminal is now refused and names the
+  person, as it already was in a box. `coop tasks claim <id> --force` still takes it over and
+  notes it in the task's `log.md`. A person re-claiming their own task works as before.
+- **An ordinary `coop fork merge` ignores untracked files in your project.** One scratch file
+  used to block every merge. The merge still refuses when the fork would add a file over an
+  untracked one, and now names those files; nothing lands. Untracked files inside the fork
+  still count, and isolated forks already worked this way.
+- **A fork's task folder may not hold stray top-level files.** A task with a file such as
+  `gate.log` at the top of its folder is now refused when it is sent to a fork, not only when
+  the fork hands it back. The refusal gives the file's full path. Move the file into
+  `artifacts/` or delete it, then run the fork again.
+- **A fork made from a preset reopens with that preset.** `coop fork <name> <preset>` used to
+  save only the lead's provider, so a later `coop fork <name>` ran it with the default model and
+  account and no roles or ladder. The fork now keeps the preset, and naming a plain target
+  clears it. A preset that no longer loads is refused by name, and `coop fork <name> acp`
+  without a target is refused on such a fork, since editor sessions do not run presets yet.
+- **A preset name works as a loop review step's agent.** `signoff.agent`, `between.agent` and
+  `verify.agent` in `loop.yaml` now run the named preset's lead. A word that names no agent and
+  no preset, such as a typo, stops the loop before it starts and names the step; it used to fall
+  back to the default reviewer silently.
+- **`coop check-secrets` names folders it could not open.** A folder it could not list used to
+  end the walk early with a clean result. The scan now skips that folder, keeps going and names
+  it in a warning; the exit status stays 0. `--include-ignored` and scans outside Git still fail
+  on such a folder.
+- **`coop update` checks the release signature when cosign is installed.** It verifies the
+  release with cosign the same way `install.sh` does, refuses a release whose signature is
+  missing or does not verify, and says whether it checked. Without cosign it checks only the
+  checksums, as before; install cosign to get the stronger check.
+- **Gemini no longer reads the pre-v11 profile settings file.** Coop before v11 kept a
+  `settings.json` in `~/.config/coop/agents/gemini/profiles/<account>/`. A leftover one could
+  hide a `GEMINI_API_KEY` set in `agents/env`, so the account read "Not signed in", and a
+  leftover `vertex-ai` choice picked the Vertex key. Set the key you want in `agents/env`.
+- **Grok and Gemini refuse an MCP header that names an unset variable.** A shared MCP server
+  header such as `"X-Api-Key": "${KEY}"` with `KEY` unset used to start anyway, and Gemini sent
+  the literal text upstream. Grok and Gemini launches now stop and name the variable, as Codex
+  launches do. Set the variable or remove the header.
+- **Coop follows `[include]` in your global Git config.** Your name, email, signing and editor
+  settings now resolve the way your own git resolves them, so a `~/.gitconfig` that includes
+  another file no longer leaves a box without a Git author, or fork merges and loop commits
+  unsigned. `includeIf "gitdir:"` still does not apply. A launch now says when no Git author is
+  set.
+- **The kernel filesystem guard refuses any rename onto a secret name.** With eBPF protection, a
+  box can no longer rename a file onto a name on the built-in secret list, such as `.env`. Such
+  a rename let a box read what the host later wrote into that file. Tools in the box that save
+  a new secret file by writing a temporary file and renaming it must write inside a hidden
+  folder.
+- **A remembered hidden file must prove its identity.** Coop remembers hidden files so a secret
+  a box moved stays hidden. On Linux, ext4 and XFS reuse a deleted file's inode number, so an
+  ordinary new file could take it and be hidden from the box on every later launch. Each
+  remembered file now also keeps its inode generation, or its size and modification time, and
+  only a file that matches is hidden.
+- **A session turn records why the agent stopped.** A completed turn's `stop_reason` and its
+  `turn.completed` event now say when the agent ran out of tokens, hit its request limit or
+  refused; such a turn used to look like a normal final answer. A turn the agent ends with an
+  error fails with the new code `acp_agent_error` instead of `acp_cancelled`. Controllers should
+  check `stop_reason` before treating a reply as final.
+- **The worker tunnel filters raw events and storage reports.** Through the tunnel,
+  `GET /v1/sessions/{id}/events` returns each event in the shape the connector narrates, and
+  `GET /v1/storage` returns only the storage summary. Host paths such as the checkout root stay
+  on the worker.
+- **A worker session's run records are kept while the session exists.** Finished runs were
+  removed after 90 days even when they belonged to a session, so its network evidence then read
+  `no_run` and its final receipt changed. Runs of a session now stay; other runs still go after
+  90 days.
+- **The website and `install.sh` deploy only after CI passes.** A push to main reaches the site
+  only when CI passes on that commit and it is still main's latest commit. The manual deploy
+  trigger is gone.
 - **A few commands exit with the right code.** `coop context` exits 1, not 2, when
   `.agent/project.yaml` cannot be read. `coop presets init` exits 1 when it cannot write the
   preset, and the `coop sessions` commands exit 1 when there is no home folder to find their data
@@ -24,7 +100,8 @@
   for a workspace they refuse (conflicts, changed submodules, too many untracked files, a pending
   restore) and 400 for a malformed restore request. A worker low on disk answers a checkpoint or
   a new restore with 503 `storage_unavailable` and records the operation as failed, instead of
-  dropping the connection.
+  dropping the connection. A request with a field the API does not take is answered "request
+  body has an unknown field" instead of "invalid JSON".
 - **Session requests page and retry cleanly.** `GET /v1/sessions` takes an `after=<session_id>`
   cursor, so a client can list past the first 1000 sessions; an unknown cursor is 400. Retrying a
   request with the same key after a client timeout now runs it instead of replaying "context
@@ -38,14 +115,18 @@
   closed session in an LFS repository no longer counts as holding uncommitted work because its
   LFS files were downloaded. Stopping `coop sessions connect` also stops its background
   repository downloads. Agents in a filtered worker job are no longer told to edit
-  `project.yaml` to reach more hosts.
+  `project.yaml` to reach more hosts. A worker keeps polling every second while the daemon
+  measures its storage, sending the last storage report instead of waiting for a new one.
 - **Long editor sessions keep working.** A session no longer fails every turn once its replayed
   history passes 4 MiB. A turn that repeats one of its five images no longer fails, and embedded
   image resources no longer count toward the transcript limit. A turn with more than 512 tool
   calls is no longer stopped as quiet while its latest tool runs, and a long turn keeps sending
   `provider.alive` after its activity narration runs out. When the agent process dies while
   writing, the turn reports the process failure instead of a malformed ACP frame. An editor that
-  re-applies a saved Account "Auto" choice at session start no longer restarts the box.
+  re-applies a saved Account "Auto" choice at session start no longer restarts the box. A prompt
+  sent before the project's box is ready is refused "while the project's box is starting", not
+  with a message about a provider switch. With a single account, an answer that mentions
+  sign-in or authentication is no longer moved to the end of the reply.
 - **The loop's screen and summary are accurate.** The live bar no longer wraps and leaves stale
   rows when a task title has CJK characters or emoji, and blank lines no longer disappear while
   it is shown. Long Codex attempts no longer print each tool call twice after the first 256.
@@ -76,6 +157,7 @@
   lookup that never started is reported as stopped, not timed out, and
   `coop usage <agent>@<account>` drops its redundant note about missing price estimates.
   `coop models` names a stopped runtime as Docker or Apple container, as other commands do.
+  `coop usage` no longer leaves SQLite log files beside a stopped session store.
 - **Tasks and decisions commands handle the edge cases.** The `/sweep` Stop hook no longer holds a
   sweep on tasks a fork or a running `coop loop` owns, and `coop tasks queues --held` lists them.
   `coop tasks rm` of an archived task no longer fails a loop or review running at the same time,
@@ -137,8 +219,9 @@
   network address no longer reports a false protection failure, and a loop whose network raised
   alerts but blocked nothing no longer reports "Traffic to 0 remote addresses was blocked". With
   `--debug-on-fail`, the debug shell's blocked addresses print when the shell ends, under its own
-  name. A filtered `coop build` or `coop update` with `COOP_IMAGE` set says to unset it instead
-  of running host setup in a loop.
+  name. A host that ran network setup more than 256 times no longer refuses every filtered box.
+  A raw network rule on port 443 or 53 is refused with a message naming the port's one use: TLS
+  for 443, DNS for 53.
 - **Services and serve ports are clearer.** A Compose port published to `localhost` is refused up
   front with advice to write `127.0.0.1`. When services fail to start, the warning shows
   Compose's own error and exit status, and a failed filtered start shows that run's own output.
@@ -147,19 +230,36 @@
   is busy; its first start says it is building Coop's credential broker, not the MCP broker, when
   no MCP server is set, and a broker that fails to start includes Docker's reason. Agents in a
   filtered box, and the main agent of a run with peers or a preset, read which serve ports
-  reached the host and which services run with them.
-- **Consult, delegate and init are more reliable.** `coop-consult` with no timeout set retries or
-  falls back when a peer is killed, instead of reporting "no reply within 0s". `coop-delegate`
-  fails when every target of a role already failed for good, instead of exiting 0 with no work
-  done. `coop init` no longer corrupts a `project.yaml` whose subprojects list uses another
-  indent, and no longer adds a second `pgdata` or `redisdata` volume to a Compose file that has
-  one. The commit format gate it scaffolds checks renamed files and works in paths with a space.
-  New projects' AGENTS.md tells box agents to file discovered work with `tasks_propose`, and
-  `/sweep` reads the rules index and opens only the cards a task touches.
+  reached the host and which services run with them. A Compose volume that does not exist yet is
+  offered for creation even when Docker holds another volume whose name contains it, such as
+  `MyApp.cache` for `cache`.
+- **Consult and delegate are more reliable.** `coop-consult` with no timeout set retries or falls
+  back when a peer is killed, instead of reporting "no reply within 0s". `coop-delegate` fails
+  when every target of a role already failed for good, instead of exiting 0 with no work done.
+- **`coop init` scaffolds what fits the project.** It no longer corrupts a `project.yaml` whose
+  subprojects list uses another indent, and no longer adds a second `pgdata` or `redisdata`
+  volume to a Compose file that has one. It suggests the root Dockerfile and Compose file before
+  ones in a subfolder. The commit format gate it scaffolds checks renamed files and works in
+  paths with a space; its Rust check works in crates that take their edition from the workspace,
+  and its Terraform check uses `tofu` when `terraform` is not installed. New projects' AGENTS.md
+  tells box agents to file discovered work with `tasks_propose` and sends only genuinely large
+  work to the backlog, a close call to the queue, as the skills do. `/sweep` reads the rules
+  index and opens only the cards a task touches.
+- **Configuration files get plain errors.** A typo under `review:` in `project.yaml` names the
+  file's real line in plain words. A list or mapping in the wrong place in `project.yaml`,
+  `loop.yaml` or a preset is named as such instead of with a Go type name. `coop loop` names
+  `.agent/loop.yaml` when that file is a link or cannot be read. An empty `preset.yaml` says the
+  lead needs an agent, and a preset with two YAML documents is refused. A bad
+  `COOP_ALLOW_CASE_EXPOSED_SECRETS` value in `coop.conf` is refused with its file and line, like
+  other on/off settings. `COOP_EDITOR` and git's `core.editor` may quote an editor path that has
+  a space, and a context route written as `./portal/**` matches the files under `portal/`.
 - **Evals stop and explain cleanly.** Ctrl-C during `coop eval run` stops its trial boxes and
   loops, cleans up, and leaves the run marked unfinished. `coop eval run` and `coop eval init`
   name a missing target, preset or folder in plain words. `coop eval compare` counts each case's
-  trials the same way as each run's ("1 timed out; 1 pending").
+  trials the same way as each run's ("1 timed out; 1 pending"). Two `coop eval run` of one suite
+  started in the same second both run; the second gets a suffixed run id. The core starter's
+  no-collateral-damage case now fails a run that silences one of the project's checks instead
+  of fixing the code.
 - **The CLI shows names safely and completes more.** `coop build`, `coop check-secrets` and
   `coop context` escape control characters in paths and file names, so a name cannot redraw the
   report, and an invisible variation selector after punctuation is now shown, so a look-alike
@@ -175,7 +275,17 @@
   configuration reference explain how filtered boxes reach project services. `coop help up` and
   the box guide say that declining a first secret-file approval starts the services with the
   file hidden, and `coop help fork acp` says a session without a target starts the fork's saved
-  target.
+  target. `coop help` lists the services of any valid Compose file, whatever its indentation.
+  `coop help build` says it builds a tools image from `.tool-versions` in open or offline mode,
+  and `coop help setup apparmor` heads its example EXAMPLES like every other page. The docs name
+  `COOP_DELEGATE_TIMEOUT`, and `coop.conf` says to set it in `agents/env`. The upgrade guide
+  lists the 13.1.0 steps and the 13.0.0 and 12.0.0 breaking changes it was missing, each with
+  what to do. The accounts docs no longer call a pre-v11 profiles folder unused; Coop still
+  reads account names and sign-in markers from it. The docs and the pre-commit hook `coop init`
+  writes no longer say Gemini's commits run the format check. A docs link with a malformed
+  fragment no longer breaks the page's contents menu and search.
+- **Two `make check` runs in one checkout keep their own logs.** Each run writes to its own folder
+  and prints where its logs are.
 
 ## 13.2.1
 
