@@ -41,9 +41,43 @@ if [ -n "$trailer" ]; then
 	tmp="$f.coop.$$"
 	cp -p "$f" "$tmp" && { grep -viE '^Co-authored-by:.*(claude|chatgpt|codex|gemini|grok|coop|noreply@(anthropic|openai|google|x\.ai|coop))' "$f" > "$tmp"; [ $? -le 1 ]; } && mv "$tmp" "$f"
 	rm -f "$tmp"
-	git interpret-trailers --if-exists addIfDifferent --trailer "Co-authored-by: $trailer" --in-place "$f"
 fi
 task=$(git config coop.task 2>/dev/null || true)
+seed="Coop-Task: $task"
+if [ -n "$trailer" ]; then
+	seed="Co-authored-by: $trailer"
+fi
+if [ -n "$trailer$task" ]; then
+	# Git counts a last paragraph that mixes trailers with other lines — "(cherry picked from commit
+	# …)", or prose right above a Signed-off-by — as the trailer block and adds to it, and Coop's
+	# audit refuses a Coop-Task in such a paragraph. Start a new paragraph with the first trailer
+	# instead, so both parsers read the trailers below. Comments and a commit -v diff are not message.
+	tmp="$f.coop.$$"
+	cp -p "$f" "$tmp" && awk -v seed="$seed" '
+		{ line[NR] = $0 }
+		END {
+			cut = NR + 1
+			for (i = 1; i <= NR; i++) if (line[i] ~ /^# -+ >8 -+$/) { cut = i; break }
+			end = 0
+			for (i = cut - 1; i >= 1; i--) if (line[i] !~ /^#/ && line[i] !~ /^[ \t]*$/) { end = i; break }
+			mixed = 0
+			if (end > 0) {
+				start = end
+				while (start > 1 && line[start - 1] !~ /^[ \t]*$/) start--
+				trailers = 0
+				for (i = start; i <= end; i++) {
+					if (line[i] ~ /^#/) continue
+					if (line[i] ~ /^[ \t]/) { if (!trailers) mixed = 1; continue }
+					if (index(line[i], ":") == 0) mixed = 1; else trailers = 1
+				}
+			}
+			for (i = 1; i <= NR; i++) { print line[i]; if (mixed && i == end) { print ""; print seed } }
+		}' "$f" > "$tmp" && mv "$tmp" "$f"
+	rm -f "$tmp"
+fi
+if [ -n "$trailer" ]; then
+	git interpret-trailers --if-exists addIfDifferent --trailer "Co-authored-by: $trailer" --in-place "$f"
+fi
 if [ -n "$task" ]; then
 	git interpret-trailers --if-exists addIfDifferent --trailer "Coop-Task: $task" --in-place "$f"
 fi

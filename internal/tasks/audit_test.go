@@ -3918,6 +3918,23 @@ func TestAuditTaskTrailersUseFixedRawGrammar(t *testing.T) {
 			name: "prose in final paragraph", message: "subject\n\nnot a trailer\nCoop-Task: task-a",
 			values: []string{"task-a"}, invalid: true,
 		},
+		{
+			// What git interpret-trailers makes of a `cherry-pick -x` message; the box hook now
+			// starts a new paragraph instead (internal/box gitenv.go), and the grammar stays strict.
+			name:    "trailer added to a cherry-pick note",
+			message: "subject\n\nbody\n\n(cherry picked from commit " + strings.Repeat("a", 40) + ")\nCoop-Task: task-a",
+			values:  []string{"task-a"}, invalid: true,
+		},
+		{
+			name:    "own paragraph after a cherry-pick note",
+			message: "subject\n\nbody\n\n(cherry picked from commit " + strings.Repeat("a", 40) + ")\n\nCo-authored-by: coop <noreply@coop.dev>\nCoop-Task: task-a\n",
+			values:  []string{"task-a"},
+		},
+		{
+			name:    "own paragraph after prose and a sign-off",
+			message: "subject\n\nprose\nSigned-off-by: A <a@example.com>\n\nCoop-Task: task-a\n",
+			values:  []string{"task-a"},
+		},
 		{name: "empty", message: "subject\n\nCoop-Task:", invalid: true},
 		{
 			name: "duplicate", message: "subject\n\nCoop-Task: task-a\nCoop-Task: task-b",

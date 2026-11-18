@@ -364,3 +364,110 @@ func TestPrepareCommitMsgHookStampsAssignedTask(t *testing.T) {
 		t.Errorf("both trailers must land:\n%s", msg)
 	}
 }
+
+// `git cherry-pick -x` ends a message with "(cherry picked from commit …)", and prose can sit right
+// above a Signed-off-by. Git takes such a mixed last paragraph as the trailer block and would add
+// Coop-Task into it, where Coop's audit refuses the binding. The hook starts a new paragraph, so
+// git's own trailer parser and the audit's raw grammar (every line of the last paragraph a
+// trailer) both read exactly one Coop-Task.
+func TestPrepareCommitMsgHookKeepsTheBindingOutOfAMixedParagraph(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir, err := gitHookDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	repo := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "noglobal"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "nosystem"))
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = repo, env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q")
+	git("symbolic-ref", "HEAD", "refs/heads/main")
+	git("config", "user.name", "Box")
+	git("config", "user.email", "box@example.com")
+	write("base.txt", "base\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "base")
+	git("checkout", "-q", "-b", "side")
+	write("picked.txt", "picked\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "Unbound work\n\nIt came from another branch.")
+	picked := strings.TrimSpace(git("rev-parse", "HEAD"))
+	git("checkout", "-q", "main")
+	git("config", "core.hooksPath", dir)
+	const id = "2026-01-01-some-assigned-task"
+	git("config", "coop.task", id)
+	bound := func(how string) {
+		t.Helper()
+		msg := git("log", "-1", "--format=%B")
+		if got := strings.TrimSpace(git("log", "-1", "--format=%(trailers:key=Coop-Task,valueonly)")); got != id {
+			t.Errorf("%s: git reads Coop-Task %q, want %q:\n%s", how, got, id, msg)
+		}
+		paragraphs := strings.Split(strings.TrimSpace(msg), "\n\n")
+		for _, line := range strings.Split(paragraphs[len(paragraphs)-1], "\n") {
+			if !strings.Contains(line, ":") {
+				t.Errorf("%s: the last paragraph holds %q, which the audit's raw grammar refuses:\n%s", how, line, msg)
+			}
+		}
+		if n := strings.Count(msg, "Coop-Task: "+id); n != 1 {
+			t.Errorf("%s: %d Coop-Task lines, want 1:\n%s", how, n, msg)
+		}
+	}
+
+	git("cherry-pick", "-x", picked)
+	if msg := git("log", "-1", "--format=%B"); !strings.Contains(msg, "(cherry picked from commit "+picked+")") {
+		t.Fatalf("cherry-pick -x did not record its source:\n%s", msg)
+	}
+	bound("cherry-pick -x")
+
+	git("config", "coop.trailer", "coop (claude) <noreply@coop.dev>")
+	write("signed.txt", "signed\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "Signed work\n\nProse right above the sign-off.\nSigned-off-by: Box <box@example.com>")
+	bound("prose and Signed-off-by")
+	if msg := git("log", "-1", "--format=%B"); !strings.Contains(msg, "Co-authored-by: coop (claude)") {
+		t.Errorf("the co-author trailer did not land:\n%s", msg)
+	}
+	git("commit", "-q", "--amend", "--no-edit")
+	bound("amend")
+
+	// An editor's message carries comments and, under commit -v, a diff below the scissors line;
+	// neither is message, so the new paragraph goes right after the last message line.
+	edited := filepath.Join(t.TempDir(), "COMMIT_EDITMSG")
+	const scissors = "# ------------------------ >8 ------------------------\n"
+	if err := os.WriteFile(edited, []byte("Picked\n\n(cherry picked from commit "+picked+")\n\n# Please enter the commit message.\n"+
+		scissors+"# Do not modify or remove the line above.\ndiff --git a/x b/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hook := exec.Command("sh", filepath.Join(dir, "prepare-commit-msg"), edited)
+	hook.Dir, hook.Env = repo, env
+	if out, err := hook.CombinedOutput(); err != nil {
+		t.Fatalf("hook on an edited message: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Picked\n\n(cherry picked from commit " + picked + ")\n\nCo-authored-by: coop (claude) <noreply@coop.dev>\nCoop-Task: " + id + "\n\n# Please enter the commit message.\n" + scissors
+	if !strings.HasPrefix(string(data), want) || !strings.HasSuffix(string(data), "diff --git a/x b/x\n") {
+		t.Errorf("edited message =\n%s\nwant it to start\n%s", data, want)
+	}
+}
