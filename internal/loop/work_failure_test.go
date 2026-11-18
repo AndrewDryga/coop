@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -248,6 +249,75 @@ func TestCustomWorkerThatLeavesItsTaskInProgressStalls(t *testing.T) {
 	}
 	if records := readStageRecords(repo, c.runID); len(records) != maxStalls {
 		t.Fatalf("stage records = %d, want %d", len(records), maxStalls)
+	}
+}
+
+// Per-cycle signing covers only an attempt that succeeded. A custom command's failed attempt that
+// committed is left to the end-of-run sweep, which signs from where the run started, as it does for
+// a built-in agent's run.
+func TestCustomRunSignsAFailedAttemptsCommitAtTheEnd(t *testing.T) {
+	signals := make(chan os.Signal, 1) // start os/signal's receiver outside the virtual-time bubble
+	signal.Notify(signals, os.Interrupt)
+	signal.Stop(signals)
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+	const id = "add-hello"
+	repo, _ := customWorkerRepo(t, id)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	writeTaskFile(t, global, "[commit]\n\tgpgsign = true\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", global) // the host's signing preference, which WantsSigning reads
+	// A box's commit, made without the host's signing setting.
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = repo, append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	start := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	var bases []string
+	c := New(openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}), runtime.Runtime{Name: "true"}, "test",
+		Host{SignUnpushed: func(_, base string) (int, error) { bases = append(bases, base); return 0, nil }})
+	attempts := 0
+	c.boxRun = func(spec box.RunSpec) (int, error) {
+		attempts++
+		switch attempts {
+		case 1:
+			writeTaskFile(t, filepath.Join(repo, "draft.txt"), "draft\n")
+			git("add", "draft.txt")
+			git("commit", "-m", "Draft hello")
+			return 3, nil
+		case 2:
+			writeTaskFile(t, filepath.Join(repo, "hello.txt"), "hello\n")
+			git("add", "hello.txt")
+			git("commit", "-m", "Add hello.txt\n\nCoop-Task: "+id)
+			root := filepath.Join(repo, tasksRoot)
+			writeTaskFile(t, filepath.Join(root, stateInProgress, id, "task.md"), "# Add hello.txt\n- [x] Write it\n")
+			if err := os.MkdirAll(filepath.Join(root, stateDone), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(filepath.Join(root, stateInProgress, id), filepath.Join(root, stateDone, id)); err != nil {
+				t.Fatal(err)
+			}
+			return 0, nil
+		}
+		t.Fatalf("unexpected attempt %d", attempts)
+		return 0, nil
+	}
+	var code int
+	var runErr error
+	// Captured outside the bubble, which skips the retry wait: the capture's pipe reader would stop virtual time.
+	output := captureStderr(t, func() {
+		synctest.Test(t, func(t *testing.T) {
+			code, runErr = c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard,
+				Rotation: ladder.NewRotation([]agents.Target{{Provider: "claude"}})})
+		})
+	})
+	if code != 0 || runErr != nil || attempts != 2 {
+		t.Fatalf("run = (%d, %v) after %d attempts, want success after two\n%s", code, runErr, attempts, output)
+	}
+	if !slices.Contains(bases, start) {
+		t.Errorf("signing bases = %v, want the end-of-run sweep from the run's start %s, which covers the failed attempt's commit", bases, start)
 	}
 }
 

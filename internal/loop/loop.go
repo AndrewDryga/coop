@@ -2147,9 +2147,9 @@ reviewAgain:
 	// End-of-run signing sweep: normally a no-op, because per-cycle signing already covered each
 	// iteration and signing starts at the first unsigned commit, so the run's signed commits keep
 	// their IDs (pushed ones are never rewritten). It catches any straggler — a commit from a
-	// previously interrupted run, or a preflight commit — so the whole run's range is signed before
-	// you push. Best-effort.
-	if forkspace.WantsSigning() && len(custom) == 0 {
+	// previously interrupted run, a preflight commit, or one a failed attempt left — so the whole
+	// run's range is signed before you push. Best-effort.
+	if forkspace.WantsSigning() {
 		if signed, serr := c.host.signUnpushed(repo, loopStartHead); serr != nil {
 			printSigningFailure(0, serr)
 		} else if signed > 0 {
