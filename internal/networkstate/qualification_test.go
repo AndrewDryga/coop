@@ -328,6 +328,40 @@ func TestQualifiedClientsRejectInvalidOrRepeatedBuilds(t *testing.T) {
 	}
 }
 
+// Every setup adds a record and nothing removes one, so a host set up more than 256 times must
+// still list its newest proofs instead of failing every filtered launch.
+func TestQualificationsKeepTheNewestRecordsPastTheLimit(t *testing.T) {
+	smoke, _ := qualificationFixture(t)
+	newest, err := smoke.Complete(smokeDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < 300; i++ {
+		older := newest
+		older.CompletedAt = newest.CompletedAt.Add(-time.Duration(i) * time.Minute)
+		older.ID = qualificationID(older)
+		data, err := json.Marshal(older)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := smoke.store.publish("qualification-"+older.ID+".json", data, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := smoke.store.Qualifications(context.Background())
+	if err != nil {
+		t.Fatalf("300 setup records failed the listing: %v", err)
+	}
+	if len(records) != retainedQualifications || records[0].ID != newest.ID {
+		t.Fatalf("listing = %d records, newest %q; want %d, newest %q", len(records), records[0].ID, retainedQualifications, newest.ID)
+	}
+	for i := 1; i < len(records); i++ {
+		if records[i].CompletedAt.After(records[i-1].CompletedAt) {
+			t.Fatalf("record %d is newer than the one before it", i)
+		}
+	}
+}
+
 func TestQualificationsSkipARecordFromARetiredContract(t *testing.T) {
 	store := openStore(t)
 	stale := []byte(`{"version":2,"id":"` + strings.Repeat("a", 64) + `","contract":"visible-sni-tls443-v2","candidate":{},"clients":[],"smoke":{},"completed_at":"2026-09-09T00:00:00Z"}`)

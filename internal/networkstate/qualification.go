@@ -270,8 +270,14 @@ func (s *Store) Qualification(id string) (Qualification, error) {
 	return q, s.checkRootPath()
 }
 
-// Qualifications returns the host's completed records, newest first. It lists
-// the private directory and performs no probe, canary or runtime mutation.
+// retainedQualifications is how many records Qualifications returns. Every
+// setup adds one and nothing removes them, so a host set up again and again keeps
+// working on its newest proofs instead of failing every filtered launch.
+const retainedQualifications = 256
+
+// Qualifications returns the host's newest completed records, newest first, at
+// most retainedQualifications of them. It lists the private directory and
+// performs no probe, canary or runtime mutation.
 func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 	if err := s.intactAuthority(); err != nil {
 		return nil, err
@@ -314,13 +320,17 @@ func (s *Store) Qualifications(ctx context.Context) ([]Qualification, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(result) >= 256 {
-			return nil, errors.New("network qualification index exceeds its retained record limit")
-		}
 		result = append(result, q)
+		if len(result) > 2*retainedQualifications {
+			result = newestQualifications(result) // bounded memory however many records the folder holds
+		}
 	}
-	slices.SortFunc(result, func(a, b Qualification) int { return b.CompletedAt.Compare(a.CompletedAt) })
-	return result, nil
+	return newestQualifications(result), nil
+}
+
+func newestQualifications(records []Qualification) []Qualification {
+	slices.SortFunc(records, func(a, b Qualification) int { return b.CompletedAt.Compare(a.CompletedAt) })
+	return records[:min(len(records), retainedQualifications)]
 }
 
 // RequireLaunch is the per-host preflight match. The release's bundle metadata
