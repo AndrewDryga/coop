@@ -280,14 +280,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 	if err := a.writeMCPStub(); err != nil {
 		return 1, setupFailure(repo, err)
 	}
-	// Monorepo: detect member dirs (each with a .agent/), record them in the root .agent/project.yaml
-	// so coop aggregates their task queues, and give each member a project.yaml if it lacks one. A
-	// single repo still gets a project.yaml template. Never clobbers an existing file.
+	// Monorepo: Init already wrote the root .agent/project.yaml with the members it found (never
+	// clobbering one); give each member its task queue and register any the file lacks.
 	subs, err := scaffold.DetectSubprojects(repo)
 	if err != nil {
-		return 1, setupFailure(repo, err)
-	}
-	if _, err := scaffold.WriteProject(repo, subs); err != nil {
 		return 1, setupFailure(repo, err)
 	}
 	var registered, unregistered []string
