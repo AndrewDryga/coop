@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Coop is built with Go 1.27.4.** It fixes a published net/http server crash (GO-2026-6859) that
+  the session service and the credential brokers could reach. The network and filesystem helper
+  images build with it too, so filtered projects may ask for `coop net setup` once.
 - **A session's output schema can no longer read local files on the worker.** The worker used to
   follow a file reference in a controller's output schema, so a schema could make it read any
   file its user can and echo the values back in validation errors. Schemas now load nothing from

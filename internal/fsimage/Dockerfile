@@ -1,4 +1,4 @@
-FROM golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132 AS build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS build
 # Compiler and shared-library inputs are fixed by both version and archive date.
 # Nothing is installed on the host, and no project build context enters this image.
 RUN rm -f /etc/apt/sources.list.d/* \

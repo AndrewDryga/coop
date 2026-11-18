@@ -1,4 +1,4 @@
-FROM golang:1.27.3-bookworm@sha256:21ade014faf952365b9ecbd8dbdb87176fbacb82fac9fb132d9f2a7b8cc3f132 AS build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/coop-net ./cmd/coop-net
