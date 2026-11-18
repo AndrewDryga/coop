@@ -1119,3 +1119,14 @@ func canonicalTemp(t *testing.T) string {
 	}
 	return root
 }
+
+// A scripted provider's git commands read the layout's git config and never the host's system
+// config, as every other test-owned git command does (rule hermetic-git-tests).
+func TestProviderEnvironmentKeepsGitHermetic(t *testing.T) {
+	root := canonicalTemp(t)
+	env := environmentMap(providerEnvironment(root, "image", "trace", "scenario", map[string]string{"GIT_CONFIG_NOSYSTEM": "0"}))
+	if env["GIT_CONFIG_GLOBAL"] != filepath.Join(root, "state", "gitconfig") || env["GIT_CONFIG_NOSYSTEM"] != "1" {
+		t.Fatalf("provider git config = GLOBAL %q NOSYSTEM %q, want the layout's file and no system config",
+			env["GIT_CONFIG_GLOBAL"], env["GIT_CONFIG_NOSYSTEM"])
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -695,13 +696,18 @@ func hostCompleteLoopTask(root, taskID string) error {
 	if err := os.WriteFile(conf, nil, 0o600); err != nil {
 		return err
 	}
+	// The cache folder is the layout's (procharness.NewLayout), which on macOS is the home's.
+	cache := filepath.Join(root, "xdg", "cache")
+	if runtime.GOOS == "darwin" {
+		cache = filepath.Join(root, "home", "Library", "Caches")
+	}
 	cmd := exec.Command("coop", "tasks", "done", taskID)
 	cmd.Dir = repo
 	cmd.Env = []string{
 		"HOME=" + filepath.Join(root, "home"),
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + filepath.Join(root, "tmp"),
-		"XDG_CACHE_HOME=" + filepath.Join(root, "xdg", "cache"),
+		"XDG_CACHE_HOME=" + cache,
 		"XDG_CONFIG_HOME=" + filepath.Join(root, "xdg", "config"),
 		"XDG_STATE_HOME=" + filepath.Join(root, "xdg", "state"),
 		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "state", "gitconfig"),

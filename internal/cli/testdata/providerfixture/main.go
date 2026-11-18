@@ -1360,6 +1360,10 @@ func providerEnvironment(root, image, trace, scenarioPath string, values map[str
 	values["HOME"] = filepath.Join(root, "home")
 	values["PATH"] = os.Getenv("PATH")
 	values["TMPDIR"] = filepath.Join(root, "tmp")
+	// The provider's own git commands (a loop worker's commit) read the layout's git config, with
+	// its maintenance switched off, and never the host's system config (rule hermetic-git-tests).
+	values["GIT_CONFIG_GLOBAL"] = filepath.Join(root, "state", "gitconfig")
+	values["GIT_CONFIG_NOSYSTEM"] = "1"
 	values["COOP_PROVIDER_FIXTURE_ROOT"] = root
 	values["COOP_PROVIDER_FIXTURE_IMAGE"] = image
 	values["COOP_PROVIDER_FIXTURE_TRACE"] = trace
