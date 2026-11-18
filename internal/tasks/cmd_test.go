@@ -1118,6 +1118,32 @@ func TestCurrentTaskLooksUpOneTaskWithTheWholeReadsRefusals(t *testing.T) {
 	}
 }
 
+// FindTaskByID adds ReadTaskTreeBelow's check to CurrentTask: a folder between the workspace and
+// the queue that a box swapped for a link is refused, so the lookup cannot reach another project.
+func TestFindTaskByIDRefusesALinkAboveTheQueue(t *testing.T) {
+	top := t.TempDir()
+	root := filepath.Join(top, ".agent", "tasks")
+	writeTaskFile(t, filepath.Join(root, StateTodo, "2026-01-01-a", "task.md"), "# A\n")
+	before := taskTreeReads.Load()
+	if item, ok, err := FindTaskByID(top, root, "2026-01-01-a"); err != nil || !ok || item.Title != "A" {
+		t.Fatalf("FindTaskByID = %+v, %v, %v; want task A", item, ok, err)
+	}
+	if reads := taskTreeReads.Load() - before; reads != 0 {
+		t.Fatalf("FindTaskByID read the whole queue %d times", reads)
+	}
+	elsewhere := filepath.Join(t.TempDir(), ".agent")
+	writeTaskFile(t, filepath.Join(elsewhere, "tasks", StateTodo, "2026-01-01-a", "task.md"), "# Theirs\n")
+	if err := os.Rename(filepath.Join(top, ".agent"), filepath.Join(top, ".agent.kept")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(top, ".agent")); err != nil {
+		t.Fatal(err)
+	}
+	if item, ok, err := FindTaskByID(top, root, "2026-01-01-a"); err == nil || ok {
+		t.Fatalf("FindTaskByID through a linked .agent = %+v, %v, %v; want a refusal", item, ok, err)
+	}
+}
+
 func TestTasksFolderRemoveAllDone(t *testing.T) {
 	root := t.TempDir()
 	// two done tasks, one todo and one in_progress that must SURVIVE --all-done

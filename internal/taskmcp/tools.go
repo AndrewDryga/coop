@@ -446,21 +446,20 @@ type located struct {
 // locate finds a task by exact id across the queue roots. A slug fragment is not enough here: a
 // machine caller must never mutate a task it only partially named. Every tool that names a task
 // starts here, so each refuses a queue the box has pointed elsewhere by swapping a folder for a
-// link: the queue is checked from the workspace before it is read (tasks.ReadTaskTreeBelow).
+// link: the queue is checked from the workspace before it is read (tasks.FindTaskByID). Only the
+// named task's folders are opened, so a call costs the same with any number of archived tasks.
 func (s *Server) locate(id string) (located, *toolResult) {
 	if id == "" {
 		return located{}, refusal("id is required")
 	}
 	var hits []located
 	for _, root := range s.authority.QueueRoots {
-		items, err := tasks.ReadTaskTreeBelow(s.authority.Workspace, root)
+		item, ok, err := tasks.FindTaskByID(s.authority.Workspace, root, id)
 		if err != nil {
 			return located{}, refusal(fmt.Sprintf("read queue %s: %v", root, err))
 		}
-		for _, item := range items {
-			if item.ID == id {
-				hits = append(hits, located{root: root, item: item})
-			}
+		if ok {
+			hits = append(hits, located{root: root, item: item})
 		}
 	}
 	switch len(hits) {

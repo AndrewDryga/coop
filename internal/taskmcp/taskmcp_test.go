@@ -193,6 +193,38 @@ func newServer(t *testing.T, root, assigned string) *Server {
 	return s
 }
 
+// A tool that names a task opens only that task's folders, so a call costs the same with any
+// number of archived tasks. An id in two states or two queues is still refused.
+func TestToolsThatNameATaskReadOnlyThatTask(t *testing.T) {
+	ids := map[string]string{"mine": tasks.StateInProgress}
+	for i := range 20 {
+		ids[fmt.Sprintf("archived-%02d", i)] = tasks.StateDone
+	}
+	root := queue(t, ids)
+	sess := newSession(t, newServer(t, root, "mine"))
+	before := tasks.TaskTreeReads()
+	sess.mustCall("tasks_get", map[string]any{"id": "mine"})
+	sess.mustCall("tasks_append_log", map[string]any{"id": "mine", "entry": "## today — noted"})
+	sess.mustCall("tasks_update_state", map[string]any{"id": "mine", "status": "in progress"})
+	if reads := tasks.TaskTreeReads() - before; reads != 0 {
+		t.Fatalf("three tool calls on one task read the whole queue %d times", reads)
+	}
+
+	writeTask(t, filepath.Join(root, tasks.StateTodo, "archived-00"), "archived-00")
+	if text := sess.mustRefuse("tasks_get", map[string]any{"id": "archived-00"}); !strings.Contains(text, "multiple lifecycle states") {
+		t.Fatalf("an id in two states = %s", text)
+	}
+	second := queueIn(t, filepath.Dir(filepath.Dir(root)), filepath.Join("second", ".agent", "tasks"), map[string]string{"mine": tasks.StateTodo})
+	twoQueues, err := New(Authority{Workspace: filepath.Dir(filepath.Dir(root)), QueueRoots: []string{root, second},
+		Owner: tasks.TaskLeaseOwner{RunID: "test-run", PID: os.Getpid(), Provider: "test", Target: "test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := newSession(t, twoQueues).mustRefuse("tasks_get", map[string]any{"id": "mine"}); !strings.Contains(text, "exists in 2 queues") {
+		t.Fatalf("an id in two queues = %s", text)
+	}
+}
+
 func TestNewNeedsAQueueRoot(t *testing.T) {
 	if _, err := New(Authority{}); err == nil {
 		t.Fatal("an authority without queue roots must be refused")

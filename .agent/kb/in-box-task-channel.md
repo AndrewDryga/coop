@@ -167,7 +167,10 @@ parent and refuses one that is a link. Two kinds of use follow:
   `O_DIRECTORY|O_NONBLOCK` first and makes the root from that descriptor (`openSubrootNoWait`), since
   `os.Root.OpenRoot` waits on a FIFO a box swaps in after the folder was checked.
 
-The loop runs the same `ReadTaskTreeBelow` at startup, so a linked subproject stops it there. The
+The loop runs the same `ReadTaskTreeBelow` at startup, so a linked subproject stops it there.
+A tool that names one task finds it with `tasks.FindTaskByID`: the same folder check, then
+`CurrentTask`, which opens only `<root>/<state>/<id>` in each state and still refuses an id in two
+states; `locate` refuses an id found in two queues. The
 completion bulk note measures from the workspace with its own `openat(O_NOFOLLOW|O_NONBLOCK)` walk.
 
 Assigned completion also gets early host feedback: the loop supplies an immutable callback tied
@@ -239,6 +242,7 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-17 — tools that name a task look it up by id (`tasks.FindTaskByID`) instead of reading every queue whole on each call (audit FC-17).
 - 2026-11-17 — the descendant drain is the Go supervisor's procFS.drain, not image.go's removed live_jobs(); added loop/iteration.go and supervisor/main.go to sources (audit K2-4, K2-6; checked internal/box/supervisor/main.go).
 - 2026-11-17 — the tool count says nine (ten in a session) everywhere; it said eight in two places.
 - 2026-11-06 — a session a forced claim displaced gets the CLI's takeover message from every box task

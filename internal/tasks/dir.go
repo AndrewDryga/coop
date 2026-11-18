@@ -407,6 +407,21 @@ func ReadTaskTreeBelow(top, root string) ([]Item, error) {
 	return ReadTaskTree(root)
 }
 
+// FindTaskByID is CurrentTask for a queue inside top, with ReadTaskTreeBelow's check that every
+// folder from top down to root is a real folder. It opens only <root>/<state>/<id> in each state,
+// so a box tool that names one task does not read the whole archive, and it still refuses an id
+// found in two states.
+func FindTaskByID(top, root, id string) (Item, bool, error) {
+	if err := requireRealFolders(top, root); err != nil {
+		return Item{}, false, fmt.Errorf("refusing task queue %s: %w", root, err)
+	}
+	return CurrentTask(root, id)
+}
+
+// TaskTreeReads reports how many whole-queue reads this process has made, so a test in another
+// package can show that a lookup by id reads no whole queue.
+func TaskTreeReads() int64 { return taskTreeReads.Load() }
+
 // readStateEntries lists folder, a state folder opened as a real folder.
 func readStateEntries(folder *os.Root) ([]os.DirEntry, error) {
 	dir, err := folder.Open(".")
