@@ -194,7 +194,7 @@ restrictions but can't relax them on its own:
 
 ```yaml
 review:
-  compose: .agent/review-compose.yml  # services the check needs, such as a test database
+  compose: dev/review-compose.yml  # services the check needs, such as a test database
   env:
     DATABASE_URL: postgres://postgres:test@db:5432/app_test
 ```
