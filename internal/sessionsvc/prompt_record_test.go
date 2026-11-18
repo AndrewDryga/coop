@@ -133,3 +133,79 @@ func sentPromptTexts(t *testing.T, childLog string) []string {
 	}
 	return texts
 }
+
+// A schema repair resent the turn's images and resources, up to 8 MiB a round, into the native
+// session that already held them. The correction reloads that same session, so it now carries
+// only text, and its record lists only what it carried.
+func TestSchemaRepairSendsTheTurnImagesOnlyOnce(t *testing.T) {
+	fixture := newSessionACPFixture(t, "invalid-contract-once")
+	image := []byte("\x89PNG\r\n\x1a\nimage")
+	note := []byte("plain notes\n")
+	schema := json.RawMessage(`{"type":"object","properties":{"reply":{"type":"string"}},"required":["reply"],"additionalProperties":false}`)
+	leased := fixture.submitRequest(t, session.SubmitTurnRequest{
+		Prompt:         "inspect the screenshot",
+		OutputContract: &session.OutputContract{JSONSchema: schema, SHA256: sha256Hex(string(schema))},
+		Artifacts: []session.InputArtifact{
+			{Name: "bug.png", MediaType: "image/png", SHA256: sha256Hex(string(image)), Data: image},
+			{Name: "notes.txt", MediaType: "text/plain", SHA256: sha256Hex(string(note)), Data: note},
+		},
+	})
+	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
+		t.Fatal(err)
+	}
+	var sends [][]map[string]any
+	var loads int
+	for line := range strings.Lines(readFile(t, fixture.childLog)) {
+		var frame struct {
+			Method string `json:"method"`
+			Params struct {
+				Prompt []map[string]any `json:"prompt"`
+			} `json:"params"`
+		}
+		if json.Unmarshal([]byte(line), &frame) != nil {
+			continue
+		}
+		switch frame.Method {
+		case "session/prompt":
+			sends = append(sends, frame.Params.Prompt)
+		case "session/load":
+			loads++
+		}
+	}
+	kinds := func(prompt []map[string]any) []string {
+		var kinds []string
+		for _, block := range prompt {
+			kind, _ := block["type"].(string)
+			kinds = append(kinds, kind)
+		}
+		return kinds
+	}
+	if len(sends) != 2 || loads != 1 {
+		t.Fatalf("%d sends and %d session/load, want the first prompt and a correction in the reloaded session", len(sends), loads)
+	}
+	if got := strings.Join(kinds(sends[0]), ","); got != "text,image,text" {
+		t.Fatalf("first delivery blocks = %s, want the image and the text attachment note", got)
+	}
+	if got := strings.Join(kinds(sends[1]), ","); got != "text,text" {
+		t.Fatalf("correction blocks = %s, want text only, the attachment note kept", got)
+	}
+	records := promptSentRecords(t, fixture.store, fixture.session.ID)
+	if len(records) != 2 {
+		t.Fatalf("%d prompt records", len(records))
+	}
+	for index, want := range []string{"image,text", "text"} {
+		var record struct {
+			Blocks []promptRecordBlock `json:"blocks"`
+		}
+		if err := json.Unmarshal(records[index], &record); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, block := range record.Blocks {
+			got = append(got, block.Type)
+		}
+		if strings.Join(got, ",") != want {
+			t.Fatalf("record %d blocks = %v, want %s", index, got, want)
+		}
+	}
+}

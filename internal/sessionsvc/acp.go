@@ -2974,6 +2974,7 @@ func (r *sessionTurnRunner) runACP(
 		return waitResponse(method, id, expectedSession, false)
 	}
 
+	createdNative := false
 	if !process.initialized {
 		initializeResult, err := request("initialize", map[string]any{
 			"protocolVersion":    1,
@@ -3008,6 +3009,7 @@ func (r *sessionTurnRunner) runACP(
 		mcpServers := sessionACPMCPServerParam(process.mcpServers)
 		nativeID := bound.NativeSessionID
 		if nativeID == "" {
+			createdNative = true
 			result, err := request("session/new", map[string]any{"cwd": process.cwd, "mcpServers": mcpServers}, "")
 			if err != nil {
 				return "", nil, session.Usage{}, "", err
@@ -3054,7 +3056,22 @@ func (r *sessionTurnRunner) runACP(
 			return "", nil, session.Usage{}, "", acpFailure(session.CodeInternal, "prompt send intent checkpoint failed")
 		}
 	}
-	content, err := sessionACPInputContent(leased, process.imageCapable, process.embeddedContextCapable, process.outputRoot)
+	// Images and resources travel once per native session. A schema repair reloads the same native
+	// session (session/load of bound.NativeSessionID; a different id is refused above), and a
+	// semantic repair resumes the session the first delivery was bound to, so resending them
+	// spent up to 8 MiB a round on content the session already holds. A first delivery, or any
+	// send into a session created just now, still carries them. Text attachments are staged files
+	// named in the text, so their notes stay.
+	delivered := leased
+	if !checkpointSend && !createdNative {
+		delivered.Artifacts = nil
+		for _, artifact := range leased.Artifacts {
+			if isTextArtifact(artifact.MediaType) {
+				delivered.Artifacts = append(delivered.Artifacts, artifact)
+			}
+		}
+	}
+	content, err := sessionACPInputContent(delivered, process.imageCapable, process.embeddedContextCapable, process.outputRoot)
 	if err != nil {
 		return "", nil, session.Usage{}, "", err
 	}
@@ -3072,7 +3089,7 @@ func (r *sessionTurnRunner) runACP(
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	sendErr := writeRequest(id, "session/prompt", prompt)
-	r.recordPromptSent(ctx, bound.ID, leased, content, sendErr)
+	r.recordPromptSent(ctx, bound.ID, delivered, content, sendErr)
 	if sendErr != nil {
 		if ctx.Err() != nil {
 			// Cancellation can win after delivery but before Write reports success.
