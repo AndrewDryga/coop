@@ -44,15 +44,22 @@ func readForkChanges(repo, ref string) ([]gitdiff.Change, error) {
 // machine. A project file that does not load names none: the build or launch that reads it
 // refuses on its own.
 func configuredSurfaces(repo string) hostsurface.Configured {
-	var surfaces hostsurface.Configured
-	if p, err := project.Load(repo); err == nil {
-		surfaces.Dockerfiles = append(surfaces.Dockerfiles, p.Box.Dockerfile)
-		surfaces.Composes = append(surfaces.Composes, p.Box.Compose)
+	p, _ := project.Load(repo) // nil when invalid: such a file names no box inputs
+	review, _ := project.LoadReview(repo)
+	return ProjectInputs(p, review)
+}
+
+// ProjectInputs is the hostsurface.Configured one project.yaml names: box.dockerfile, box.compose
+// and review.compose. p is nil when the file did not load; its review stack, read on its own as a
+// review reads it, still counts. `coop check-secrets` shares it.
+func ProjectInputs(p *project.Project, review project.Review) hostsurface.Configured {
+	var c hostsurface.Configured
+	if p != nil {
+		c.Dockerfiles = append(c.Dockerfiles, p.Box.Dockerfile)
+		c.Composes = append(c.Composes, p.Box.Compose)
 	}
-	if review, err := project.LoadReview(repo); err == nil {
-		surfaces.Composes = append(surfaces.Composes, review.Compose)
-	}
-	return surfaces
+	c.Composes = append(c.Composes, review.Compose)
+	return c
 }
 
 // PolicyScan returns human-readable concerns about a fork's added/changed files:

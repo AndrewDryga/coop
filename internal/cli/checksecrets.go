@@ -13,9 +13,11 @@ import (
 	"syscall"
 
 	"github.com/AndrewDryga/coop/internal/box"
+	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
 	"github.com/AndrewDryga/coop/internal/networkstate"
+	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/scaffold"
 	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -630,7 +632,21 @@ func hostSurfacesChanged(repo string) []hostsurface.Finding {
 		}
 		changes = append(changes, gitdiff.Change{Status: code, Path: path})
 	}
-	return hostsurface.Findings(changes)
+	return committedProjectInputs(repo).Findings(changes)
+}
+
+// committedProjectInputs names the box inputs the committed project.yaml points Coop at, so an
+// edited Dockerfile or compose file outside .agent is listed too. It reads HEAD's copy, never the
+// working tree's: an edit there could point a setting away from the file it changes, and the
+// edited project.yaml is listed on its own.
+func committedProjectInputs(repo string) hostsurface.Configured {
+	data, err := gitOutputBytes(repo, "cat-file", "blob", "HEAD:"+project.File)
+	if err != nil {
+		return hostsurface.Configured{} // no commit or no committed project.yaml: nothing configured
+	}
+	p, _ := project.Parse(data) // nil when invalid: such a file names no box inputs
+	review, _ := project.ParseReview(data)
+	return forkctl.ProjectInputs(p, review)
 }
 
 // hostSurfacesToReview is hostSurfacesChanged without the files that hold exactly what Coop's own

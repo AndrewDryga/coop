@@ -3,7 +3,7 @@ name: host-execution-surfaces
 description: local execution classifications, fork protections and controller-authorized CI publication
 subsystem: hostsurface
 sources: [internal/hostsurface/hostsurface.go, internal/forkctl/merge.go, internal/forkctl/review.go, internal/forkctl/isolated_candidate.go, internal/cli/checksecrets.go, internal/sessionsvc/review_scan.go, internal/scaffold/stock.go]
-updated: 2026-11-16
+updated: 2026-11-17
 ---
 
 Shared-write boxes can plant metadata that native host tools execute even before a merge,
@@ -47,7 +47,9 @@ keep using `Classify` unchanged.
 
 The consumers:
 - `coop fork review` prints all findings; `coop fork merge` blocks on the automatic ones.
-- `coop check-secrets` reports the working tree's changed surfaces (staged, unstaged, untracked)
+- `coop check-secrets` reports the working tree's changed surfaces (staged, unstaged, untracked),
+  including the Dockerfile and compose files HEAD's project.yaml names (`forkctl.ProjectInputs`,
+  the reader fork review and merge use; never the working tree's copy, which is listed itself),
   under `Review files that run commands`, AFTER its verdict; it never changes the exit code, which
   stays the secret scan's. A file whose bytes (or link target) are exactly what this Coop's init
   writes at that path (`scaffold.Stock`: templates, the hook and gate for every language choice,
@@ -58,6 +60,9 @@ The consumers:
   candidate for controller-authorized publication.
 
 ## Changelog
+- 2026-11-17: check-secrets lists the box.dockerfile, box.compose and review.compose files that
+  HEAD's project.yaml names, through the reader forkctl uses. Launches read box settings only from
+  the repository root's project.yaml, so a subproject's own file names no box input.
 - 2026-11-16: `.grok/` is an automatic surface like the other three agents' folders. Coop
   scaffolds it and the Grok client loads its skills, MCP, LSP and hooks from it, but the classifier
   predated Grok and a fork's change there was neither listed nor a merge blocker (2026-11-10 audit,

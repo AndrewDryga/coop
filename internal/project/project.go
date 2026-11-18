@@ -186,6 +186,11 @@ func LoadReview(repo string) (Review, error) {
 	if err != nil || data == nil {
 		return Review{}, err
 	}
+	return ParseReview(data)
+}
+
+// ParseReview is LoadReview for one exact project.yaml byte sequence, such as a committed copy.
+func ParseReview(data []byte) (Review, error) {
 	var doc struct {
 		Review yaml.Node `yaml:"review"`
 	}
@@ -208,6 +213,7 @@ func LoadReview(repo string) (Review, error) {
 			return Review{}, fmt.Errorf("%s: %w", File, yamltext.Plain(err))
 		}
 	}
+	var err error
 	if review.Compose, err = projectRelPath("review.compose", review.Compose); err != nil {
 		return Review{}, err
 	}

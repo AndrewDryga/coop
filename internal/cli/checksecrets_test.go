@@ -468,6 +468,50 @@ func TestCheckSecretsReportsHostSurfaceChanges(t *testing.T) {
 	}
 }
 
+// The Dockerfile and compose files the committed project.yaml names run on your machine wherever
+// they live, so an edit to one is listed. The working tree's project.yaml decides nothing: an
+// edit there that points a setting elsewhere neither hides the configured file nor adds a path.
+func TestCheckSecretsListsTheConfiguredBoxInputs(t *testing.T) {
+	pinGitConfig(t)
+	repo, git := gitrepo.New(t)
+	mk := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(".agent/project.yaml", "box:\n  dockerfile: docker/agent.Dockerfile\n  compose: deploy/services.yml\nreview:\n  compose: deploy/review.yml\n")
+	for _, rel := range []string{"docker/agent.Dockerfile", "deploy/services.yml", "deploy/review.yml", "docker/other.Dockerfile"} {
+		mk(rel, "# base\n")
+	}
+	git("add", ".")
+	git("commit", "-qm", "base")
+	for _, rel := range []string{"docker/agent.Dockerfile", "deploy/services.yml", "deploy/review.yml", "docker/other.Dockerfile"} {
+		mk(rel, "# changed\n")
+	}
+	mk(".agent/project.yaml", "box:\n  dockerfile: docker/other.Dockerfile\n")
+	got := map[string]string{}
+	for _, finding := range hostSurfacesChanged(repo) {
+		got[finding.Path] = finding.Reason
+	}
+	want := []string{".agent/project.yaml", "deploy/review.yml", "deploy/services.yml", "docker/agent.Dockerfile"}
+	if len(got) != len(want) {
+		t.Fatalf("host surfaces = %v, want exactly %q", got, want)
+	}
+	for _, path := range want {
+		if got[path] == "" {
+			t.Errorf("host surfaces = %v, missing %s", got, path)
+		}
+	}
+	if !strings.Contains(got["docker/agent.Dockerfile"], "build") || !strings.Contains(got["deploy/services.yml"], "containers") {
+		t.Errorf("configured inputs carry the wrong reasons: %v", got)
+	}
+}
+
 // The marker Coop writes when a project's network access is approved is no blind spot, but any
 // other content or file at that name still is: only the exact format is left out of the warning.
 func TestApprovalMarkerIsNotAnUncheckedFile(t *testing.T) {
