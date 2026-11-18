@@ -276,13 +276,6 @@ func serveRuntime(root, image, trace, scenarioPath string, args []string) error 
 		return nil
 	case "task-channel":
 		return serveTaskChannelHelper()
-	case "labels":
-		labels, err := runtimeContainerLabels(root, parsed.IDs[0])
-		if err != nil {
-			return err
-		}
-		fmt.Println(labels)
-		return nil
 	case "ps":
 		ids, err := matchingRuntimeContainers(root, parsed.Filters)
 		if err != nil {
@@ -464,11 +457,6 @@ func parseRuntimeForProvider(root, image string, args []string, provider string,
 	}
 	if len(args) == 3 && args[0] == "image" && args[1] == "inspect" && args[2] == image {
 		return runtimeCommand{Kind: "inspect"}, nil
-	}
-	// A read of one container's labels gets the same `inspect --format` answer docker gives, rather
-	// than a rejection. No coop code sends this read today.
-	if len(args) == 4 && args[0] == "inspect" && args[1] == "--format" && args[2] == containerLabelsFormat {
-		return runtimeCommand{Kind: "labels", IDs: []string{args[3]}}, nil
 	}
 	// The orphan-NETWORK sweep lists compose networks by label before any box work (box.
 	// ReapOrphanNetworks). The fixture has no networks, so it answers with none — which is also
