@@ -42,7 +42,7 @@ const (
 	// last runtime call of a stopping loop's teardown. The test that creates one owns removing it.
 	hostSetupHoldFile  = "runtime-setup-hold"
 	teardownHoldFile   = "runtime-teardown-hold"
-	hostSetupHoldLimit = 30 * time.Second
+	hostSetupHoldLimit = 60 * time.Second // as long as the tests wait for steps they run during the hold
 )
 
 type runtimeCommand struct {
