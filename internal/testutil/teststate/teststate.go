@@ -231,17 +231,43 @@ func nestsWithTemp(home string) bool {
 var toolFolderEnvs = map[string]bool{"GOENV": true, "GOCACHE": true, "GOPATH": true}
 
 // toolFolders are the folders the go command uses by default, worked out before Isolate moves HOME
-// and XDG_CONFIG_HOME, as the go command works them out.
+// and XDG_CONFIG_HOME, as the go command works them out. A folder the developer's go env file sets
+// (`go env -w`) is left out: GOENV keeps pointing at that file, and an exported default would
+// outrank it.
 func toolFolders() map[string]string {
 	folders := map[string]string{}
+	envFile := os.Getenv("GOENV")
 	if dir, err := os.UserConfigDir(); err == nil {
 		folders["GOENV"] = filepath.Join(dir, "go", "env")
+		if envFile == "" {
+			envFile = folders["GOENV"]
+		}
 	}
-	if dir, err := os.UserCacheDir(); err == nil {
+	written := goEnvFileKeys(envFile)
+	if dir, err := os.UserCacheDir(); err == nil && !written["GOCACHE"] {
 		folders["GOCACHE"] = filepath.Join(dir, "go-build")
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := os.UserHomeDir(); err == nil && !written["GOPATH"] {
 		folders["GOPATH"] = filepath.Join(home, "go")
 	}
 	return folders
+}
+
+// goEnvFileKeys lists the settings a go env file holds, one KEY=value per line as `go env -w`
+// writes them. A file that cannot be read holds none.
+func goEnvFileKeys(path string) map[string]bool {
+	keys := map[string]bool{}
+	if path == "" || path == "off" {
+		return keys
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return keys
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if key, _, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			keys[strings.TrimSpace(key)] = true
+		}
+	}
+	return keys
 }

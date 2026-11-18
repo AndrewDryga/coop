@@ -109,6 +109,23 @@ func TestIsolateMakesOneFolderAndRemovesIt(t *testing.T) {
 	}
 }
 
+// A folder the developer set with `go env -w` stays theirs: Isolate exports no default for it,
+// which would outrank the go env file.
+func TestToolFoldersLeaveGoEnvSettingsToTheFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "env")
+	if err := os.WriteFile(file, []byte("GOCACHE=/elsewhere/go-build\nGOPROXY=direct\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOENV", file)
+	tools := toolFolders()
+	if _, ok := tools["GOCACHE"]; ok {
+		t.Errorf("GOCACHE = %q; the go env file sets it, so Isolate must leave it to the file", tools["GOCACHE"])
+	}
+	if tools["GOPATH"] == "" {
+		t.Error("GOPATH is missing though the go env file does not set it")
+	}
+}
+
 // An inherited XDG folder is replaced wherever it points, the developer's own (remembered for the
 // live suites) as much as a temporary one. Only a child the live harness marked keeps the folders
 // the harness chose, the host's network state included. Only names are compared: nothing here
