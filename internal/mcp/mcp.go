@@ -1100,9 +1100,31 @@ func validateServers(servers map[string]server) error {
 			if s.BearerTokenEnvVar != "" && strings.EqualFold(header, "Authorization") {
 				return fmt.Errorf("MCP server %q declares both %q and bearer_token_env_var; choose one Authorization source", name, header)
 			}
+			if err := scalarValue(name, "header", header, s.Headers[header]); err != nil {
+				return err
+			}
+		}
+		for _, key := range sortedKeys(s.Env) {
+			if err := scalarValue(name, "env", key, s.Env[key]); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// scalarValue refuses a header or env value that is not a string, number or boolean. Rendered as
+// text, null becomes "<nil>" and an object or list becomes Go syntax, which the server receives
+// as the credential or setting and fails on far from the cause.
+func scalarValue(server, kind, key string, value any) error {
+	switch value.(type) {
+	case string, float64, bool:
+		return nil
+	case nil:
+		return fmt.Errorf("MCP server %q %s %q is null; give it a string value or remove it", server, kind, key)
+	default:
+		return fmt.Errorf("MCP server %q %s %q is an object or a list; give it a string value", server, kind, key)
+	}
 }
 
 // readJSONObject reads a JSON object from path. A missing or empty file (or "") yields an empty

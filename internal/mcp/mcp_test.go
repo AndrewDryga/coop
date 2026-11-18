@@ -388,6 +388,18 @@ func TestGenerateCodexRejectsInvalidNativeConfigEntries(t *testing.T) {
 	})
 }
 
+// Strings, numbers and booleans are plain values every client renders as text; only null, objects
+// and lists are refused.
+func TestMCPScalarHeaderAndEnvValuesAreAccepted(t *testing.T) {
+	path := writeTmp(t, "mcp.json", `{"mcpServers":{
+		"remote":{"url":"https://example.test/mcp","headers":{"X-Api-Key":"one","X-Port":8080,"X-Debug":true}},
+		"local":{"command":"true","env":{"TOKEN":"one","PORT":8080,"DEBUG":false}}
+	}}`)
+	if _, _, err := ReadValidatedSnapshot(path); err != nil {
+		t.Fatalf("scalar values refused: %v", err)
+	}
+}
+
 // A numeric MCP env value (JSON numbers decode to float64) must render as plain digits, never
 // scientific notation — "8080", not "8.08e+03"; a big value not "1.23e+19".
 func TestGenerateCodexNumericEnvNoScientificNotation(t *testing.T) {
@@ -911,6 +923,26 @@ func TestMCPConsumersRejectAmbiguousAuthorization(t *testing.T) {
 			name: "noncanonical root alias",
 			src:  `{"MCPServers":{"auth":{"command":"true"}}}`,
 			want: []string{`MCP root key "MCPServers"`, `canonical spelling "mcpServers"`},
+		},
+		{
+			name: "null header value",
+			src:  `{"mcpServers":{"nul":{"url":"https://example.test/mcp","headers":{"X-Api-Key":null}}}}`,
+			want: []string{`MCP server "nul" header "X-Api-Key" is null`},
+		},
+		{
+			name: "object header value",
+			src:  `{"mcpServers":{"obj":{"url":"https://example.test/mcp","headers":{"X-Api-Key":{"value":"one"}}}}}`,
+			want: []string{`MCP server "obj" header "X-Api-Key" is an object or a list`},
+		},
+		{
+			name: "list env value",
+			src:  `{"mcpServers":{"lst":{"command":"true","env":{"TOKEN":["one"]}}}}`,
+			want: []string{`MCP server "lst" env "TOKEN" is an object or a list`},
+		},
+		{
+			name: "null env value",
+			src:  `{"mcpServers":{"nul":{"command":"true","env":{"TOKEN":null}}}}`,
+			want: []string{`MCP server "nul" env "TOKEN" is null`},
 		},
 		{
 			name: "invalid UTF-8",
