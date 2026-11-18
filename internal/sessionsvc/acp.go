@@ -3089,7 +3089,7 @@ func (r *sessionTurnRunner) runACP(
 	prompt := map[string]any{"sessionId": nativeID, "prompt": content}
 	id := next()
 	sendErr := writeRequest(id, "session/prompt", prompt)
-	r.recordPromptSent(ctx, bound.ID, delivered, content, sendErr)
+	r.recordPromptSent(ctx, bound, delivered, content, sendErr)
 	if sendErr != nil {
 		if ctx.Err() != nil {
 			// Cancellation can win after delivery but before Write reports success.

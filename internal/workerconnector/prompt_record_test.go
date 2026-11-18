@@ -2,6 +2,8 @@ package workerconnector
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -56,6 +58,27 @@ func TestPromptRecordCrossesExactlyOrWithheldWithItsDigest(t *testing.T) {
 	encoded, _ = json.Marshal(record)
 	if _, ok := publicActivityPayload("prompt.sent", encoded); ok {
 		t.Fatal("a record whose text does not match its digest crossed")
+	}
+}
+
+// The daemon's real prompt record (sessionsvc/testdata/prompt_sent.json, which the daemon's own
+// test pins) carries the checkout root, so Coop's text that names it is withheld and the root
+// never crosses.
+func TestDaemonPromptRecordWithholdsTextNamingTheCheckoutRoot(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "sessionsvc", "testdata", "prompt_sent.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := decodeNarration(t, "prompt.sent", string(raw))
+	parts, _ := value["parts"].([]any)
+	if len(parts) != 2 {
+		t.Fatalf("parts = %v", value["parts"])
+	}
+	if part := parts[1].(map[string]any); part["kind"] != "withheld" || part["reason"] != "names the checkout root" || part["text"] != nil {
+		t.Fatalf("text naming the checkout root crossed: %v", part)
+	}
+	if strings.Contains(publicJSON(t, value), "/home/dev") {
+		t.Fatalf("the checkout root crossed: %s", publicJSON(t, value))
 	}
 }
 

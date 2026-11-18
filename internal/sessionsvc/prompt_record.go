@@ -47,7 +47,7 @@ type promptRecordBlock struct {
 // custody: a record that cannot be written leaves the turn running.
 func (r *sessionTurnRunner) recordPromptSent(
 	ctx context.Context,
-	sessionID string,
+	bound session.Session,
 	leased session.Turn,
 	content []map[string]any,
 	sendErr error,
@@ -55,14 +55,14 @@ func (r *sessionTurnRunner) recordPromptSent(
 	if r.store == nil || len(content) == 0 {
 		return
 	}
-	payload, err := promptRecordPayload(content, leased, sendErr, ctx.Err() != nil)
+	payload, err := promptRecordPayload(content, leased, bound.Workspace, sendErr, ctx.Err() != nil)
 	if err != nil || len(payload) > session.MaxEventPayloadBytes {
 		return
 	}
 	appendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionACPCleanupTimeout)
 	defer cancel()
 	_, _ = r.store.AppendEvent(appendCtx, session.AppendEventRequest{
-		SessionID: sessionID,
+		SessionID: bound.ID,
 		TurnID:    leased.ID,
 		Type:      session.EventPromptSent,
 		Version:   1,
@@ -71,10 +71,13 @@ func (r *sessionTurnRunner) recordPromptSent(
 }
 
 // A write that failed after cancellation may still have reached the adapter,
-// so it is uncertain rather than failed.
+// so it is uncertain rather than failed. The checkout root rides along like on
+// narrated activity: the worker withholds a text part that names it and never
+// copies the root out (workerconnector/prompt_record.go).
 func promptRecordPayload(
 	content []map[string]any,
 	leased session.Turn,
+	checkoutRoot string,
 	sendErr error,
 	cancelled bool,
 ) ([]byte, error) {
@@ -87,14 +90,18 @@ func promptRecordPayload(
 		state = "failed"
 	}
 	text, _ := content[0]["text"].(string)
-	return json.Marshal(map[string]any{
+	payload := map[string]any{
 		"version":     promptRecordVersion,
 		"state":       state,
 		"text_sha256": sha256Hex(text),
 		"text_bytes":  len(text),
 		"parts":       promptRecordParts(text, leased.Prompt, leased.OutputContract),
 		"blocks":      promptRecordBlocks(leased.Artifacts, content),
-	})
+	}
+	if checkoutRoot != "" {
+		payload["checkout_root"] = checkoutRoot
+	}
+	return json.Marshal(payload)
 }
 
 // promptRecordParts splits the text into the caller's prompt where it opens

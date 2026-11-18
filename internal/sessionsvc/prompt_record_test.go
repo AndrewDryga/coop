@@ -3,6 +3,8 @@ package sessionsvc
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,6 +29,12 @@ func TestEverySentPromptIsRecordedSoTheCallerCanRebuildItExactly(t *testing.T) {
 		t.Fatalf("%d records for %d sends, want one for the first prompt and one for the correction", len(records), len(wire))
 	}
 	for index, payload := range records {
+		var carried struct {
+			CheckoutRoot string `json:"checkout_root"`
+		}
+		if json.Unmarshal(payload, &carried) != nil || carried.CheckoutRoot != fixture.session.Workspace {
+			t.Fatalf("send %d record lost the worker's checkout root: %s", index+1, payload)
+		}
 		rebuilt, record := rebuildSentPrompt(t, payload, leased.Prompt, leased.OutputContract.JSONSchema)
 		if rebuilt != wire[index] {
 			t.Fatalf("send %d rebuilt as\n%q\nwant the text sent\n%q", index+1, rebuilt, wire[index])
@@ -61,6 +69,27 @@ func TestPromptRecordKeepsAnUnexpectedlyLargeTextByDigestOnly(t *testing.T) {
 	if len(parts) != 1 || parts[0].Kind != "omitted" || parts[0].Text != "" ||
 		parts[0].SHA256 != sha256Hex(text) || parts[0].Bytes != len(text) {
 		t.Fatalf("parts = %+v", parts)
+	}
+}
+
+// The worker withholds a prompt text part that names the host checkout, but it learns the root
+// only from the event: prompt.sent once carried none, so that guard never fired. The record now
+// carries it like narrated activity does. testdata/prompt_sent.json pins this output; the worker's
+// own test reads the same file (workerconnector/prompt_record_test.go).
+func TestPromptRecordCarriesTheCheckoutRootForTheWorker(t *testing.T) {
+	const root = "/home/dev/shop"
+	leased := session.Turn{Prompt: "Fix the build"}
+	text := leased.Prompt + "\n\n<coop-output>Save only final generated images in " + root + "/.coop-output/turn-1.</coop-output>"
+	payload, err := promptRecordPayload([]map[string]any{{"type": "text", "text": text}}, leased, root, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "prompt_sent.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(payload) + "\n"; got != string(want) {
+		t.Fatalf("the daemon's prompt record changed; update testdata/prompt_sent.json and run the worker's test against it:\n%s", got)
 	}
 }
 

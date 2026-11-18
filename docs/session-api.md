@@ -960,9 +960,9 @@ to continue from that point.
 
 Events stored privately for the worker's owner include the identity, sequence, turn ID, type,
 version, timestamp and payload. Tool evidence has size limits but may include filesystem paths,
-arguments, results and diffs. Events describing tool starts and finishes, thoughts, progress, plans
-and permission decisions also carry `checkout_root`. The connector reads it to remove the checkout
-path before forwarding the event.
+arguments, results and diffs. Events describing tool starts and finishes, thoughts, progress, plans,
+permission decisions and sent prompts also carry `checkout_root`. The connector reads it to remove
+the checkout path before forwarding the event.
 
 The connector forwards a filtered version of activity events to the controller. It includes tool
 titles, inputs and results, plus the model's thoughts, progress and plan, with the session's host
@@ -1104,8 +1104,8 @@ and `bytes`, while the text co:op wrote around them is a `text` part, or `omitte
 large. `blocks` lists the attached images and resources by `type`, `name`, `media_type`, `sha256`
 and `bytes`. Rebuild the text from your own prompt and compare digests to prove what the model got.
 
-The connector forwards `prompt.sent` too. It sends a `text` part that looks like a secret or is too
-large as `withheld`, with a `reason`. It leaves out `last_kind` from `provider.alive`, `option_id`
+The connector forwards `prompt.sent` too, without `checkout_root`. It sends a `text` part that
+looks like a secret, names the checkout path or is too large as `withheld`, with a `reason`. It leaves out `last_kind` from `provider.alive`, `option_id`
 from `permission.decided` and `reason` from `activity.elided`, which only the worker's own events
 route carries.
 
