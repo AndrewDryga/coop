@@ -310,8 +310,9 @@ fi`,
 // neutralNote is the body of a gate when no stack is detected: intentionally inert, with
 // commented examples, so coop never imposes checks a repo doesn't use.
 const neutralNote = `# No language was auto-detected, so this gate is intentionally empty — coop won't impose
-# checks your repo doesn't use. Add fast checks below (re-run 'coop init' after adding a
-# go.mod / *.tf / mix.exs / Cargo.toml, or a .tool-versions, to get them generated):
+# checks your repo doesn't use. Add fast checks below, or, after adding a go.mod / *.tf /
+# mix.exs / Cargo.toml or a .tool-versions, delete this file and re-run 'coop init' to get
+# them generated (it never replaces a gate that exists):
 #   go_files=$(echo "$staged" | grep '\.go$');  [ -n "$go_files" ] && gofmt -l $go_files
 #   tf_files=$(echo "$staged" | grep '\.tf$');  [ -n "$tf_files" ] && terraform fmt -check $tf_files
 : "${staged:-}"  # no checks yet — reference $staged so the empty gate stays shellcheck-clean`

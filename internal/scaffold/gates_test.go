@@ -83,6 +83,10 @@ func TestGateGeneration(t *testing.T) {
 	if !strings.Contains(neutral, "intentionally empty") || !strings.HasSuffix(strings.TrimSpace(neutral), "exit 0") {
 		t.Errorf("neutral gate should be documented-but-inert and end in exit 0:\n%s", neutral)
 	}
+	// Init never replaces an existing gate, so the advice must say to remove this one first.
+	if !strings.Contains(neutral, "delete this file and re-run 'coop init'") {
+		t.Errorf("neutral gate should say to delete it before re-running coop init:\n%s", neutral)
+	}
 	// The exit code is parameterized; an unknown lang yields no block.
 	if !strings.Contains(gateSnippet("go", "1"), "exit 1") || !strings.Contains(gateSnippet("go", "2"), "exit 2") {
 		t.Error("gateSnippet should carry the requested exit code")
