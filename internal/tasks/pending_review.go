@@ -779,7 +779,7 @@ func dropDepartedPendingReview(root string, expected PendingReviewRecord) error 
 // reopen or a completion that lands first keeps its record.
 func retireDepartedPendingReview(root string, expected PendingReviewRecord) (task Item, err error) {
 	id := expected.Task.Ref.ID
-	authority, err := lockLeaseAuthority(root, id, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	authority, err := lockLeaseAuthorityExclusive(root, id, true)
 	if err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return Item{}, fmt.Errorf("task %s is %w; run `coop loop` again once it is free", id, ErrTaskLeased)
@@ -1288,7 +1288,7 @@ func returnChangedToSignoff(repo, head string, roots map[string]string, subjects
 // completion applies, and the authority moves to it without spending its generation. It returns the
 // authority it replaced, because that rework also replayed commits other reopened tasks record.
 func recoverInterruptedRework(repo, root, id string) (replaced *AuditReopenRecord, err error) {
-	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	authority, err := lockLeaseAuthorityExclusive(root, id, false)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 		return nil, nil // no authority file, or a controller holds the task and checks it before working it
 	}
@@ -1373,7 +1373,7 @@ func CarryReopenedReviewsAfterSigning(repo, oldHead string) error {
 }
 
 func carryAuditReopen(repo, root, id, oldHead string, rework map[AuditReopenCommit]AuditReopenCommit) (err error) {
-	authority, err := lockLeaseAuthority(root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+	authority, err := lockLeaseAuthorityExclusive(root, id, false)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 		return nil // no authority to carry, or a controller holds the task and checks it before working it
 	}
@@ -1480,7 +1480,7 @@ func EnrollExistingPendingReviews(repo string, hosts, ids []string, plan Pending
 		// An archived task may never have created a task-authority inode. Creating the empty lock
 		// here grants no completion authority; it only lets the import inspect and clearly reject a
 		// missing receipt under the same serialized boundary.
-		authority, err := lockLeaseAuthority(task.Root, id, true, syscall.LOCK_EX|syscall.LOCK_NB)
+		authority, err := lockLeaseAuthorityExclusive(task.Root, id, true)
 		if err != nil {
 			return err
 		}
@@ -1564,7 +1564,7 @@ func updatePendingReviewRecords(hosts, ids []string, update func(*PendingReviewR
 		if err != nil {
 			return err
 		}
-		authority, err := lockLeaseAuthority(task.Root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+		authority, err := lockLeaseAuthorityExclusive(task.Root, id, false)
 		if err != nil {
 			return fmt.Errorf("lock pending-review task %s: %w", id, err)
 		}
@@ -1595,7 +1595,7 @@ func updateExpectedPendingReviewRecords(hosts []string, expected []PendingReview
 		if err != nil {
 			return err
 		}
-		authority, err := lockLeaseAuthority(task.Root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+		authority, err := lockLeaseAuthorityExclusive(task.Root, id, false)
 		if err != nil {
 			return fmt.Errorf("lock pending-review task %s: %w", id, err)
 		}
@@ -1755,7 +1755,7 @@ func ClearPendingReviews(hosts []string, expected []PendingReviewRecord) error {
 		if err != nil {
 			return err
 		}
-		authority, err := lockLeaseAuthority(task.Root, id, false, syscall.LOCK_EX|syscall.LOCK_NB)
+		authority, err := lockLeaseAuthorityExclusive(task.Root, id, false)
 		if err != nil {
 			return err
 		}

@@ -309,6 +309,27 @@ func lockLeaseAuthority(root, id string, create bool, how int) (*os.File, error)
 	})
 }
 
+// leaseProbeGrace bounds how long lockLeaseAuthorityExclusive retries a busy lock. A board refresh
+// (observeLeaseAt) or a receipt read holds the lock shared for well under a millisecond.
+const leaseProbeGrace = 50 * time.Millisecond
+
+// lockLeaseAuthorityExclusive takes task id's authority lock exclusively without waiting on a
+// real lease. A bare LOCK_EX|LOCK_NB also fails while an observer's shared probe holds the lock for
+// an instant, which would report a lease nobody holds, so a busy lock is retried for
+// leaseProbeGrace before the caller sees EWOULDBLOCK. A real lease is held far longer and still
+// refuses.
+func lockLeaseAuthorityExclusive(root, id string, create bool) (*os.File, error) {
+	deadline := time.Now().Add(leaseProbeGrace)
+	for {
+		file, err := lockLeaseAuthority(root, id, create, syscall.LOCK_EX|syscall.LOCK_NB)
+		busy := errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN)
+		if !busy || time.Now().After(deadline) {
+			return file, err
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func lockLeaseAuthorityForAudit(root, id string, create bool, label string, owned func() bool) (*os.File, error) {
 	return lockLeaseAuthorityWith(root, id, create, func(file *os.File) error {
 		return lockExclusiveForCompletionAudit(file, label, owned)

@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1080,6 +1081,52 @@ func TestLeaseAuthorityConcurrentFreshOpensConverge(t *testing.T) {
 	}
 	if !pathExists(dir) {
 		t.Fatalf("concurrent opens did not create %s", dir)
+	}
+}
+
+// A board refresh holds the lease lock shared for an instant. A session claim or a pending-review
+// step that meets that probe still takes the lock; only a real lease refuses, and promptly.
+func TestAnObserverProbeDoesNotLookLikeALeaseToAnExclusiveLocker(t *testing.T) {
+	root := t.TempDir()
+	probeFor := func(id string) {
+		t.Helper()
+		probe, err := lockLeaseAuthority(root, id, true, syscall.LOCK_SH|syscall.LOCK_NB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() { time.Sleep(5 * time.Millisecond); _ = unlockLeaseFile(probe) }()
+	}
+
+	claimed := taskForLease(t, root, StateTodo, "claimed")
+	probeFor(claimed.ID)
+	if _, err := ClaimSessionTask(root, claimed, selfActor(t, "claude")); err != nil {
+		t.Fatalf("session claim during a board probe = %v, want it claimed", err)
+	}
+	reviewed := taskForLease(t, root, StateDone, "reviewed")
+	probeFor(reviewed.ID)
+	authority, err := lockLeaseAuthorityExclusive(root, reviewed.ID, false)
+	if err != nil {
+		t.Fatalf("pending-review lock during a board probe = %v, want it held", err)
+	}
+	if err := unlockLeaseFile(authority); err != nil {
+		t.Fatal(err)
+	}
+
+	leased := taskForLease(t, root, StateInProgress, "leased")
+	lease, _, err := TryTaskLease(root, leased, testLeaseOwner())
+	if err != nil || lease == nil {
+		t.Fatalf("fixture lease: %v", err)
+	}
+	defer lease.Release()
+	started := time.Now()
+	if _, err := ClaimSessionTask(root, leased, selfActor(t, "claude")); !errors.Is(err, ErrTaskLeased) {
+		t.Fatalf("session claim of a leased task = %v, want %v", err, ErrTaskLeased)
+	}
+	if _, err := lockLeaseAuthorityExclusive(root, leased.ID, false); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("pending-review lock of a leased task = %v, want it busy", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("refusing a real lease took %v, want a bounded wait", elapsed)
 	}
 }
 

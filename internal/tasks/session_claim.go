@@ -54,7 +54,7 @@ func ClaimSessionTask(root string, t Item, actor ClaimActor) (replaced string, e
 	if !actor.Bound() {
 		return "", errors.New("a session claim needs the identity of the process serving the session")
 	}
-	authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	authority, err := lockLeaseAuthorityExclusive(root, t.ID, true)
 	if err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return "", fmt.Errorf("task %s is %w", t.ID, ErrTaskLeased)
@@ -144,7 +144,7 @@ func BlockBoxTask(root string, t Item, actor ClaimActor) error {
 // todo still claimed, which an identical retry finishes. A fork-owned task and a task another
 // controller leases are refused; refuse decides whether the caller may give up an existing claim.
 func releaseUnderAuthority(root string, t Item, refuse func(TaskOwnerRecord) error) error {
-	authority, err := lockLeaseAuthority(root, t.ID, true, syscall.LOCK_EX|syscall.LOCK_NB)
+	authority, err := lockLeaseAuthorityExclusive(root, t.ID, true)
 	if err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return fmt.Errorf("task %s is %w", t.ID, ErrTaskLeased)
