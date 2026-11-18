@@ -91,7 +91,7 @@ func validateLoopResult(index int, stage, result string) error {
 		result == "progress-wait"
 	switch stage {
 	case "work":
-		if common || result == "terminal-omission" || result == "complete" || result == "complete-template-log" || result == "complete-tool-failure" || result == "complete-delay" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-unbound" || result == "complete-extra-bound" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
+		if common || result == "terminal-omission" || result == "complete" || result == "complete-template-log" || result == "complete-tool-failure" || result == "complete-gated" || result == "complete-reopen-archive" || result == "reopen-archive-wait" || result == "complete-host-reopen-archive" || result == "complete-forged-archive-binding" || result == "complete-extra-finalized" || result == "complete-wait" || result == "unbound" || result == "unbound-extra-finalized" || result == "unbound-wait" ||
 			result == "unbound-log-symlink" || result == "unbound-state-symlink" || result == "repair-binding" || result == "repair-review-binding" ||
 			result == "repair-older-binding" || result == "repair-older-binding-blocked" ||
 			result == "repair-older-binding-changed-descendant" || result == "repair-handoff-records" || result == "verify-only" ||
@@ -99,14 +99,14 @@ func validateLoopResult(index int, stage, result string) error {
 			result == "background-drained" || result == "background-timeout" ||
 			result == "background-drained-complete" || result == "background-timeout-after-restored-completion" ||
 			result == "tool-wait" || result == "tool-gated-complete" || result == "forged-flood-wait" ||
-			result == "progress-gated-complete" || result == "uncommitted-complete" || result == "uncommitted-dirty-complete" || result == "decision-complete" ||
+			result == "uncommitted-complete" || result == "uncommitted-dirty-complete" || result == "decision-complete" ||
 			result == "complete-unlisted-range" || result == "forged-archive-binding-ordinary" {
 			return nil
 		}
 	case "between", "signoff", "verify":
 		if common || result == "pass" || result == "pass-gated" || result == "pass-host-completion" || result == "pass-with-host" || result == "pass-with-subject-and-host" || result == "pass-with-descendant" ||
 			result == "pass-corrected" || result == "reopen" || result == "reopen-handoff-records" || result == "reopen-gated" || result == "reopen-injection" ||
-			result == "reopen-authentication" || result == "reopen-ordinary" || result == "reopen-wait" ||
+			result == "reopen-authentication" || result == "reopen-wait" ||
 			result == "reopen-corrected" || result == "malformed-review" || result == "malformed-review-corrected" ||
 			result == "complete-extra" || result == "background-drained-review" || result == "background-drained-review-host-completion" ||
 			result == "background-timeout-review" || isCodexReviewWrapperResult(result) {
@@ -198,9 +198,9 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		return waitLoopSignal(root, trace)
-	case "complete", "complete-template-log", "complete-tool-failure", "complete-delay", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-unbound", "complete-extra-bound", "complete-extra-finalized", "complete-wait", "complete-unlisted-range", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete":
+	case "complete", "complete-template-log", "complete-tool-failure", "complete-gated", "complete-reopen-archive", "complete-host-reopen-archive", "complete-forged-archive-binding", "complete-extra-finalized", "complete-wait", "complete-unlisted-range", "unbound", "unbound-extra-finalized", "unbound-wait", "unbound-log-symlink", "unbound-state-symlink", "repair-binding", "repair-review-binding", "repair-older-binding", "repair-older-binding-blocked", "repair-older-binding-changed-descendant", "verify-only", "verify-only-after-block", "second-binding", "background-drained-complete", "uncommitted-complete", "uncommitted-dirty-complete", "decision-complete":
 		outcome := attempt.Result
-		if outcome == "complete" || outcome == "complete-tool-failure" || outcome == "complete-delay" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-unbound" || outcome == "complete-extra-bound" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "complete-unlisted-range" || outcome == "background-drained-complete" {
+		if outcome == "complete" || outcome == "complete-tool-failure" || outcome == "complete-gated" || outcome == "complete-reopen-archive" || outcome == "complete-host-reopen-archive" || outcome == "complete-forged-archive-binding" || outcome == "complete-extra-finalized" || outcome == "complete-wait" || outcome == "complete-unlisted-range" || outcome == "background-drained-complete" {
 			outcome = ""
 		} else if outcome == "unbound-extra-finalized" {
 			outcome = "unbound"
@@ -231,12 +231,12 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 				return 1, "", err
 			}
 		}
-		if attempt.Result == "complete-extra-bound" || attempt.Result == "complete-extra-finalized" || attempt.Result == "unbound-extra-finalized" {
+		if attempt.Result == "complete-extra-finalized" || attempt.Result == "unbound-extra-finalized" {
 			if err := addLoopTaskBinding(root, plan.TaskID+"-extra"); err != nil {
 				return 1, "", err
 			}
 		}
-		if attempt.Result == "complete-extra-unbound" || attempt.Result == "complete-extra-bound" || attempt.Result == "complete-extra-finalized" || attempt.Result == "unbound-extra-finalized" {
+		if attempt.Result == "complete-extra-finalized" || attempt.Result == "unbound-extra-finalized" {
 			if err := moveLoopExtraTask(root, plan.TaskID+"-extra"); err != nil {
 				return 1, "", err
 			}
@@ -255,12 +255,6 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			emitLoopReplyWithWrapper(provider, providerArgv, "fixture-loop-complete-"+provider, "tool-failure")
 		} else {
 			emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
-		}
-		if attempt.Result == "complete-delay" {
-			if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
-				return 1, "", err
-			}
-			time.Sleep(2 * time.Second)
 		}
 		if attempt.Result == "complete-gated" {
 			if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
@@ -294,7 +288,7 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 190, "", nil
 		}
 		return 191, "", nil
-	case "pass", "pass-gated", "pass-host-completion", "pass-with-host", "pass-with-subject-and-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-handoff-records", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-ordinary", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
+	case "pass", "pass-gated", "pass-host-completion", "pass-with-host", "pass-with-subject-and-host", "pass-with-descendant", "pass-corrected", "reopen", "reopen-handoff-records", "reopen-gated", "reopen-injection", "reopen-authentication", "reopen-wait", "reopen-corrected", "malformed-review", "malformed-review-corrected", "complete-extra",
 		"pass-codex-footer", "reopen-codex-footer", "pass-codex-footer-echo", "reopen-codex-footer-echo", "pass-codex-echo-footer", "reopen-codex-echo-footer",
 		"pass-codex-split-footer-echo",
 		"background-drained-review", "background-drained-review-host-completion", "background-timeout-review":
@@ -403,10 +397,6 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 		if attempt.Result == "background-timeout-review" {
 			return 191, "", nil
 		}
-		if attempt.Result == "reopen-ordinary" {
-			fmt.Fprintln(os.Stderr, "fixture ordinary provider failure after reopen")
-			return 23, "", nil
-		}
 		if attempt.Result == "reopen-authentication" {
 			fmt.Fprintln(os.Stderr, loopAuthenticationFailure(provider))
 			return 23, "", nil
@@ -509,26 +499,6 @@ func serveLoopAttempt(root, trace, provider string, providerArgv []string, plan 
 			return 1, "", err
 		}
 		if err := emitLoopWatchdogToolEnd(provider, providerArgv); err != nil {
-			return 1, "", err
-		}
-		if err := serveLoopWorker(root, provider, plan.TaskID, ""); err != nil {
-			return 1, "", err
-		}
-		emitLoopReply(provider, providerArgv, "fixture-loop-complete-"+provider)
-		return 0, "", nil
-	case "progress-gated-complete":
-		// The same slow foreground tool as above, on a stream that CANNOT describe it: progress,
-		// then a long gate the schema has no events for, then completion. This is what legitimate
-		// work looks like on a provider with no tool lifecycle (grok) — identical, on the wire, to
-		// the post-progress silence of "progress-wait" — so only a deadline conservative enough to
-		// outlast the gate may bound it.
-		if err := emitLoopWatchdogEvent(provider, providerArgv, false); err != nil {
-			return 1, "", err
-		}
-		if err := record(root, trace, traceRecord{Source: "provider", Event: "ready", PID: os.Getpid()}); err != nil {
-			return 1, "", err
-		}
-		if err := waitLoopRelease(root, plan.TaskID); err != nil {
 			return 1, "", err
 		}
 		if err := serveLoopWorker(root, provider, plan.TaskID, ""); err != nil {

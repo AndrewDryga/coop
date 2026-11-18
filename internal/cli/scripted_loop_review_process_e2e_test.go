@@ -1864,7 +1864,7 @@ func assertLoopReviewContracts(t *testing.T, suite *directProcessSuite, trace []
 			}
 		}
 		wantExit := 0
-		if attempt.Result != "complete" && attempt.Result != "complete-delay" && attempt.Result != "complete-gated" &&
+		if attempt.Result != "complete" && attempt.Result != "complete-gated" &&
 			attempt.Result != "complete-unlisted-range" && attempt.Result != "decision-complete" &&
 			attempt.Result != "complete-forged-archive-binding" && attempt.Result != "repair-binding" &&
 			attempt.Result != "repair-review-binding" && attempt.Result != "repair-older-binding" &&
