@@ -15,15 +15,16 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/AndrewDryga/coop/internal/yamltext"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/safefile"
+	"github.com/AndrewDryga/coop/internal/yamltext"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -152,7 +153,15 @@ func readLoopConfig(repo string) ([]byte, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return safefile.ReadRegular(root, filepath.FromSlash(File), loopConfigFileLimit)
+	data, err := safefile.ReadRegular(root, filepath.FromSlash(File), loopConfigFileLimit)
+	switch {
+	case err == nil, os.IsNotExist(err), errors.Is(err, safefile.ErrNotRegular), errors.Is(err, safefile.ErrTooLarge):
+		return data, err // absent, or a refusal that already names the file
+	case errors.Is(err, syscall.ELOOP), errors.Is(err, syscall.ENOTDIR):
+		return nil, fmt.Errorf("%s is a link, or sits under one. Coop reads it only as a regular file inside the project, so replace the link with the file itself", File)
+	default:
+		return nil, fmt.Errorf("read %s: %w", File, err)
+	}
 }
 
 // Parse reads a loop config from data as Load reads .agent/loop.yaml: unknown keys and malformed

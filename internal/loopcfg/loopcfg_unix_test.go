@@ -71,6 +71,34 @@ func TestLoopConfigReadsRefuseFIFOsWithoutBlocking(t *testing.T) {
 	}
 }
 
+// A linked loop.yaml, or one under a linked .agent folder, is refused with a sentence naming
+// the file, not the system's bare "too many levels of symbolic links".
+func TestLoadSnapshotNamesALinkedConfig(t *testing.T) {
+	target := write(t, "mcp: false\n")
+	for name, link := range map[string]func(repo string) error{
+		"file": func(repo string) error {
+			if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
+				return err
+			}
+			return os.Symlink(filepath.Join(target, filepath.FromSlash(File)), filepath.Join(repo, filepath.FromSlash(File)))
+		},
+		"folder": func(repo string) error {
+			return os.Symlink(filepath.Join(target, ".agent"), filepath.Join(repo, ".agent"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			if err := link(repo); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := LoadSnapshot(repo)
+			if err == nil || !strings.Contains(err.Error(), File+" is a link, or sits under one") {
+				t.Fatalf("linked config error = %v, want it to name %s", err, File)
+			}
+		})
+	}
+}
+
 func TestLoadSnapshotRejectsOversizedConfig(t *testing.T) {
 	repo := write(t, strings.Repeat("#", loopConfigFileLimit+1))
 	if _, _, err := LoadSnapshot(repo); err == nil || !strings.Contains(err.Error(), "exceeds") {
