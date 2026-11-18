@@ -321,7 +321,9 @@ secrets already in Git history can remain.</p>
 <p>Configure this command with the parent project open in Zed, and co:op maps that directory to the
 fork inside the box. If the editor is open on an unrelated directory, co:op refuses the session.
 The fork, provider and account stay fixed, so co:op hides the usual ACP Provider and Preset menus.
-You can still use any model and effort choices the adapter offers.</p>
+You can still use any model and effort choices the adapter offers. A fork made from a preset runs
+that preset instead, as <code>coop acp &lt;preset&gt;</code> does: the Preset menu shows it and its live rung, and
+co:op refuses a switch to another preset or to a plain provider.</p>
 <h3 id="services-and-custom-images">Services and custom images</h3>
 <p>With open networking, run <code>coop up</code> for the repo&#39;s <code>.agent/compose.yml</code>, and the ACP box joins the
 same network. With filtered networking, request and approve access to each service in the project&#39;s

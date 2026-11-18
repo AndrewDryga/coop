@@ -806,7 +806,9 @@ are kept for as long as the session, so its network evidence and final receipt n
 removes the saved copy of a launch&#39;s rules only when no retained run record refers to it and no
 launch has used it for 90 days. It keeps the copy a worker session was created with for the whole
 session. An editor session that starts no box for 90 days may need to be started again. A copy made
-by <code>coop net setup</code> is removed along with that check&#39;s run record.</p>
+by <code>coop net setup</code> is removed along with that check&#39;s run record. Each <code>coop net setup</code> also
+keeps a record of what it proved. When a newer setup proves the same images, co:op removes the
+older record once no running box uses it and nothing has used it for 90 days.</p>
 <p><code>coop net check &lt;url-or-host&gt;</code> tells you whether the rules would allow a normal new run in this
 project to reach a destination. It gives one answer and one reason, based on the approved project
 rules and each agent&#39;s provider access. Use <code>--run &lt;run&gt;</code> to check the rules a recorded run started

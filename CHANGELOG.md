@@ -38,8 +38,9 @@
 - **A fork made from a preset reopens with that preset.** `coop fork <name> <preset>` used to
   save only the lead's provider, so a later `coop fork <name>` ran it with the default model and
   account and no roles or ladder. The fork now keeps the preset, and naming a plain target
-  clears it. A preset that no longer loads is refused by name, and `coop fork <name> acp`
-  without a target is refused on such a fork, since editor sessions do not run presets yet.
+  clears it. A preset that no longer loads is refused by name. `coop fork <name> acp` with no
+  target opens the saved preset in your editor, with its lead's model and account, its roles and
+  its ladder, and the session stays on that preset.
 - **A preset name works as a loop review step's agent.** `signoff.agent`, `between.agent` and
   `verify.agent` in `loop.yaml` now run the named preset's lead. A word that names no agent and
   no preset, such as a typo, stops the loop before it starts and names the step; it used to fall
@@ -60,6 +61,9 @@
   header such as `"X-Api-Key": "${KEY}"` with `KEY` unset used to start anyway, and Gemini sent
   the literal text upstream. Grok and Gemini launches now stop and name the variable, as Codex
   launches do. Set the variable or remove the header.
+- **The Codex credential broker no longer forwards analytics uploads.** It used to pass the Codex
+  client's analytics uploads upstream with your account token. Such an upload is now refused and
+  recorded.
 - **Coop follows `[include]` in your global Git config.** Your name, email, signing and editor
   settings now resolve the way your own git resolves them, so a `~/.gitconfig` that includes
   another file no longer leaves a box without a Git author, or fork merges and loop commits
@@ -108,18 +112,24 @@
 - **Session requests page and retry cleanly.** `GET /v1/sessions` takes an `after=<session_id>`
   cursor, so a client can list past the first 1000 sessions; an unknown cursor is 400. Retrying a
   request with the same key after a client timeout now runs it instead of replaying "context
-  canceled". Fencing a session create works when the job's JSON keys are not in sorted order.
-- **Remote workers keep their disk and sources in order.** A worker low on disk removes unused
-  warm repository snapshots early, as documented, not only once the disk is full. It finishes
-  deleting a job source whose cleanup a crash cut short, and refuses a job whose frozen source no
-  longer matches its repository instead of downloading the whole history on every retry. A
-  worker whose certificate renewal fails keeps working until the certificate ends and retries
-  each minute. A checkpoint keeps untracked task files outside the session's bound task, and a
-  closed session in an LFS repository no longer counts as holding uncommitted work because its
-  LFS files were downloaded. Stopping `coop sessions connect` also stops its background
-  repository downloads. Agents in a filtered worker job are no longer told to edit
-  `project.yaml` to reach more hosts. A worker keeps polling every second while the daemon
-  measures its storage, sending the last storage report instead of waiting for a new one.
+  canceled". A controller that retries an accept, a reject or a quarantine retirement after a
+  lost response gets the applied result instead of a failure. Fencing a session create works when
+  the job's JSON keys are not in sorted order. A structured-output correction no longer resends
+  the turn's images and resources, and its `prompt.sent` record lists only the blocks it carried.
+- **Remote workers keep their disk and sources in order.** A worker low on disk removes unused warm
+  repository snapshots early, as documented, not only once the disk is full. A busy worker whose
+  live sessions hold more than the storage budget keeps its newest warm snapshot instead of
+  re-cloning for every job. A worker finishes deleting a job source whose cleanup a crash cut short,
+  and refuses a job whose frozen source no longer matches its repository instead of downloading the
+  whole history on every retry. A worker whose certificate renewal fails keeps working until the
+  certificate ends and retries each minute. A checkpoint keeps untracked task files outside the
+  session's bound task, and a closed session in an LFS repository no longer counts as holding
+  uncommitted work because its LFS files were downloaded. Stopping `coop sessions connect` also
+  stops its background repository downloads, and the command reports a lasting poll error once and
+  polls a down controller less often, and a response upload the controller refuses for good settles
+  instead of retrying forever. Agents in a filtered worker job are no longer told to edit
+  `project.yaml` to reach more hosts. A worker keeps polling every second while the daemon measures
+  its storage, sending the last storage report instead of waiting for a new one.
 - **Long editor sessions keep working.** A session no longer fails every turn once its replayed
   history passes 4 MiB. A turn that repeats one of its five images no longer fails, and embedded
   image resources no longer count toward the transcript limit. A turn with more than 512 tool
@@ -147,7 +157,8 @@
   commits that no review can reopen, and a fork loop on a queue outside the project no longer
   suggests a `coop tasks` command that refuses that queue. When `coop loop` runs without a
   terminal, the Git command that signs its commits stops after 15 minutes instead of waiting
-  forever.
+  forever, and a custom-command loop signs commits left by failed attempts. The final review no
+  longer rereads the whole queue for each task it reviews.
 - **Usage limits and rate limits are read correctly.** `coop loop` waits until the reset date
   Codex states for a limit on another day, instead of probing and giving up. "Try again in
   345ms" now waits seconds; it used to wait almost six hours. Consult, delegate, loop and eval
@@ -168,8 +179,10 @@
   `coop tasks done` no longer fails with "did not release within 5s" when your own lease
   holder's command ignores SIGTERM. `coop tasks lease <id> -- <command>` no longer takes the
   command's own `--tasks` flag as its queue. `coop tasks claim <id> --force=false` is refused
-  instead of taking over the claim. A host process killed while saving a fork's proposed task no
-  longer blocks that fork's imports and discards.
+  instead of taking over the claim. A refreshing `coop tasks watch` no longer makes a claim look
+  leased. A host process killed while saving a fork's proposed task, or while removing an
+  imported one, no longer blocks that fork's imports, discards and merge. A box commit made with
+  `git cherry-pick -x` binds its task.
 - **Task messages point at commands that work.** `coop tasks park` on a fork's task names the fork
   and, for a blocked question, offers `coop tasks unblock` instead of a release that is refused.
   `coop tasks lint` says to block the task or write its Resolution instead of suggesting a
@@ -179,8 +192,9 @@
   comment on a decision's Resolution line now counts.
 - **Fork review and merge catch more risky changes.** They now flag a change to the Dockerfile or
   Compose file your `project.yaml` names, wherever it lives, and files under `.grok/`, as they
-  already did for `.claude/`, `.codex/` and `.gemini/`. An install script or a queued task is
-  caught even when the fork spells the path in different letter case. npm install scripts are
+  already did for `.claude/`, `.codex/` and `.gemini/`. An install script or a queued task is caught
+  even when the fork spells the path in different letter case. `coop check-secrets` lists a changed
+  Dockerfile or Compose file that `project.yaml` names, wherever it lives. npm install scripts are
   caught next to a non-string script, behind an upper-case `"SCRIPTS"` key, and in `prepublish`,
   `preprepare` and `postprepare`. Merging an isolated fork now refuses changes to a `.coopignore`
   and tasks added to your queue, as an ordinary merge already did.
@@ -192,8 +206,11 @@
   containers and volumes. A fork removed in the middle of an interrupted merge no longer leaves
   that merge's rebase for the next fork of the same name. `coop claude`, `coop codex` and
   `coop run` started inside a fork's folder no longer re-sign its commits on exit; the merge
-  signs them. Reviews, merges and fork listings run their host git commands faster, and merging
-  an isolated fork with many Git LFS files is faster.
+  signs them. Reviews, merges and fork listings run their host git commands faster. The policy
+  checks for a fork that changes hundreds of files or has many commits no longer start a Git
+  process per file and finish in a fraction of the time. Merging an isolated fork with many Git
+  LFS files is faster, and signing rewrites commits without checking files out, which is much
+  faster on large repositories.
 - **Launches fail less and say why.** Boxes and forks honor global Git ignores in Git's default
   `~/.config/git/ignore` even when `core.excludesfile` is not set. A project with an unreadable
   hidden folder no longer fails every launch after a hidden file such as `.env` is replaced, and
@@ -204,38 +221,46 @@
   kernel-protected launch. Commands that list running boxes no longer fail with "sandbox activity
   registry is unreadable" while a session changes state, and a process killed at that moment no
   longer leaves the registry unreadable until its leftover file is deleted by hand. Launches
-  without kernel filesystem protection start faster in large checkouts.
-- **Box messages name the real cause.** Refusals and warnings name the right box kind and count.
-  Mount refusals no longer call every box "anchored". A launch that times out waiting for another
-  launch of the same checkout says so, instead of reporting a busy credential transaction.
-  Switching the Docker context while a box checks its services no longer makes it judge them on
-  the wrong daemon. Interrupting `coop sign`, or the signing after a box exits, no longer leaves a
-  temporary checkout and worktree entry behind. The in-box gate slot helper says a gate waits on
-  its project's slots, not the host's.
+  without kernel filesystem protection start faster in large checkouts. A `COOP_RUNTIME` that
+  names Docker by its path gets kernel file protection like plain `docker`. A launch refuses an
+  MCP server whose header or env value is null, an object or a list, and names the server and
+  key. When Coop cannot create its run-files folder in the state folder, it stops and names the
+  folder.
+- **Box messages name the real cause, and interrupted commands clean up.** Refusals and warnings
+  name the right box kind and count. Mount refusals no longer call every box "anchored". A launch
+  that times out waiting for another launch of the same checkout says so, instead of reporting a
+  busy credential transaction. Switching the Docker context while a box checks its services no
+  longer makes it judge them on the wrong daemon. Interrupting `coop sign`, or the signing after a
+  box exits, no longer leaves a temporary checkout and worktree entry behind, and an interrupted
+  `coop build` or `coop update` no longer leaves a copy of the project in the temporary folder. The
+  in-box gate slot helper says a gate waits on its project's slots, not the host's.
 - **Filtered networking is faster and reports more.** A filtered launch on a host with many past
-  runs starts faster. A filtered launch or editor session that starts while another box renews
-  the same account waits for it instead of failing or dropping the account. `coop net blocked`
-  and the run's report show HTTPS requests and downloads refused under a native sign-in, and
-  `coop net blocked` warns when a run dropped older refusals instead of saying "No recorded
-  block". Two refusals now suggest commands that work: an `--egress-rules` file outside the
-  project, and `coop shell` to record a first filtered run. A run that ends as the host gains a
-  network address no longer reports a false protection failure, and a loop whose network raised
-  alerts but blocked nothing no longer reports "Traffic to 0 remote addresses was blocked". With
-  `--debug-on-fail`, the debug shell's blocked addresses print when the shell ends, under its own
-  name. A host that ran network setup more than 256 times no longer refuses every filtered box.
-  A raw network rule on port 443 or 53 is refused with a message naming the port's one use: TLS
-  for 443, DNS for 53.
-- **Services and serve ports are clearer.** A Compose port published to `localhost` is refused up
-  front with advice to write `127.0.0.1`. When services fail to start, the warning shows
-  Compose's own error and exit status, and a failed filtered start shows that run's own output.
-  A serve port added during an editor session says to restart the session instead of reporting
-  a busy host port. A signed-in open box prints its serve port links and warns when a host port
-  is busy; its first start says it is building Coop's credential broker, not the MCP broker, when
-  no MCP server is set, and a broker that fails to start includes Docker's reason. Agents in a
-  filtered box, and the main agent of a run with peers or a preset, read which serve ports
-  reached the host and which services run with them. A Compose volume that does not exist yet is
-  offered for creation even when Docker holds another volume whose name contains it, such as
-  `MyApp.cache` for `cache`.
+  runs starts faster, and a filtered box with project services starts faster when its services
+  network already exists. A running filtered box costs Docker half as many commands each second. A
+  filtered launch or editor session that starts while another box renews the same account waits for
+  it instead of failing or dropping the account. `coop net blocked` and the run's report show HTTPS
+  requests and downloads refused under a native sign-in, and `coop net blocked` warns when a run
+  dropped older refusals instead of saying "No recorded block". Two refusals now suggest commands
+  that work: an `--egress-rules` file outside the project, and `coop shell` to record a first
+  filtered run. A run that ends as the host gains a network address no longer reports a false
+  protection failure, and a loop whose network raised alerts but blocked nothing no longer reports
+  "Traffic to 0 remote addresses was blocked". With `--debug-on-fail`, the debug shell's blocked
+  addresses print when the shell ends, under its own name. A host that ran network setup more than
+  256 times no longer refuses every filtered box, and repeated `coop net setup` runs no longer leave
+  old setup records behind forever. A raw network rule on port 443 or 53 is refused with a message
+  naming the port's one use: TLS for 443, DNS for 53.
+- **Services and serve ports are clearer, and services start faster.** Starting services that bind a
+  large repository no longer walks the repository several times. A Compose port published to
+  `localhost` is refused up front with advice to write `127.0.0.1`. When services fail to start, the
+  warning shows Compose's own error and exit status, and a failed filtered start shows that run's
+  own output. A serve port added during an editor session says to restart the session instead of
+  reporting a busy host port. A signed-in open box prints its serve port links and warns when a host
+  port is busy; its first start says it is building Coop's credential broker, not the MCP broker,
+  when no MCP server is set, and a broker that fails to start includes Docker's reason. Agents in a
+  filtered box, and the main agent of a run with peers or a preset, read which serve ports reached
+  the host and which services run with them. A Compose volume that does not exist yet is offered for
+  creation even when Docker holds another volume whose name contains it, such as `MyApp.cache` for
+  `cache`.
 - **Consult and delegate are more reliable.** `coop-consult` with no timeout set retries or falls
   back when a peer is killed, instead of reporting "no reply within 0s". `coop-delegate` fails
   when every target of a role already failed for good, instead of exiting 0 with no work done.
@@ -263,16 +288,18 @@
   started in the same second both run; the second gets a suffixed run id. The core starter's
   no-collateral-damage case now fails a run that silences one of the project's checks instead
   of fixing the code.
-- **The CLI shows names safely and completes more.** `coop build`, `coop check-secrets` and
-  `coop context` escape control characters in paths and file names, so a name cannot redraw the
-  report, and an invisible variation selector after punctuation is now shown, so a look-alike
-  name no longer passes for the real one. Shell completion offers the network options of
-  `coop loop`, `acp`, `run` and `shell`, `coop update`'s options, and task ids after
-  `coop tasks lease` and `park`. A mistyped option to a `coop sessions` subcommand is answered
-  with the nearest one, and an extra word after `coop acp` or `coop fork <name> acp` shows the
-  help page's usage line. `coop doctor` cleans up test projects an interrupted run left behind.
-  The daily update notice retries after ten minutes when a short command ended before GitHub
-  answered, instead of skipping the day.
+- **The CLI shows names safely, completes more and checks its options.** `coop build`,
+  `coop check-secrets` and `coop context` escape control characters in paths and file names, so a
+  name cannot redraw the report, and an invisible variation selector after punctuation is now shown,
+  so a look-alike name no longer passes for the real one. Shell completion offers the network
+  options of `coop loop`, `acp`, `run` and `shell`, `coop update`'s options, and task ids after
+  `coop tasks lease` and `park`. A mistyped option to a `coop sessions` subcommand is answered with
+  the nearest one, and an extra word after `coop acp` or `coop fork <name> acp` shows the help
+  page's usage line. `coop fork --loop` and `-d` refuse `--continue` and `--new`, and `coop context`
+  refuses a second `--task`. `coop doctor` no longer fails every check on a Mac with no box image
+  built yet, and it cleans up test projects an interrupted run left behind. The daily update notice
+  retries after ten minutes when a short command ended before GitHub answered, instead of skipping
+  the day.
 - **Help and guides cover more.** The loop guide says gate slots are shared per project and that
   a custom `work.command` turns off the loop's reviews and verify. The upgrade notes and
   configuration reference explain how filtered boxes reach project services. `coop help up` and
@@ -288,21 +315,7 @@
   writes no longer say Gemini's commits run the format check. A docs link with a malformed
   fragment no longer breaks the page's contents menu and search.
 - **Two `make check` runs in one checkout keep their own logs.** Each run writes to its own folder
-  and prints where its logs are.
-- **Late fixes from the same review.** `coop check-secrets` lists a changed Dockerfile or Compose
-  file that `project.yaml` names, wherever it lives. A launch refuses an MCP server whose header
-  or env value is null, an object or a list, naming the server and key. `coop fork --loop` and
-  `-d` refuse `--continue` and `--new`, and `coop context` refuses a second `--task`. When Coop
-  cannot create its run-files folder in the state folder it stops and names the folder. A
-  `COOP_RUNTIME` that names Docker by its path gets kernel file protection like plain `docker`.
-  `coop sessions connect` reports a lasting poll error once and polls a down controller less
-  often, and a response upload the controller refuses for good settles instead of retrying
-  forever. A box commit made with `git cherry-pick -x` binds its task. A host process killed
-  while removing an imported fork proposal no longer blocks that fork's imports and merge. A
-  loop's final review no longer rereads the whole queue per reviewed task, a refreshing
-  `coop tasks watch` no longer makes a claim look leased, and a custom-command loop signs commits
-  left by failed attempts. Signing rewrites commits without checking files out, which is much
-  faster on large repositories. ShellCheck is pinned like the gate's other analyzers.
+  and prints where its logs are. ShellCheck is pinned like the gate's other analyzers.
 
 ## 13.2.1
 
