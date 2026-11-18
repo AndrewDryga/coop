@@ -90,10 +90,10 @@ func NewLayout(root string) (Layout, error) {
 	// otherwise make the sweep due on every run, and its background goroutine
 	// (cli.startTempReap) would race a nondeterministic runtime `ps` into the
 	// process traces these tests pin. This uses the reaper's own once-a-day
-	// marker contract rather than a new knob.
-	reapMarker := filepath.Join(l.XDGConfig, "coop", "temp-reap")
+	// marker contract rather than a new knob; the marker lives in Coop's state folder.
+	reapMarker := filepath.Join(l.XDGState, "coop", "temp-reap")
 	if err := os.MkdirAll(filepath.Dir(reapMarker), 0o700); err != nil {
-		return Layout{}, fmt.Errorf("create process-test box home: %w", err)
+		return Layout{}, fmt.Errorf("create process-test state folder: %w", err)
 	}
 	if err := os.WriteFile(reapMarker, nil, 0o600); err != nil {
 		return Layout{}, fmt.Errorf("create process-test reap marker: %w", err)

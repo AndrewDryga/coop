@@ -60,6 +60,14 @@ func TestEnvironmentStartsEmptyAndOwnsState(t *testing.T) {
 	if got["HOME"] != layout.Home || got["TMPDIR"] != layout.Tmp {
 		t.Fatalf("state roots = HOME %q TMPDIR %q, want %q and %q", got["HOME"], got["TMPDIR"], layout.Home, layout.Tmp)
 	}
+	// The daily sweep is stamped done where Coop reads it (its state folder), so no child starts
+	// one; a stamp in the config folder works only while Coop still moves old records across.
+	if _, err := os.Stat(filepath.Join(layout.XDGState, "coop", "temp-reap")); err != nil {
+		t.Errorf("the daily sweep marker is not in the state folder: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(layout.XDGConfig, "coop", "temp-reap")); !os.IsNotExist(err) {
+		t.Errorf("a daily sweep marker sits in the config folder (stat err %v)", err)
+	}
 }
 
 // A child's commit starts no git maintenance: since git 2.47 it runs in the background after the

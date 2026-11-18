@@ -1,8 +1,8 @@
 // Package teststate keeps a test binary out of the developer's real Coop state.
 //
 // Coop keeps per-user state under the home folder: the execution registry with its service-launch
-// locks, the git views, the task leases and the network authority under ~/.local/state/coop, and
-// the config root with its private runfiles under ~/.config/coop. Test binaries that reached those
+// locks, the git views, the task leases, the network authority and the private runfiles under
+// ~/.local/state/coop, and the config root under ~/.config/coop. Test binaries that reached those
 // roots wrote the developer's real folders; by October 2026 one Mac held 57,925 service-launch
 // locks, most of them left by tests, and a cli test sealed a run record in the real network store.
 // Every package whose tests can reach that state calls Isolate from its TestMain, which points each
@@ -32,8 +32,8 @@ const rootEnv = "COOP_TEST_STATE_ROOT"
 // config package repeats the name, because it cannot import this one.
 const LiveEnv = "COOP_TEST_LIVE_HOMES"
 
-// The XDG folders Coop reads like every XDG program does: the config root and its runfiles live
-// under the first, the network authority and eval results under the second.
+// The XDG folders Coop reads like every XDG program does: the config root lives under the first,
+// the runfiles, network authority and eval results under the second.
 const (
 	configHomeEnv = "XDG_CONFIG_HOME"
 	stateHomeEnv  = "XDG_STATE_HOME"
