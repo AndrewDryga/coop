@@ -186,6 +186,7 @@ type ServiceSecretReview struct {
 	workspace string
 	data      []byte
 	images    map[string]string
+	plans     *shadowPlans // the plan the review showed, which its approval pins images by
 	imageRefs map[string]string
 	previous  map[string]string
 	renewal   bool
@@ -212,12 +213,12 @@ func (r *ServiceSecretReview) Paths() []string {
 	return out
 }
 
-func reviewServiceSecretsData(workspace, file string, data []byte, force bool) (*ServiceSecretReview, error) {
+func reviewServiceSecretsData(plans *shadowPlans, workspace, file string, data []byte, force bool) (*ServiceSecretReview, error) {
 	abs, err := filepath.Abs(file)
 	if err != nil {
 		return nil, err
 	}
-	decoys, hidden, _, err := serviceShadowPlan(workspace, abs, data)
+	decoys, hidden, _, err := plans.plan(workspace, abs, data)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +364,7 @@ func (r *ServiceSecretReview) Approve() error {
 		approval.Volumes = prior.Volumes
 		approval.VolumeBinding = prior.VolumeBinding
 	}
-	approval.Images, err = pinsForServiceGrant(r.workspace, file, r.data, approval, r.images)
+	approval.Images, err = pinsForServiceGrant(r.plans, r.workspace, file, r.data, approval, r.images)
 	if err != nil {
 		return err
 	}
@@ -395,6 +396,7 @@ type ServiceStartReview struct {
 	runtime   runtime.Runtime
 	binding   ServiceVolumeBinding
 	images    map[string]string
+	plans     *shadowPlans
 	imageRefs map[string]string
 	previous  map[string]string
 }
@@ -468,9 +470,11 @@ func ReviewServiceStart(workspace, file string, rt runtime.Runtime, terminal boo
 		return nil, err
 	}
 	current, ok := ApprovedServiceSecrets(workspace, file, data)
+	// One plan serves the whole review: its image check, the secret review and the approval.
+	plans := &shadowPlans{}
 	var images map[string]string
 	if terminal {
-		images, err = reviewServiceImages(context.Background(), bound, workspace, file, data, volumes)
+		images, err = reviewServiceImages(context.WithValue(context.Background(), shadowPlansKey{}, plans), bound, workspace, file, data, volumes)
 		if err != nil {
 			return nil, err
 		}
@@ -486,17 +490,18 @@ func ReviewServiceStart(workspace, file string, rt runtime.Runtime, terminal boo
 		}
 	}
 	changed := terminal && ok && !approvedServiceImagesMatch(current.Images, images)
-	secrets, err := reviewServiceSecretsData(workspace, file, data, changed)
+	secrets, err := reviewServiceSecretsData(plans, workspace, file, data, changed)
 	if err != nil {
 		return nil, err
 	}
 	if secrets != nil {
+		secrets.plans = plans
 		secrets.images, secrets.renewal = images, changed
 		secrets.imageRefs, secrets.previous = imageRefs, current.Images
 	}
 	needed := len(volumes) > 0 && (!ok || changed || !sameServiceVolumes(current.Volumes, volumes) || !sameServiceVolumeBinding(current.VolumeBinding, binding))
 	return &ServiceStartReview{Secrets: secrets, Volumes: volumes, VolumeApprovalNeeded: needed,
-		NewVolumes: missing, workspace: workspace, file: file, data: data, runtime: bound, binding: binding,
+		NewVolumes: missing, workspace: workspace, file: file, data: data, runtime: bound, binding: binding, plans: plans,
 		images: images, imageRefs: imageRefs, previous: current.Images}, nil
 }
 
@@ -576,7 +581,7 @@ func (r *ServiceStartReview) ApproveVolumes() error {
 	if prior, ok := ApprovedServiceSecrets(r.workspace, r.file, r.data); ok && approvedServiceImagesMatch(prior.Images, r.images) {
 		approval.Paths = prior.Paths
 	}
-	approval.Images, err = pinsForServiceGrant(r.workspace, r.file, r.data, approval, r.images)
+	approval.Images, err = pinsForServiceGrant(r.plans, r.workspace, r.file, r.data, approval, r.images)
 	if err != nil {
 		return err
 	}
@@ -614,7 +619,7 @@ func (r *ServiceStartReview) ApproveRenewal() error {
 	approval := ServiceApproval{Version: serviceApprovalVersion, Anchor: anchor, Digest: composeDigest(r.data), File: rel,
 		Workspace: canonical, Paths: r.Secrets.Paths(), Volumes: r.Volumes, VolumeBinding: r.binding,
 		ApprovedAt: time.Now().UTC(), ApprovedBy: approverName()}
-	approval.Images, err = pinsForServiceGrant(r.workspace, r.file, r.data, approval, r.images)
+	approval.Images, err = pinsForServiceGrant(r.plans, r.workspace, r.file, r.data, approval, r.images)
 	if err != nil {
 		return err
 	}

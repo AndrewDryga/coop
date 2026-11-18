@@ -38,8 +38,8 @@ func approvedServiceImagesMatch(approved, observed map[string]string) bool {
 	return true
 }
 
-func pinsForServiceGrant(workspace, file string, data []byte, approval ServiceApproval, reviewed map[string]string) (map[string]string, error) {
-	names, err := activeElevatedServiceNames(workspace, file, data, approval)
+func pinsForServiceGrant(plans *shadowPlans, workspace, file string, data []byte, approval ServiceApproval, reviewed map[string]string) (map[string]string, error) {
+	names, err := activeElevatedServiceNames(plans, workspace, file, data, approval)
 	if err != nil {
 		return nil, err
 	}
@@ -58,8 +58,8 @@ func pinsForServiceGrant(workspace, file string, data []byte, approval ServiceAp
 
 // elevatedServiceNames is the exact set that can receive approved host data.
 // A blocked secret bind remains a decoy and does not elevate its service.
-func elevatedServiceNames(workspace, file string, data []byte, volumes []ServiceVolumeAccess) ([]string, error) {
-	decoys, _, _, err := serviceShadowPlan(workspace, file, data)
+func elevatedServiceNames(plans *shadowPlans, workspace, file string, data []byte, volumes []ServiceVolumeAccess) ([]string, error) {
+	decoys, _, _, err := plans.plan(workspace, file, data)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func elevatedServiceNames(workspace, file string, data []byte, volumes []Service
 // A terminal review may fetch an uncached tag through the existing private Docker client.
 // Saved IDs are used offline; an already-local tag that moved requires new consent.
 func reviewServiceImages(ctx context.Context, rt runtime.Runtime, workspace, file string, data []byte, volumes []ServiceVolumeAccess) (map[string]string, error) {
-	names, err := elevatedServiceNames(workspace, file, data, volumes)
+	names, err := elevatedServiceNames(shadowPlansFrom(ctx), workspace, file, data, volumes)
 	if err != nil || len(names) == 0 {
 		return nil, err
 	}
@@ -123,8 +123,8 @@ func reviewServiceImages(ctx context.Context, rt runtime.Runtime, workspace, fil
 	return images, nil
 }
 
-func activeElevatedServiceNames(workspace, file string, data []byte, approval ServiceApproval) ([]string, error) {
-	decoys, _, _, err := serviceShadowPlan(workspace, file, data)
+func activeElevatedServiceNames(plans *shadowPlans, workspace, file string, data []byte, approval ServiceApproval) ([]string, error) {
+	decoys, _, _, err := plans.plan(workspace, file, data)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func pinServiceStart(ctx context.Context, rt runtime.Runtime, workspace, file st
 	if !ok {
 		return args, func() {}, nil
 	}
-	names, err := activeElevatedServiceNames(workspace, file, data, approval)
+	names, err := activeElevatedServiceNames(shadowPlansFrom(ctx), workspace, file, data, approval)
 	if err != nil {
 		return nil, nil, err
 	}

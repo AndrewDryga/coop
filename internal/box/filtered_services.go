@@ -360,6 +360,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) (result error) {
 	}
 	ctx = context.WithValue(ctx, isolatedServiceParentKey{}, s.isolatedParent)
 	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, s.runtime.IsDocker() && filesystemProfileCandidate(s.repo))
+	ctx = withShadowPlans(ctx)
 	if err := refuseRunningServiceWriters(ctx, s.runtime, s.repo); err != nil {
 		return err
 	}
@@ -422,6 +423,7 @@ func (s *preparedFilteredServices) start(ctx context.Context) (result error) {
 func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runtime.Runtime, spec RunSpec, composeFile string,
 	approval *networkstate.Approval, grants []egress.Grant, sections *launchSections, exposedRoots []string) (string, []networkgateway.ServiceBinding, []networkgateway.ServiceProxyClient, *preparedFilteredServices, error) {
 	ctx = context.WithValue(ctx, isolatedServiceParentKey{}, spec.IsolatedParent)
+	ctx = withShadowPlans(ctx)
 	if sections != nil {
 		sections.servicesPreparing()
 	}

@@ -218,15 +218,17 @@ func (s *serviceFilesystemStart) retain() error {
 	return errors.Join(problems...)
 }
 
-func serviceFilesystemGrants(repo, file string, data []byte) (map[string][]string, error) {
-	decoys, _, _, err := serviceShadowPlanWithSpellings(repo, file, data, false)
-	if err != nil {
-		return nil, err
-	}
+// A grant is a source the service reads, so the spelling covers in the plan add nothing: each one
+// carries its decoy's source and is kept or dropped with it.
+func serviceFilesystemGrants(plans *shadowPlans, repo, file string, data []byte) (map[string][]string, error) {
 	grants := map[string][]string{}
 	approval, ok := ApprovedServiceSecrets(repo, file, data)
 	if !ok {
 		return grants, nil
+	}
+	decoys, _, _, err := plans.plan(repo, file, data)
+	if err != nil {
+		return nil, err
 	}
 	kept, _ := keepDecoysOutside(decoys, approval.Paths)
 	for name, entries := range decoys {
@@ -266,7 +268,7 @@ func prepareServiceFilesystemStart(ctx context.Context, rt runtime.Runtime, repo
 	}()
 	deferred, _ := ctx.Value(deferServiceShadowsKey{}).(bool)
 	fallback := func() (*serviceFilesystemStart, error) {
-		decoys, _, uncovered, err := serviceShadowPlan(repo, file, data)
+		decoys, _, uncovered, err := shadowPlansFrom(ctx).plan(repo, file, data)
 		if err != nil {
 			return nil, err
 		}
@@ -328,7 +330,7 @@ func prepareServiceFilesystemStart(ctx context.Context, rt runtime.Runtime, repo
 	} else if names, err = composeServiceClosure(raw.Services, names); err != nil {
 		return nil, err
 	}
-	grants, err := serviceFilesystemGrants(repo, file, data)
+	grants, err := serviceFilesystemGrants(shadowPlansFrom(ctx), repo, file, data)
 	if err != nil {
 		return nil, err
 	}

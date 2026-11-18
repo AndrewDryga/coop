@@ -930,7 +930,7 @@ func ReviewServiceSecrets(workspace, file string) (*ServiceSecretReview, error) 
 	if err != nil {
 		return nil, err
 	}
-	return reviewServiceSecretsData(workspace, file, data, false)
+	return reviewServiceSecretsData(nil, workspace, file, data, false)
 }
 
 // A version 4 approval labels nothing on the review prompt and grants nothing: it is not read, and

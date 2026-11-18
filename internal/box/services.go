@@ -52,6 +52,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	if file == "" {
 		return startedServices{}, nil
 	}
+	ctx = withShadowPlans(ctx) // every step of this start reads one shadow plan
 	bound, err := rt.FreezeCompose(ctx)
 	if err != nil {
 		return startedServices{}, fmt.Errorf("bind service launch to Docker daemon: %w", err)
@@ -248,7 +249,7 @@ func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, 
 		return nil, nil, nil, err
 	}
 	deferred, _ := ctx.Value(deferServiceShadowsKey{}).(bool)
-	args, cleanup, hidden, err = snapshotComposeArgsForStartDataMode(workspace, file, owner, data, allowOutsideData, !deferred, exposedRoots...)
+	args, cleanup, hidden, err = snapshotComposeArgsForStartDataMode(shadowPlansFrom(ctx), workspace, file, owner, data, allowOutsideData, !deferred, exposedRoots...)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -262,10 +263,10 @@ func snapshotComposeArgsForStartPinned(ctx context.Context, rt runtime.Runtime, 
 }
 
 func snapshotComposeArgsForStartData(workspace, file, owner string, data []byte, allowOutsideData bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
-	return snapshotComposeArgsForStartDataMode(workspace, file, owner, data, allowOutsideData, true, exposedRoots...)
+	return snapshotComposeArgsForStartDataMode(nil, workspace, file, owner, data, allowOutsideData, true, exposedRoots...)
 }
 
-func snapshotComposeArgsForStartDataMode(workspace, file, owner string, data []byte, allowOutsideData, shadows bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
+func snapshotComposeArgsForStartDataMode(plans *shadowPlans, workspace, file, owner string, data []byte, allowOutsideData, shadows bool, exposedRoots ...string) (args []string, cleanup func(), hidden []string, err error) {
 	if !allowOutsideData {
 		volumes, err := outsideServiceVolumes(data)
 		if err != nil {
@@ -306,7 +307,7 @@ func snapshotComposeArgsForStartDataMode(workspace, file, owner string, data []b
 	// discovery, teardown — carries the same decision, so the project definition is one and the same.
 	// A name too long to cover under every spelling is refused before services start: by the box's
 	// launch, which covers the same repository, or by coop up's review (ServiceStartReview).
-	decoys, hidden, _, err := serviceShadowPlan(workspace, abs, data)
+	decoys, hidden, _, err := plans.plan(workspace, abs, data)
 	if err != nil {
 		cleanup()
 		return nil, nil, nil, fmt.Errorf("project secret shadowing into sibling services: %w", err)

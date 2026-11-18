@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,8 +11,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"go.yaml.in/yaml/v3"
@@ -37,10 +40,79 @@ const serviceCoverLimit = 8192
 // letter case, a hidden file or .coopignore inside a folder bind also gets a cover for every other
 // spelling of its name, as a box's does (ComputeMounts); uncovered lists those it could not cover.
 func serviceShadowPlan(repo, composeFile string, data []byte) (decoys map[string][]serviceDecoy, hiddenPaths, uncovered []string, err error) {
-	return serviceShadowPlanWithSpellings(repo, composeFile, data, true)
+	if shadowPlanWalked != nil {
+		shadowPlanWalked()
+	}
+	return walkServiceShadowPlan(repo, composeFile, data)
 }
 
-func serviceShadowPlanWithSpellings(repo, composeFile string, data []byte, expand bool) (decoys map[string][]serviceDecoy, hiddenPaths, uncovered []string, err error) {
+// shadowPlans is the service shadow plans one start or one review computed, so its image, approval,
+// start and filesystem steps share one walk of the bound folders instead of each walking them
+// again. It lives exactly as long as that start or review: the plan must follow the bytes and the
+// files on disk at that moment, so it is never kept across operations. A nil one computes afresh.
+type shadowPlans struct {
+	mu    sync.Mutex
+	plans map[string]shadowPlan
+}
+
+type shadowPlan struct {
+	decoys            map[string][]serviceDecoy
+	hidden, uncovered []string
+	err               error
+}
+
+type shadowPlansKey struct{}
+
+// withShadowPlans gives one start a new, empty plan cache: a start reads the disk as it is now,
+// never a plan an earlier step of the launch made.
+func withShadowPlans(ctx context.Context) context.Context {
+	return context.WithValue(ctx, shadowPlansKey{}, &shadowPlans{})
+}
+
+func shadowPlansFrom(ctx context.Context) *shadowPlans {
+	plans, _ := ctx.Value(shadowPlansKey{}).(*shadowPlans)
+	return plans
+}
+
+// plan is serviceShadowPlan for this start or review: the first call for a repository, file and
+// content walks, later ones get a copy of its answer.
+func (p *shadowPlans) plan(repo, composeFile string, data []byte) (map[string][]serviceDecoy, []string, []string, error) {
+	if p == nil {
+		return serviceShadowPlan(repo, composeFile, data)
+	}
+	// Keyed by the resolved paths: a review names the repository as the person typed it and its
+	// approval by its canonical spelling, and both plan the same folders.
+	realRepo, repoErr := resolveExisting(repo)
+	realFile, fileErr := resolveExisting(composeFile)
+	if repoErr != nil || fileErr != nil {
+		return serviceShadowPlan(repo, composeFile, data)
+	}
+	sum := sha256.Sum256(data)
+	key := realRepo + "\x00" + realFile + "\x00" + hex.EncodeToString(sum[:])
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	found, ok := p.plans[key]
+	if !ok {
+		found.decoys, found.hidden, found.uncovered, found.err = serviceShadowPlan(repo, composeFile, data)
+		if p.plans == nil {
+			p.plans = map[string]shadowPlan{}
+		}
+		p.plans[key] = found
+	}
+	if found.err != nil {
+		return nil, nil, nil, found.err
+	}
+	decoys := make(map[string][]serviceDecoy, len(found.decoys))
+	for name, list := range found.decoys {
+		decoys[name] = slices.Clone(list)
+	}
+	return decoys, slices.Clone(found.hidden), slices.Clone(found.uncovered), nil
+}
+
+// shadowPlanWalked counts computed plans; tests set it.
+var shadowPlanWalked func()
+
+func walkServiceShadowPlan(repo, composeFile string, data []byte) (decoys map[string][]serviceDecoy, hiddenPaths, uncovered []string, err error) {
 	var doc composeDoc
 	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&doc); err != nil {
 		return nil, nil, nil, err
@@ -65,7 +137,7 @@ func serviceShadowPlanWithSpellings(repo, composeFile string, data []byte, expan
 		// none: Linux keeps one entry per folder, so CONFIG/ lands on config/'s cover.
 		spelled := func(decoy serviceDecoy, p string) {
 			decoys[name] = append(decoys[name], decoy)
-			if !expand || !foldsCase(p) {
+			if !foldsCase(p) {
 				return
 			}
 			spellings, ok := otherSpellings(filepath.Base(p))

@@ -2,6 +2,7 @@ package box
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -291,5 +292,42 @@ func TestServiceShadowCoversEverySpellingWhereTheDiskIgnoresCase(t *testing.T) {
 	}
 	if !slices.Contains(uncovered, "k8abcdef.pem") {
 		t.Errorf("uncovered = %v; want the names past the bound named", uncovered)
+	}
+}
+
+// One review walks the bound folders once for its image check, its secret review and the approval,
+// and one start once for its compose arguments, image pins and filesystem step.
+func TestServiceShadowPlanIsComputedOncePerReviewAndStart(t *testing.T) {
+	t.Setenv(ServiceStateRootEnv, t.TempDir())
+	rt := serviceReviewRuntime(t, "")
+	repo := t.TempDir()
+	compose := filepath.Join(repo, "compose.yml")
+	if err := os.WriteFile(filepath.Join(repo, "tls.key"), []byte("-----BEGIN PRIVATE KEY-----\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(compose, []byte("services:\n  app:\n    image: example/app:latest\n    volumes: [\"./tls.key:/key:ro\", \".:/src:ro\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	walks := 0
+	shadowPlanWalked = func() { walks++ }
+	t.Cleanup(func() { shadowPlanWalked = nil })
+	review, err := ReviewServiceStart(repo, compose, rt, true)
+	if err != nil || review.Secrets == nil {
+		t.Fatalf("review = %+v, %v", review, err)
+	}
+	if err := review.Secrets.Approve(); err != nil {
+		t.Fatal(err)
+	}
+	if walks != 1 {
+		t.Fatalf("a review and its approval walked the bound folders %d times, want once", walks)
+	}
+	for start := 1; start <= 2; start++ {
+		walks = 0
+		if _, err := startAutomaticTestServices(rt, repo, compose, io.Discard, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if walks != 1 {
+			t.Fatalf("start %d walked the bound folders %d times, want once", start, walks)
+		}
 	}
 }
