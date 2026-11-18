@@ -170,14 +170,3 @@ func TightenReadable(file *os.File) (os.FileInfo, error) {
 	}
 	return file.Stat()
 }
-
-// TightenReadablePath is TightenReadable for a path, never following its last link. A path that
-// cannot be opened is left for the caller's own check to report.
-func TightenReadablePath(path string) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	_, _ = TightenReadable(file)
-}

@@ -1235,7 +1235,7 @@ func TestTightenReadable(t *testing.T) {
 		if err := os.Chmod(path, tc.mode); err != nil {
 			t.Fatal(err)
 		}
-		TightenReadablePath(path)
+		tightenPath(t, path)
 		if info, _ := os.Stat(path); info.Mode().Perm() != tc.want {
 			t.Errorf("%s: %o, want %o", name, info.Mode().Perm(), tc.want)
 		}
@@ -1252,7 +1252,7 @@ func TestTightenReadable(t *testing.T) {
 	if err := os.Chmod(linked, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	TightenReadablePath(linked)
+	tightenPath(t, linked)
 	if info, _ := os.Stat(linked); info.Mode().Perm() != 0o644 {
 		t.Errorf("a file with two links changed to %o", info.Mode().Perm())
 	}
@@ -1263,9 +1263,22 @@ func TestTightenReadable(t *testing.T) {
 	if err := os.Chmod(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	TightenReadablePath(sub)
+	tightenPath(t, sub)
 	if info, _ := os.Stat(sub); info.Mode().Perm() != 0o700 {
 		t.Errorf("folder = %o", info.Mode().Perm())
+	}
+}
+
+// tightenPath runs TightenReadable on an open handle of path, as every caller does.
+func tightenPath(t *testing.T, path string) {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := TightenReadable(file); err != nil {
+		t.Fatal(err)
 	}
 }
 
