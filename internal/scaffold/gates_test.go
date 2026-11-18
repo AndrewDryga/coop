@@ -234,6 +234,25 @@ esac
 			}
 		})
 
+		t.Run("an inherited edition reads the workspace's", func(t *testing.T) {
+			repo := t.TempDir()
+			toml := "[package]\nedition.workspace = true\n\n[workspace.package]\nedition = \"2024\"\n"
+			if err := os.WriteFile(filepath.Join(repo, "Cargo.toml"), []byte(toml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			log := filepath.Join(t.TempDir(), "argv.log")
+			if code, stderr := run(t, repo, "rust", path, []string{"src/good.rs"}, "RUSTFMT_ARGV_LOG="+log); code != 0 || stderr != "" {
+				t.Fatalf("clean file: exit=%d stderr=%q, want 0 and nothing said", code, stderr)
+			}
+			argv, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(string(argv)); got != "--check -l --edition=2024 src/good.rs" {
+				t.Errorf("rustfmt argv = %q, want --edition=2024 as one argument", got)
+			}
+		})
+
 		t.Run("no Cargo.toml means no --edition flag", func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "argv.log")
 			if code, stderr := run(t, noCargoToml, "rust", path, []string{"src/good.rs"}, "RUSTFMT_ARGV_LOG="+log); code != 0 {

@@ -269,14 +269,15 @@ elif [ -n "$ex_files" ]; then
 fi`,
 	"rust": `# Rust: block the commit if staged .rs files aren't rustfmt-clean. rustfmt defaults to the
 # 2015 edition unless told otherwise, which hard-fails to parse async/gen code, so read the
-# crate's real edition off Cargo.toml first. -l lists exactly the files that need formatting;
+# crate's real edition off Cargo.toml first: the first quoted one, since a crate that inherits its
+# edition (edition.workspace = true) names it only in [workspace.package]. -l lists exactly the files that need formatting;
 # any other failure (crash, syntax error, a broken rustfmt.toml) fails open, with one warning
 # naming it.
 rs_files=$(echo "$staged" | grep '\.rs$' || true)
 if [ -n "$rs_files" ] && ! command -v rustfmt >/dev/null 2>&1; then
   echo "pre-commit: rustfmt is not installed here, so the Rust format check was skipped" >&2
 elif [ -n "$rs_files" ]; then
-  edition_line=$(grep -m1 '^edition' Cargo.toml 2>/dev/null)
+  edition_line=$(grep -m1 -E '^edition[[:space:]]*=[[:space:]]*"[0-9]+"' Cargo.toml 2>/dev/null)
   edition=${edition_line#*\"}; edition=${edition%%\"*}
   edflag=""; [ -n "$edition" ] && edflag="--edition=$edition"
   bad=""; failed=""
