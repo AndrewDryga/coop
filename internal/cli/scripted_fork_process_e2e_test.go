@@ -539,7 +539,7 @@ func TestProviderScriptedForkLoopMergeProcess(t *testing.T) {
 	}
 
 	result, trace = suite.run(t, []string{"fork", "merge", name, "--yes"}, processScenario(provider, nil, 0, ""))
-	if result.Err != nil || result.ExitCode != 0 || len(trace) != 0 || pathExists(ws) {
+	if result.Err != nil || result.ExitCode != 0 || launchedABox(trace) || pathExists(ws) {
 		t.Fatalf("confirmed merge = exit %d err %v trace %d fork %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, len(trace), pathExists(ws), result.Stdout, result.Stderr)
 	}
 	landed, err := os.ReadFile(filepath.Join(suite.layout.Repo, "loop-codex.txt"))
@@ -624,7 +624,7 @@ func TestProviderScriptedForkLoopReworksFailedCandidateHandoffBeforeMerge(t *tes
 	}
 
 	result, trace = suite.run(t, []string{"fork", "merge", name, "--yes"}, processScenario(provider, nil, 0, ""))
-	if result.Err != nil || result.ExitCode != 0 || len(trace) != 0 || pathExists(ws) {
+	if result.Err != nil || result.ExitCode != 0 || launchedABox(trace) || pathExists(ws) {
 		t.Fatalf("reworked candidate merge = exit %d err %v trace %d fork %v\nstdout:\n%s\nstderr:\n%s", result.ExitCode, result.Err, len(trace), pathExists(ws), result.Stdout, result.Stderr)
 	}
 	landed, err := os.ReadFile(filepath.Join(suite.layout.Repo, "loop-codex.txt"))
@@ -865,4 +865,10 @@ func writeForkProviderSessionAt(t *testing.T, suite *directProcessSuite, provide
 	if err := os.Chtimes(path, modTime, modTime); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// launchedABox reports whether a run started a box. A merge with no gate starts none, but it does
+// ask the runtime to stop the fork's services before deleting the fork.
+func launchedABox(trace []*processTrace) bool {
+	return slices.ContainsFunc(trace, func(entry *processTrace) bool { return entry.Run != nil })
 }
