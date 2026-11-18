@@ -11,6 +11,7 @@ package preset
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -404,12 +405,16 @@ func loadPreset(name, dir string, data []byte, readFile func(string) ([]byte, er
 	var y yamlPreset
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
-	if err := dec.Decode(&y); err != nil {
+	if err := dec.Decode(&y); err != nil && !errors.Is(err, io.EOF) { // EOF = an empty or all-comments file
 		var problems *yaml.TypeError
 		if errors.As(yamltext.Plain(err), &problems) {
 			return bad(append([]string{"Coop could not read this file as YAML."}, problems.Errors...)...)
 		}
 		return bad("Coop could not read this file as YAML.", strings.TrimSpace(err.Error()))
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return bad("This file holds more than one YAML document.", "Keep one document: remove the second --- and what follows it.")
 	}
 
 	p := &Preset{Name: name, Dir: dir}

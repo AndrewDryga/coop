@@ -111,6 +111,9 @@ func TestLoadValidation(t *testing.T) {
 	}{
 		{"malformed yaml", "lead: [not\n  a: map", nil, "could not read this file as YAML"},
 		{"missing lead agent", "roles: {}", nil, "The lead needs an agent."},
+		{"empty file", "", nil, "The lead needs an agent."},
+		{"comments only", "# nothing yet\n", nil, "The lead needs an agent."},
+		{"second document", "lead: {agent: claude}\n---\nlead: {agent: codex}\n", nil, "more than one YAML document"},
 		{"unknown lead agent", "lead: {agent: gpt4}", nil, `The lead's agent "gpt4" is not a valid target.`},
 		{"unknown role agent", "lead: {agent: claude}\nroles: {r: {mode: consult, agent: wat}}", nil, `Role "r" agent "wat" is not a valid target.`},
 		{"missing mode", "lead: {agent: claude}\nroles: {r: {agent: codex}}", nil, `Role "r" needs a mode.`},
