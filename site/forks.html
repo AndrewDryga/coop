@@ -277,6 +277,10 @@ and so does a loop you resume with <code>coop fork perf --loop -d</code>. It nev
 model or account on its own. Pass a target to switch, and the fork remembers the new one. If the
 saved account has been removed, co:op names the saved target and says how to pick another.
 <code>coop fork ls</code> shows each fork&#39;s agent.</p>
+<p>A fork made from a preset (<code>coop fork perf frontier</code>) remembers the preset the same way, and
+<code>coop fork perf</code> and <code>coop fork perf --loop -d</code> run it again with its lead&#39;s model and account, its
+roles and its ladder. If the preset no longer loads, co:op names it and stops. An editor session
+does not run presets yet, so <code>coop fork perf acp</code> on such a fork asks you to name a target.</p>
 <p>Reopening a fork also resumes the last conversation. co:op saves a session ID for each fork,
 provider and account in the fork&#39;s git-excluded <code>.coop/</code> folder, and uses it to resume the exact
 session for the active account and the fork&#39;s directory inside the box.</p>
@@ -369,7 +373,8 @@ window closes.</p>
 directory with the first of these that&#39;s set:</p>
 <ol>
 <li><code>COOP_EDITOR</code>, a co:op-only override</li>
-<li><code>git config --global core.editor</code>, your normal Git editor (co:op reads only the global value)</li>
+<li><code>git config --global core.editor</code>, your normal Git editor (co:op reads only the global value,
+including files it <code>[include]</code>s)</li>
 <li>a GUI editor detected on <code>PATH</code>: <code>cursor</code>, <code>code</code>, <code>zed</code>, <code>idea</code>, <code>subl</code></li>
 <li><code>$VISUAL</code> or <code>$EDITOR</code></li>
 </ol>
@@ -421,7 +426,9 @@ these change what future boxes can see.</p>
 <p>The scan checks the lines the fork adds for credential patterns from AWS, OpenAI, Anthropic,
 GitHub, Slack and other providers, and for random-looking values assigned to secret-named keys, even
 if the file&#39;s name doesn&#39;t look secret. A credential your branch already has doesn&#39;t hold up a fork
-that edits its file. co:op refuses to merge while your own working tree has uncommitted changes.</p>
+that edits its file. co:op refuses to merge while your own working tree has uncommitted changes to
+tracked files. An untracked file stops the merge only when the fork would land on it, and co:op
+names it.</p>
 <p>co:op asks before merging, then offers to delete the fork after the merge. In a non-interactive
 shell, such as CI or a pipe, you must confirm up front, or co:op refuses to run the merge.</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Land it table"><table class="ref">

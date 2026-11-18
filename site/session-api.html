@@ -205,7 +205,9 @@ incomplete tree.</p>
 <h3 id="workspace-storage">Workspace storage</h3>
 <p>Each hello message can carry a <code>storage</code> object that reports disk space on the volume holding the
 worker&#39;s fork workspaces. The connector reads it from the daemon&#39;s
-<a href="#health"><code>GET /v1/storage</code></a> endpoint and forwards it unchanged.</p>
+<a href="#health"><code>GET /v1/storage</code></a> endpoint and forwards it unchanged. The read runs in the background, so
+a slow measurement never delays a poll: each hello carries the last report, and the first hello
+after the worker connects may have none. Use <code>measured_at</code> to see how old it is.</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Workspace storage code example" tabindex="0" data-copy-source=""><code class="language-json">{
   &#34;version&#34;: 1,
   &#34;measured_at&#34;: &#34;2026-09-11T04:05:06Z&#34;,
@@ -425,6 +427,12 @@ operation alone. Its <code>headers</code> names must be lowercase, at most 16 of
 <code>prefer</code>, <code>if-match</code>, <code>x-coop-expected-revision</code> and <code>x-coop-workspace-checkpoint</code>. An inline
 <code>body</code> is JSON of at most 256 KiB. A larger body travels separately, named by <code>body_ref</code> with its
 <code>sha256</code> and <code>byte_size</code>.</p>
+<p>Two reads come back filtered, so host paths stay on the worker. <code>GET /v1/sessions/{id}/events</code>
+returns each event as the connector narrates it: activity events carry the filtered payload
+described under <a href="#activity-events">Activity events</a>, and lifecycle events other than <code>network</code>
+carry none.
+<code>GET /v1/storage</code> returns only its <code>storage</code> object, the one the hello carries; the per-fork
+inventory stays on the worker.</p>
 <h3 id="idempotency-keys">Idempotency keys</h3>
 <p>Choose one key for each action and keep using that key when you retry it. If the method, key and
 normalized request body match, co:op returns the saved result without running the action again.
@@ -1034,6 +1042,13 @@ the turn uses the session&#39;s. Sessions and turns report the binding they used
 and <code>session.target_rotated</code> event. For a completed turn, <code>assistant_message</code> is the response
 to show the user. co:op doesn&#39;t publish hidden reasoning, raw tool calls, raw ACP frames or box
 logs in that response.</p>
+<p>A completed turn&#39;s <code>stop_reason</code>, also in its <code>turn.completed</code> event, says why the agent stopped.
+<code>end_turn</code> is a finished answer. <code>max_tokens</code> (the agent ran out of output tokens),
+<code>max_turn_requests</code> (it hit its request limit) and <code>refusal</code> (it declined) still complete the turn
+with whatever reply the agent gave, so check the reason before you treat <code>assistant_message</code> as
+final. With semantic validation, the candidate carries the reason while it waits and keeps it when
+you accept it. A turn the agent ends with an error fails with <code>acp_agent_error</code>; <code>acp_cancelled</code>
+means the turn was really cancelled.</p>
 <p>A completed turn includes <code>usage</code> when the adapter reports it. The fields are <code>input_tokens</code>,
 <code>cached_input_tokens</code>, <code>output_tokens</code>, <code>reasoning_tokens</code> and, when available, the provider&#39;s
 <code>cost_usd</code>. Check <code>cost_recorded</code> to distinguish a reported zero cost from a missing cost.</p>
@@ -1384,7 +1399,9 @@ read that found no activity:</p>
 <code>not_filtered</code>. The network settings (<code>mode</code>, <code>fingerprint</code>) come from the saved session record and
 can&#39;t change. If the host can&#39;t read the network registry, those settings stay available while the
 affected sections report that they couldn&#39;t be read. Before its first run, a filtered session
-reports <code>no_run</code> and a <code>provisional</code> receipt with <code>run_count</code> <code>0</code>, not an empty activity counter.</p>
+reports <code>no_run</code> and a <code>provisional</code> receipt with <code>run_count</code> <code>0</code>, not an empty activity counter.
+A session&#39;s run records are kept for as long as the session, so an old session&#39;s evidence and its
+final receipt stay as they were; only runs that belong to no session expire after 90 days.</p>
 <p>Counters are unsigned decimal strings so JavaScript clients can preserve values above 2^53
 without rounding them. A <code>null</code> counter means the metric was not measured, never that it was
 <code>0</code>.</p>

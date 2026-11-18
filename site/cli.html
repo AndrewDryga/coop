@@ -747,12 +747,13 @@ EXAMPLES
 OPTIONS
   --as &lt;label&gt;  name the person or agent working on it
   --pid &lt;n&gt;     bind the claim to an existing process
-  --force       take over a claim held by another live process
+  --force       take over a person&#39;s claim or another live process&#39;s
 
   Moves a todo task to in progress. An agent&#39;s claim normally follows its
-  process. A claim made at a terminal stays until you release or finish it.
-  Taking over with --force ends the other process&#39;s lease, and that
-  process can no longer finish, block or release the task.
+  process. A claim made at a terminal stays until you release or finish it;
+  an agent&#39;s claim over it is refused without --force. Taking over a
+  process&#39;s claim with --force ends its lease, and that process can no
+  longer finish, block or release the task.
 
   A blocked task must return to todo first, through coop tasks unblock, even
   when its decision is answered. Completed tasks stay in the archive.

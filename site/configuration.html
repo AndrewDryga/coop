@@ -149,7 +149,7 @@ or <code>0</code>/<code>false</code>/<code>no</code>/<code>off</code> in any let
 <tr>
 <td><code>COOP_<wbr/>IMAGE</code></td>
 <td>auto</td>
-<td>Forces a specific image, overriding <code>.agent/Dockerfile</code> detection.</td>
+<td>Forces a specific image, overriding <code>.agent/Dockerfile</code> detection. co:op never builds or replaces it: with it set, <code>coop build</code> and every automatic build refuse, so pull or build that image yourself.</td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>BASE_<wbr/>IMAGE</code></td>
@@ -299,6 +299,11 @@ asks for.</p>
 <td>The most output, in bytes, <code>coop-consult</code> accepts from a peer&#39;s reply or diagnostics. It discards a larger reply. Set it in <code>agents/env</code>. See <a href="agents.html#limits">limits</a>.</td>
 </tr>
 <tr>
+<td><code>COOP_<wbr/>DELEGATE_<wbr/>TIMEOUT</code></td>
+<td><code>1800</code> (30 minutes)</td>
+<td>How long one <code>coop-delegate</code> attempt may run, in whole seconds from <code>1</code> to <code>86400</code>. Set it in <code>agents/env</code>. See <a href="agents.html#delegates">delegates</a>.</td>
+</tr>
+<tr>
 <td><code>COOP_<wbr/>PRESETS_<wbr/>DIR</code></td>
 <td><code>~/.config/coop/presets</code></td>
 <td>Absolute path of the folder for global presets. See <a href="agents.html#where-presets-live">where presets live</a>.</td>
@@ -433,7 +438,7 @@ co:op doesn&#39;t read, the error names the path and line. Setting the same vari
 doesn&#39;t let a broken file pass. Every command except <code>coop version</code> stops until you fix the file.</p>
 <p>co:op reads <code>COOP_HOME</code>, <code>COOP_CONF</code>, <code>NO_COLOR</code>, <code>COOP_ACP_WARM</code>, <code>COOP_ACP_TRACE</code> and
 <code>COOP_SPINNER</code> only from the process environment, so you can&#39;t set them inside <code>coop.conf</code>. The box
-reads <code>COOP_CONSULT_STREAM_LIMIT</code>, so it belongs in <code>agents/env</code>.</p>
+reads <code>COOP_CONSULT_STREAM_LIMIT</code> and <code>COOP_DELEGATE_TIMEOUT</code>, so they belong in <code>agents/env</code>.</p>
 <h3 id="what-can-sync">What can sync</h3>
 <p><code>~/.config/coop</code> holds your settings and accounts, so you can sync it across machines with Dropbox
 or a similar service. If two machines refresh the same single-use sign-in, one of them can get
@@ -482,7 +487,7 @@ Reporting keys belong in host environment variables, not <code>coop.conf</code>,
 </tr>
 <tr>
 <td><code>box:</code></td>
-<td>The box policy: the <a href="box.html#your-own-image-agentdockerfile"><code>dockerfile</code> and <code>compose</code> paths</a>, <a href="box.html#box-only-environment-boxenv"><code>env</code> defaults</a>, egress and <a href="networking.html"><code>egress_<wbr/>rules:</code></a>, resource caps (<code>memory</code>, <code>cpus</code>, <code>pids</code>), <code>auto_<wbr/>up</code> and <code>network</code>.</td>
+<td>The box policy: the <a href="box.html#your-own-image-agentdockerfile"><code>dockerfile</code> and <code>compose</code> paths</a>, <a href="box.html#box-only-environment-boxenv"><code>env</code> defaults</a>, egress and <a href="networking.html"><code>egress_<wbr/>rules:</code></a>, resource caps (<code>memory</code>, <code>cpus</code>, <code>pids</code>; <code>pids</code> can only lower the process limit, so raising or removing it takes your own <code>COOP_<wbr/>PIDS</code>), <code>auto_<wbr/>up</code> and <code>network</code>.</td>
 </tr>
 <tr>
 <td><code>services:</code></td>
@@ -517,7 +522,7 @@ restrictions but can&#39;t relax them on its own:</p>
 <h3 id="review-checks">Review checks</h3>
 <p><code>review:</code> applies only to the check that <code>coop fork review --gate</code> or a controller review runs:</p>
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Review checks code example" tabindex="0" data-copy-source=""><code class="language-yaml">review:
-  compose: .agent/review-compose.yml  # services the check needs, such as a test database
+  compose: dev/review-compose.yml  # services the check needs, such as a test database
   env:
     DATABASE_URL: postgres://postgres:test@db:5432/app_test
 </code></pre></div>

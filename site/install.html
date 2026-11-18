@@ -161,6 +161,10 @@ service you start yourself keeps your compose file&#39;s own settings.</p>
 </section><section class="doc-section reference-section" id="update"><h2>Update</h2>
 <p><code>coop update</code> updates the binary, then prepares the image for this project&#39;s network mode.
 <a href="migrating.html">Upgrading</a> lists what to change when a new version needs it.</p>
+<p><code>coop update</code> and <code>install.sh</code> check a release the same way. Both always check the archive against
+the release&#39;s <code>checksums.txt</code>. When <a href="https://github.com/sigstore/cosign" target="_blank" rel="nofollow noopener">cosign</a> is installed, both
+also verify the release signature and stop if it is missing or does not match. Without cosign, the
+signature is not checked; see <a href="#verifying-a-download">Verifying a download</a> to check it by hand.</p>
 </section><section class="doc-section reference-section" id="verifying-a-download"><h2>Verifying a download</h2>
 <p><code>install.sh</code> comes from the <code>main</code> branch, served by GitHub Pages at coop.dryga.com. You can also
 fetch it from <code>https://raw.githubusercontent.com/AndrewDryga/coop/main/install.sh</code>.</p>

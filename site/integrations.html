@@ -476,6 +476,9 @@ into an Authorization header using the environment variable&#39;s value.</p>
 <code>${VARIABLE}</code> becomes an environment-variable reference, which keeps the secret out of the
 generated config. Codex can&#39;t represent a mixed value such as <code>Bearer ${TOKEN}</code>, so use
 <code>bearer_token_env_var</code> for that form.</p>
+<p>For Codex, Gemini and Grok, every variable a header names must be set: a launch stops and names
+the variable when it is not, rather than sending the literal <code>${…}</code> text to the server. The value
+is read once at launch and stays fixed for the run.</p>
 <h3 id="sse-servers">SSE servers</h3>
 <p>The agents handle a legacy SSE server (<code>&#34;type&#34;: &#34;sse&#34;</code>) differently:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="SSE servers table"><table class="ref">

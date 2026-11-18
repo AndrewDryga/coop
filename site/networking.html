@@ -800,7 +800,8 @@ shows a count and the <code>--all</code> option. A run that is still going is ma
 <code>--all-projects</code> to see runs from every project, labeled by name and path. With <code>--json</code>, the
 listing has <code>total</code> and <code>more</code>, each run has <code>live</code>, and with <code>--all-projects</code> each run also has
 <code>project_name</code> and <code>project_path</code>. co:op keeps a finished run&#39;s record for 90 days after it ends.
-If cleanup is still pending, it keeps the record until cleanup finishes.</p>
+If cleanup is still pending, it keeps the record until cleanup finishes. A worker session&#39;s runs
+are kept for as long as the session, so its network evidence and final receipt never change.</p>
 <p>Each run also keeps a copy of the rules it started with, which the <code>--run</code> option below reads. co:op
 removes the saved copy of a launch&#39;s rules only when no retained run record refers to it and no
 launch has used it for 90 days. It keeps the copy a worker session was created with for the whole

@@ -203,10 +203,12 @@ passed. It can also resume an in-progress task that no co:op process, such as a 
 <code>coop loop</code>, has locked.</p>
 <p><code>coop tasks claim &lt;id&gt;</code> records you as the owner and exits, without keeping a lock open. The loop
 leaves your task alone and shows the owner and the <code>coop tasks release &lt;id&gt;</code> command. Your claim
-never expires: only an explicit <code>release</code>, <code>block</code>, <code>unblock</code> or <code>done</code> clears it.</p>
-<p><code>coop tasks claim &lt;id&gt; --force</code> takes over a claim that another running process holds. It ends that
-process&#39;s <code>coop tasks lease</code>, and that process can no longer complete, block, release or lease the
-task, or claim it back without <code>--force</code>, from the host or from a box.</p>
+never expires: only an explicit <code>release</code>, <code>block</code>, <code>unblock</code> or <code>done</code> clears it. An agent&#39;s
+<code>coop tasks claim &lt;id&gt;</code> over it is refused and names you, on the host as in a box.</p>
+<p><code>coop tasks claim &lt;id&gt; --force</code> takes over a person&#39;s claim, or a claim that another running
+process holds. Over a running process&#39;s claim, it ends that process&#39;s <code>coop tasks lease</code>, and that
+process can no longer complete, block, release or lease the task, or claim it back without
+<code>--force</code>, from the host or from a box.</p>
 <p>Stop every running co:op process, such as <code>coop loop</code>, before a major-version upgrade. Processes
 from different major versions can&#39;t share a task queue.</p>
 <h3 id="completion-records">Completion records</h3>
@@ -323,9 +325,11 @@ fail the review.</p>
 </tbody>
 </table></div></div>
 <p>Set <code>agent:</code> for <code>work</code>, <code>between</code>, <code>signoff</code> or <code>verify</code> to choose its models. Each setting takes
-a fallback list of targets (<code>provider[:model][/effort][@account]</code>) or preset names. For example,
-<code>signoff.agent</code> can use a stronger model to review work done by a cheaper <code>work.agent</code>. Every
-step except <code>work</code> also accepts a <code>prompt:</code>.</p>
+a fallback list of targets (<code>provider[:model][/effort][@account]</code>) or preset names. A preset name
+runs that preset&#39;s lead targets, in its place in the list. A word that names neither an agent nor
+a preset stops the loop before it starts, naming the step. For example, <code>signoff.agent</code> can use a
+stronger model to review work done by a cheaper <code>work.agent</code>. Every step except <code>work</code> also
+accepts a <code>prompt:</code>.</p>
 <p>Custom prompts add to co:op&#39;s built-in checks and don&#39;t replace them:</p>
 <ul>
 <li><code>signoff.prompt</code> adds checks to final review. co:op reopens a task that fails one, as it does

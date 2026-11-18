@@ -104,6 +104,8 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#unreleased-a-gemini-settings-file-from-before-v11-no-longer-picks-the-key">Unreleased: a Gemini settings file from before v11 no longer picks the key</a></li>
+<li><a href="#v1310-per-project-tools-git-folders-and-docker-engine-28">v13.1.0: per-project tools, Git folders and Docker Engine 28</a></li>
 <li><a href="#v1300-old-host-state-is-refused-or-read-as-unknown">v13.0.0: old host state is refused or read as unknown</a></li>
 <li><a href="#v1300-old-session-store-data-is-refused-by-name">v13.0.0: old session store data is refused by name</a></li>
 <li><a href="#v1300-old-network-records-are-refused-by-name">v13.0.0: old network records are refused by name</a></li>
@@ -112,8 +114,10 @@
 <li><a href="#v1300-coop-codex--p-runs-one-prompt">v13.0.0: coop codex -p runs one prompt</a></li>
 <li><a href="#v1300-boxes-use-filtered-networking-by-default">v13.0.0: boxes use filtered networking by default</a></li>
 <li><a href="#v1300-the-no-network-mode-is-called-offline">v13.0.0: the no-network mode is called offline</a></li>
+<li><a href="#v1300-coop-tasks-watch---json-names-task-states-like-its-counts">v13.0.0: coop tasks watch --json names task states like its counts</a></li>
 <li><a href="#v1200-network-records-are-renamed">v12.0.0: network records are renamed</a></li>
 <li><a href="#v1200-fork-records-move-into-coops-private-folder">v12.0.0: fork records move into Coop&#39;s private folder</a></li>
+<li><a href="#v1200-read-only-and-bare-runs-are-removed">v12.0.0: read-only and bare runs are removed</a></li>
 <li><a href="#v1110-project-image-preparation">v11.1.0: project image preparation</a></li>
 <li><a href="#v1100-upgrading-from-v1012">v11.0.0: upgrading from v10.1.2</a></li>
 <li><a href="#v1012-upgrading-from-v810">v10.1.2: upgrading from v8.1.0</a></li>
@@ -129,6 +133,27 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
+</section><section class="doc-section reference-section" id="unreleased-a-gemini-settings-file-from-before-v11-no-longer-picks-the-key"><h2>Unreleased: a Gemini settings file from before v11 no longer picks the key</h2>
+<p>Coop no longer reads <code>profiles/&lt;account&gt;/settings.json</code> under <code>~/.config/coop/agents/gemini/</code> to
+choose between <code>GEMINI_API_KEY</code> and <code>GOOGLE_API_KEY</code>. The key is chosen in <code>agents/env</code>: keep the
+one you want there. A leftover file that selected <code>vertex-ai</code> no longer picks the Vertex key, and
+one that selected <code>oauth-personal</code>, or nothing, no longer hides a key you set. The file is not
+changed or deleted.</p>
+</section><section class="doc-section reference-section" id="v1310-per-project-tools-git-folders-and-docker-engine-28"><h2>v13.1.0: per-project tools, Git folders and Docker Engine 28</h2>
+<ul>
+<li><strong><code>COOP_NO_ASDF</code> is retired.</strong> A <code>coop.conf</code> that still sets it stops every command except
+<code>coop version</code>, and the error names the file and line. Delete the line.</li>
+<li><strong>Offline runs need a tools image.</strong> A repo with a <code>.tool-versions</code> and no <code>.agent/Dockerfile</code>
+now runs on an image with its tools built in. An open-network run builds it when it is missing;
+before an offline run, run <code>coop build</code> once.</li>
+<li><strong>The <code>coop-asdf</code> and <code>coop-cache</code> volumes are no longer used.</strong> Remove them with
+<code>docker volume rm coop-asdf coop-cache</code>; on native Linux with IDs other than 1000, add your user
+and group IDs to the names.</li>
+<li><strong>A checkout made with <code>git init --separate-git-dir</code> is refused.</strong> Move its Git folder back into
+<code>.git</code>; the message gives the commands.</li>
+<li><strong>Filtered runs with Compose services need Docker Engine 28 or later.</strong> With an older Docker they
+refuse to start services and say so. Upgrade Docker.</li>
+</ul>
 </section><section class="doc-section reference-section" id="v1300-old-host-state-is-refused-or-read-as-unknown"><h2>v13.0.0: old host state is refused or read as unknown</h2>
 <p>Coop no longer reads these records of builds up to v12.1.0. None is changed or deleted.</p>
 <ul>
@@ -265,6 +290,9 @@ refuses <code>none</code> with a message that names <code>offline</code>.</p>
 <li>Replace <code>COOP_EGRESS=none</code> with <code>COOP_EGRESS=offline</code> in your environment and <code>coop.conf</code>.</li>
 <li>Controller JobSpec documents and the session API keep <code>none</code> for their offline mode.</li>
 </ul>
+</section><section class="doc-section reference-section" id="v1300-coop-tasks-watch---json-names-task-states-like-its-counts"><h2>v13.0.0: <code>coop tasks watch --json</code> names task states like its counts</h2>
+<p>Each task&#39;s <code>state</code> is now <code>todo</code>, <code>in_progress</code>, <code>blocked</code> or <code>done</code> instead of its folder name,
+such as <code>10_in_progress</code>. Update scripts that matched the folder names.</p>
 </section><section class="doc-section reference-section" id="v1200-network-records-are-renamed"><h2>v12.0.0: network records are renamed</h2>
 <p>co:op now names each project&#39;s network records by the project&#39;s folder.</p>
 <ul>
@@ -301,6 +329,16 @@ worker&#39;s home folder, because its job forks live under the state root.</li>
 <li>To go back to an older co:op, move the folder back first:
 <code>mv ~/.local/state/coop/forks/&lt;key&gt; &lt;project&gt;-forks/.coop</code>. <code>&lt;key&gt;</code> is the SHA-256 of the
 project&#39;s real path: <code>printf %s &#34;$(cd &lt;project&gt; &amp;&amp; pwd -P)&#34; | shasum -a 256</code>.</li>
+</ul>
+</section><section class="doc-section reference-section" id="v1200-read-only-and-bare-runs-are-removed"><h2>v12.0.0: read-only and bare runs are removed</h2>
+<p><code>--readonly</code> and <code>--bare</code> are refused as unknown options, and every box is writable.</p>
+<ul>
+<li>For a read-only second opinion, use <code>--peer &lt;target&gt;</code>.</li>
+<li>For isolation, use a fork: <code>coop fork &lt;name&gt; &lt;target&gt;</code>.</li>
+<li><code>--bare</code> has no replacement. Claude Code&#39;s own <code>--bare</code> still works after <code>--</code>.</li>
+<li>A session job that asks for <code>mode: &#34;readonly&#34;</code> or <code>&#34;bare&#34;</code> is refused. Send <code>mode: &#34;normal&#34;</code>,
+with <code>repository_read_only: true</code> for a job that must not change its repository.</li>
+<li>A session created in a removed mode can&#39;t run again. Close and discard it.</li>
 </ul>
 </section><section class="doc-section reference-section" id="v1110-project-image-preparation"><h2>v11.1.0: project image preparation</h2>
 <p>If you upgrade from v11.0.2 or earlier, run <code>coop update --box-only</code> once with the newly installed
@@ -504,34 +542,38 @@ workspace to you.</li>
 <h3 id="strict-coopconf-one-removal-verb-and-supported-runtimes">Strict <code>coop.conf</code>, one removal verb and supported runtimes</h3>
 <p>co:op validates <code>coop.conf</code> on every command. An unknown key, a duplicate key, a malformed line or
 a retired key stops co:op before any work, and the error names the file and line. Replace the
-retired loop settings with their <code>.agent/loop.yaml</code> fields:</p>
+retired loop settings with their <code>.agent/loop.yaml</code> fields, and delete the rest:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Strict coop.conf, one removal verb and supported runtimes table"><table class="ref">
 <thead>
 <tr>
 <th scope="col">Retired <code>coop.conf</code> key</th>
-<th scope="col"><code>.agent/loop.yaml</code> field</th>
+<th scope="col">Replace with</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>COOP_<wbr/>LOOP_<wbr/>MODEL</code></td>
-<td><code>work.agent</code></td>
+<td><code>work.agent</code> in <code>.agent/loop.yaml</code></td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>REVIEW_<wbr/>MODEL</code></td>
-<td><code>signoff.agent</code></td>
+<td><code>signoff.agent</code> in <code>.agent/loop.yaml</code></td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>MAX_<wbr/>REVIEW_<wbr/>ROUNDS</code></td>
-<td><code>signoff.rounds</code></td>
+<td><code>signoff.rounds</code> in <code>.agent/loop.yaml</code></td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>LOOP_<wbr/>CMD</code></td>
-<td><code>work.command</code></td>
+<td><code>work.command</code> in <code>.agent/loop.yaml</code></td>
 </tr>
 <tr>
 <td><code>COOP_<wbr/>PREFLIGHT</code></td>
-<td><code>preflight.enabled</code></td>
+<td><code>preflight.enabled</code> in <code>.agent/loop.yaml</code></td>
+</tr>
+<tr>
+<td><code>COOP_<wbr/>NO_<wbr/>ASDF</code> (retired in v13.1.0)</td>
+<td>nothing: delete the line</td>
 </tr>
 </tbody>
 </table></div></div>

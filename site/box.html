@@ -238,7 +238,9 @@ host, even when a parent folder is replaced. Existing hardlinks keep their prote
 original file is replaced.</li>
 <li>A new file whose name is on the built-in list, such as <code>late.pem</code> or <code>.env</code>, is unreadable in the
 box as soon as it exists, in any letter case or Unicode spelling. The box can still create,
-overwrite, truncate or delete such a file, but it can&#39;t read one or give it another name.</li>
+overwrite, truncate or delete such a file, but it can&#39;t read one, give it another name, or rename
+another file to such a name. A tool in the box that saves a new secret file by writing a
+temporary file and renaming it must write it inside an already hidden folder.</li>
 <li>Restart the affected agent or service after you change <code>.coopignore</code>, create a hidden folder,
 mark an already-public file or folder as secret, or create an unprotected hardlink to a secret
 from the host. Protection that is already running does not reload its rules or revoke memory
@@ -323,7 +325,8 @@ checkout, use <a href="forks.html#isolated-write-forks"><code>coop fork &lt;name
 them. Hiding a file from the box does not prevent committing or pushing it.</li>
 <li><code>--include-ignored</code> expands the scan to the whole visible tree.</li>
 <li>If the scan can&#39;t read a file, it fails and names that file, so a permission error can&#39;t produce
-a clean result.</li>
+a clean result. If it can&#39;t open a folder, the default scan still passes but names the folder
+in a warning, since files Git does not track there were not checked; <code>--include-ignored</code> fails.</li>
 <li>It also lists changed files that can affect what runs on your machine, such as commit hooks,
 editor or agent settings, Compose files and the Makefile. Review them before running anything.
 This separate report never changes the exit code.</li>
@@ -733,8 +736,9 @@ coop update --box-only   # just prepare this project&#39;s box image
 co:op version it installed. A filtered project keeps co:op&#39;s pinned client base, and an open or
 offline project gets fresh OS packages. See <a href="#stable-and-fresh-rebuilds">stable and fresh rebuilds</a>.</p>
 <p>If GitHub has a newer release, <code>coop update</code> downloads its versioned archive and checksum, verifies
-the archive and replaces the <code>coop</code> binary atomically. The new binary takes effect on your next
-<code>coop</code> run.</p>
+the archive and replaces the <code>coop</code> binary atomically. If cosign is installed, it first verifies the
+release signature, as <code>install.sh</code> does, and stops if the signature is missing or does not match.
+The new binary takes effect on your next <code>coop</code> run.</p>
 <p>When the binary is not replaced:</p>
 <ul>
 <li>A dev or source build, or a binary that is already current or newer, skips the self-update with a
