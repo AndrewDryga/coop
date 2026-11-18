@@ -25,6 +25,8 @@ func TestMatchGlob(t *testing.T) {
 		{"lib/*.go", "lib/a/b.go", false},
 		{"docs/**/*.md", "docs/a/b.md", true},
 		{"docs/**/*.md", "docs/a.md", true},
+		{"./portal/**", "portal/lib/x.ex", true},
+		{"portal//*.ex", "portal/x.ex", true},
 	}
 	for _, c := range cases {
 		if got := matchGlob(c.pat, c.name); got != c.want {

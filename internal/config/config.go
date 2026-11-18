@@ -740,9 +740,10 @@ func (c *Config) EffortFor(agent string) string {
 	return c.AgentEffortDefault(agent)
 }
 
-// AgentProfileDir is the host folder for one named credential profile of an agent:
-// <ConfigDir>/<agent>/profiles/<name>/. "default" is just the profile named "default" —
-// every login lives under profiles/, so this always resolves there.
+// AgentProfileDir is the folder where Coop before v11 kept one named login of an agent:
+// <ConfigDir>/<agent>/profiles/<name>/ ("" is the profile named "default"). Logins now live under
+// credentials/; this folder is only read, to list old account names and to spot a login from
+// before v11 that needs coop login again.
 func (c *Config) AgentProfileDir(agent, name string) string {
 	if name == "" {
 		name = DefaultProfile
@@ -1407,9 +1408,8 @@ func loadDefaultsFile(path string) map[string]string {
 		}
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
-		// Strip one matched pair of surrounding quotes (not a greedy cutset), so a
-		// shell-quoted command value keeps its inner quotes for shellSplit:
-		//   COOP_GATE=bash -lc "npm test"   stays intact (no outer pair to strip).
+		// Strip one matched pair of surrounding quotes (not a greedy cutset): claude="work" reads
+		// as the profile work, and a value with quotes only inside keeps them.
 		if len(val) >= 2 && (val[0] == '"' || val[0] == '\'') && val[len(val)-1] == val[0] {
 			val = val[1 : len(val)-1]
 		}

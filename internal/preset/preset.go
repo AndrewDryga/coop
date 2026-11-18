@@ -642,7 +642,7 @@ func promptText(rel string, readFile func(string) ([]byte, error)) (string, []st
 	return strings.TrimSpace(string(data)), nil
 }
 
-// Delegates returns the delegate roles, in name order.
+// Delegates returns the delegate roles, in preset order.
 func (p *Preset) Delegates() []Role {
 	var out []Role
 	for _, r := range p.Roles {

@@ -193,7 +193,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		bar = newLoopBar(region, liveWidth, time.Now(), c0, activity)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel
-		// Route coop's own status lines (ui.Info etc. — from here AND box.Run's startup: "shadowed",
+		// Route coop's own status lines (ui.Note etc. — from here AND box.Run's startup: "shadowed",
 		// "starting sibling services") through the bar too, so they scroll above it instead of
 		// overprinting it. Deferred clear restores plain stderr once the iteration's bar is gone.
 		ui.SetLiveSink(bar.history)

@@ -26,9 +26,8 @@ import (
 // .agent/project.yaml (members never get their own) — so they're pure task-queue holders. Each member
 // still has its OWN tasks (per-component work) and backlog (the xx_backlog drawer, created on demand by
 // `coop backlog add`); the root keeps a queue too, for changes that span members. Writes only what's absent.
-// repo is the monorepo root and dir the member: progress is reported repo-relative, so a nested
-// member reads as terraform/environments/va1/… and two members with the same basename stay
-// distinct (rendering from the member's PARENT collapsed both to "va1/…").
+// repo is the monorepo root, which bounds every write, and dir the member. It reports nothing:
+// the caller names the members it set up.
 func InitSubproject(repo, dir string) error {
 	_, err := (&scaffolder{repo: repo}).initQueueFolder(filepath.Join(dir, ".agent", "tasks"))
 	return err
@@ -836,8 +835,9 @@ func indexOfLine(lines []string, want string) int {
 	return -1
 }
 
-// projectYAML is the new-file template: every setting a project can hold, commented out at its
-// default, so the file itself is the reference. The prose stays short because `coop help init`
+// projectYAML is the new-file template: the project's settings, commented out at their default,
+// so the file itself is the reference (review:, which only a review check reads, is left to
+// docs/configuration.md). The prose stays short because `coop help init`
 // and the command pages carry the explanation — a config comment that repeats a help page goes
 // stale on its own schedule. A re-init never rewrites an existing file.
 func projectYAML(subprojectEntries []string, services ...string) string {

@@ -134,10 +134,6 @@ type Review struct {
 	Env     map[string]string `yaml:"env"`
 }
 
-// Load reads <repo>/.agent/project.yaml. A missing file is not an error — it returns an empty Project,
-// the common single-repo case. A present-but-invalid file (bad YAML, an unknown key, an out-of-range
-// port, a bad box value, or a subproject path that escapes the repo) IS an error, so a typo surfaces
-// instead of silently doing nothing. Subproject paths are cleaned in place.
 // FileError is a refusal to read the project file, kept as the sentence that says what is wrong
 // with it. The file's name is not in it — every one of these is about File — and the block a person
 // sees is built by the CLI, which owns the terminal (internal/importdag_test.go).
@@ -165,6 +161,10 @@ func fileReason(err error) string {
 	return msg
 }
 
+// Load reads <repo>/.agent/project.yaml. A missing file is not an error — it returns an empty Project,
+// the common single-repo case. A present-but-invalid file (bad YAML, an unknown key, an out-of-range
+// port, a bad box value, or a subproject path that escapes the repo) IS an error, so a typo surfaces
+// instead of silently doing nothing. Subproject paths are cleaned in place.
 func Load(repo string) (*Project, error) {
 	data, err := readProject(repo)
 	if err != nil {

@@ -258,8 +258,8 @@ func (s *scaffolder) writeContentIfAbsent(dest, content string, perm os.FileMode
 }
 
 // writeNewFile writes data to dest with perm (creating parent dirs), unless dest already
-// exists — then it's left untouched. Either way it reports what it did. Shared tail of the
-// two IfAbsent wrappers, which differ only in their byte source.
+// exists — then it's left untouched, silently. Shared tail of the two IfAbsent wrappers, which
+// differ only in their byte source.
 func (s *scaffolder) writeNewFile(dest string, data []byte, perm os.FileMode) error {
 	_, err := writeNewRepoFile(s.repo, dest, data, perm, writeAndSync)
 	return err

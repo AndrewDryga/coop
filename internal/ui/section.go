@@ -9,8 +9,7 @@ import (
 // An interactive launch narrates its host-side work as SECTIONS a person reads top to bottom —
 // `Protecting secrets`, `Internet access`, `Starting Codex` — before the agent's own output
 // begins. The invocation already says coop is speaking, so a section heading is bold and
-// unprefixed; the cyan `coop:` anchor (Info) is kept for lifecycle lines interleaved AFTER
-// arbitrary agent output, where the speaker is no longer obvious. See command-output-tiers.
+// unprefixed, as every Note line is, even after agent output. See command-output-tiers.
 
 // Section prints a bold section heading, preceded by a blank line so consecutive sections read
 // as separate paragraphs (the same shape Steps uses for its header).

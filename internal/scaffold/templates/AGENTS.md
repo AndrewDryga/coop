@@ -103,7 +103,7 @@ drain `.agent/tasks/` unattended, `/investigate` to root-cause a failure before
 fixing, `/verify-api` before calling anything you're not sure exists, and
 `/review-board` for a thorough multi-hat review before landing. A fresh scaffold keeps them in
 `.agent/skills/`; an existing real `.claude/skills/` remains the project-owned source instead.
-Selected agent dirs (`.claude`, `.codex`, `.gemini`) link to the established source.
+Selected agent dirs (`.claude`, `.codex`, `.gemini`, `.grok`) link to the established source.
 
 ## Taste
 Every correction from me becomes a rule the same day: fix it, record it in

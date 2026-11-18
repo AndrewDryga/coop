@@ -126,7 +126,7 @@ func firstMatch(globs, scope []string) (glob, scopePath string, ok bool) {
 // matchGlob reports whether the slash-path name matches pattern, supporting `*` within a segment
 // (via path.Match) and `**` across zero or more segments. Both are cleaned to slash form first.
 func matchGlob(pattern, name string) bool {
-	return matchSegments(strings.Split(pattern, "/"), strings.Split(path.Clean(name), "/"))
+	return matchSegments(strings.Split(path.Clean(pattern), "/"), strings.Split(path.Clean(name), "/"))
 }
 
 func matchSegments(pat, name []string) bool {
