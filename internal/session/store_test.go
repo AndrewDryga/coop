@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -386,6 +387,54 @@ func TestTurnOutputContractIsDurableAndRejectsTheWrongSchemaDigest(t *testing.T)
 		OutputContract: &bad,
 	}); CodeOf(err) != CodeInvalidRequest {
 		t.Fatalf("wrong output-contract digest error = %v", err)
+	}
+}
+
+// The janitor's list leaves out discarded sessions except the ones it still has to clean, and
+// keeps the recovery order.
+func TestListLiveSessionsForRecoverySkipsDiscardedSessions(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer func() { _ = store.Close() }()
+	var ids []string
+	for _, key := range []string{"live", "discarded", "pending"} {
+		sess, err := store.CreateSession(ctx, "live-recovery-"+key, CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest,
+			Target: "codex:model", MaxTurns: 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, sess.ID)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE sessions SET state = ? WHERE id IN (?, ?)`, string(SessionDiscarded), ids[1], ids[2]); err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.ListSessionsForRecovery(ctx)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("recovery list = %d sessions, %v", len(all), err)
+	}
+	for _, tc := range []struct {
+		include, want []string
+	}{
+		{nil, ids[:1]},
+		{[]string{ids[2], "remote_unknown"}, []string{ids[0], ids[2]}},
+	} {
+		live, err := store.ListLiveSessionsForRecovery(ctx, tc.include)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got, want []string
+		for _, sess := range live {
+			got = append(got, sess.ID)
+		}
+		for _, sess := range all {
+			if slices.Contains(tc.want, sess.ID) {
+				want = append(want, sess.ID)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("live recovery list with %v = %v, want %v", tc.include, got, want)
+		}
 	}
 }
 

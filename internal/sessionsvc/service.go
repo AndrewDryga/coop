@@ -1132,7 +1132,10 @@ func (s *Service) cleanupIdleSessionRuntimes(ctx context.Context) (proven int) {
 	if !parkedOK && !cleanupOK && !reapOK && !unprovenOK {
 		return
 	}
-	sessions, err := s.store.ListSessionsForRecovery(ctx)
+	// A discarded session is a candidate only while its historical cleanup is pending, so the
+	// janitor skips the rest instead of decoding every session the worker ever discarded. One
+	// marked pending after this read waits for the next pass.
+	sessions, err := s.store.ListLiveSessionsForRecovery(ctx, s.historicalPendingIDs())
 	if err != nil {
 		if ctx.Err() == nil {
 			s.host.warnf("could not list sessions for runtime cleanup: %v", err)
@@ -1360,6 +1363,17 @@ func (s *Service) runBoundSessionTurn(ctx context.Context, bound session.Session
 		return leased, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	return s.runner.Run(turnCtx, bound, leased)
+}
+
+// historicalPendingIDs are the sessions whose historical runtime cleanup is still pending.
+func (s *Service) historicalPendingIDs() []string {
+	s.historicalMu.Lock()
+	defer s.historicalMu.Unlock()
+	ids := make([]string, 0, len(s.historicalPending))
+	for id := range s.historicalPending {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (s *Service) historicalRuntimeNeedsCleanup(sessionID string) bool {

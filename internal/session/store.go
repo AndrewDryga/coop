@@ -1275,6 +1275,38 @@ func (s *Store) ListSessionsForRecovery(ctx context.Context) ([]Session, error) 
 	return sessions, nil
 }
 
+// ListLiveSessionsForRecovery is ListSessionsForRecovery without discarded sessions, except the
+// ones named in include. The runtime janitor runs every minute and acts on a discarded session only
+// while its historical cleanup is pending, so it must not decode every session the worker has ever
+// discarded. Startup recovery still reads every session.
+func (s *Store) ListLiveSessionsForRecovery(ctx context.Context, include []string) ([]Session, error) {
+	if include == nil {
+		include = []string{}
+	}
+	ids, err := json.Marshal(include)
+	if err != nil {
+		return nil, fmt.Errorf("encode recovery session ids: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, sessionSelect+` WHERE state <> ? OR id IN (SELECT value FROM json_each(?))
+		ORDER BY created_at, id`, string(SessionDiscarded), string(ids))
+	if err != nil {
+		return nil, fmt.Errorf("list live sessions for recovery: %w", err)
+	}
+	defer rows.Close()
+	var sessions []Session
+	for rows.Next() {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan recovery session: %w", err)
+		}
+		sessions = append(sessions, sess)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list live sessions for recovery: %w", err)
+	}
+	return sessions, nil
+}
+
 // RetiredQuarantinedSessions retains uncertainty after record-only retirement.
 // That operation deliberately leaves the old host runtime untouched; a restart
 // must not turn its discarded tombstone into evidence of free worker capacity.
