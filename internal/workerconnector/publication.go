@@ -123,10 +123,34 @@ func (p publicationHost) publish(ctx context.Context, repository string, intent 
 	if err != nil {
 		return workerproto.PublishResult{}, publicationRetry("credentials", err)
 	}
+	previous, err := p.readPublicationProgress(intent)
+	if err != nil {
+		return workerproto.PublishResult{}, publicationRetry("candidate", err)
+	}
+	if previous.Result != nil {
+		return *previous.Result, nil
+	}
 	result, err := p.publishCandidate(ctx, repository, intent)
 	var refusal publicationRefusal
-	if errors.As(err, &refusal) {
-		return workerproto.PublishResult{Status: "refused", ErrorCode: string(refusal)}, nil
+	refused := errors.As(err, &refusal)
+	if refused || err == nil && (result.Status == "conflict" || result.Status == "refused") {
+		// This invocation may have crossed Git's write boundary before losing its
+		// response. The pre-call snapshot cannot establish that nothing was pushed.
+		latest, readErr := p.readPublicationProgress(intent)
+		if readErr != nil {
+			return workerproto.PublishResult{}, publicationRetry("candidate", readErr)
+		}
+		if latest.Attempted {
+			return workerproto.PublishResult{Status: "refused", ErrorCode: "publication_push_outcome_unverified"}, nil
+		}
+		if refused {
+			return workerproto.PublishResult{Status: "refused", ErrorCode: string(refusal)}, nil
+		}
+	}
+	if err == nil && result.Receipt != nil && intent.Request.Mode == "existing_pull_request" {
+		if saveErr := p.savePublicationProgress(intent, publicationProgress{Attempted: true, Result: &result}); saveErr != nil {
+			return workerproto.PublishResult{}, publicationRetry("candidate", saveErr)
+		}
 	}
 	return result, err
 }
@@ -178,6 +202,9 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 	}
 	if remoteRepository.ID != intent.Repository.GitHubRepositoryID {
 		return empty, publicationRefusal("publication_pull_request_mismatch")
+	}
+	if req.Mode == "existing_pull_request" {
+		return p.publishExistingPull(ctx, repository, grant, intent)
 	}
 	pull, err := p.findPull(ctx, grant, intent)
 	if err != nil {
@@ -289,7 +316,7 @@ func exactPublicationPull(pull githubPublicationPull, grant publicationGrant, in
 		pull.State == "open" && !pull.Merged && pull.MergedAt == nil &&
 		pull.Head.Ref == intent.Request.Branch && pull.Base.Ref == intent.Request.BaseBranch &&
 		pull.Head.Repo.ID == intent.Repository.GitHubRepositoryID && pull.Base.Repo.ID == intent.Repository.GitHubRepositoryID &&
-		pull.User.ID == grant.ActorID && pull.User.Type == "Bot" &&
+		(intent.Request.Mode == "existing_pull_request" || pull.User.ID == grant.ActorID && pull.User.Type == "Bot") &&
 		pull.URL == fmt.Sprintf("https://github.com/%s/pull/%d", intent.Repository.GitHubRepository, pull.Number) &&
 		(intent.Request.PullRequestNumber > 0 || pull.Draft)
 }

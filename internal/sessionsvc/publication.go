@@ -86,9 +86,19 @@ func (s *Service) publicationCandidate(ctx context.Context, intent workerproto.P
 		review.Gate == ReviewGateFailed {
 		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "review is not an exact shareable candidate"}
 	}
+	if intent.Request.Mode == "existing_pull_request" &&
+		(review.ParentHead != intent.Request.ExpectedHead || review.Source == nil || review.Source.SelectedCommit != intent.Request.ExpectedHead || review.Gate != ReviewGatePassed || !review.Publishable) {
+		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "existing PR candidate is not based on its authorized head"}
+	}
 	directory, retained, err := s.retainedReviewCandidate(ctx, intent.ReviewOperationID)
 	if err != nil || !reflect.DeepEqual(review, retained) {
 		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "retained review custody does not match"}
+	}
+	if intent.Request.Mode == "existing_pull_request" {
+		ancestor, err := sessionReviewIsAncestor(directory, intent.Request.ExpectedHead, intent.Request.CandidateHead)
+		if err != nil || !ancestor {
+			return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "existing PR publication must preserve every original commit"}
+		}
 	}
 	return directory, nil
 }
@@ -148,12 +158,28 @@ func (s *Service) runPublishOperation(ctx context.Context, operationID string) e
 func validPublicationResult(intent workerproto.PublishIntent, result workerproto.PublishResult) bool {
 	req := intent.Request
 	if result.Status == "refused" && result.Receipt == nil && result.Conflict == nil {
+		if result.ErrorCode == "publication_push_outcome_unverified" {
+			return req.Mode == "existing_pull_request"
+		}
 		switch result.ErrorCode {
 		case "publication_branch_changed", "publication_branch_already_exists", "publication_existing_pull_request_changed", "publication_pull_request_mismatch", "publication_authorization_revoked":
 			return true
 		}
 	}
-	if r := result.Receipt; result.Status == "published" && r != nil && result.Conflict == nil {
+	published := result.Status == "published" || result.Status == "published_target_changed" || result.Status == "published_target_unverified"
+	if r := result.Receipt; published && r != nil && result.Conflict == nil && result.ErrorCode == "" {
+		if result.Status == "published" && r.TargetObservation != nil {
+			return false
+		}
+		if result.Status != "published" {
+			state := "changed_after_push"
+			if result.Status == "published_target_unverified" {
+				state = "unverified_after_push"
+			}
+			if req.Mode != "existing_pull_request" || r.TargetObservation == nil || r.TargetObservation.State != state || r.TargetObservation.Validate() != nil {
+				return false
+			}
+		}
 		return r.Repository == intent.Repository.RepositoryRef && r.BranchRef == "refs/heads/"+req.Branch &&
 			r.CandidateTree == req.CandidateTree && r.CommitSHA == req.CandidateHead && r.PullRequestNumber > 0 &&
 			(req.PullRequestNumber == 0 || r.PullRequestNumber == req.PullRequestNumber) &&

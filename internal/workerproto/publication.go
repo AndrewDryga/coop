@@ -9,6 +9,7 @@ import (
 // PublishRequest authorizes one exact reviewed commit and one compare-and-swap
 // branch update. Credentials and product-specific approval rules live in the controller.
 type PublishRequest struct {
+	Mode              string `json:"mode,omitempty"`
 	AuthorizationRef  string `json:"authorization_ref"`
 	CandidateHead     string `json:"candidate_head"`
 	CandidateTree     string `json:"candidate_tree"`
@@ -21,6 +22,12 @@ type PublishRequest struct {
 }
 
 func (r PublishRequest) Validate() error {
+	if r.Mode != "" && r.Mode != "existing_pull_request" {
+		return errors.New("invalid publication mode")
+	}
+	if r.Mode == "existing_pull_request" && (r.PullRequestNumber <= 0 || r.ExpectedHead == "") {
+		return errors.New("existing pull request publication needs an exact target and head")
+	}
 	if reference(r.AuthorizationRef, 1024, "publication authorization") != nil ||
 		!publicationObject(r.CandidateHead) || !publicationObject(r.CandidateTree) ||
 		(r.ExpectedHead != "" && !publicationObject(r.ExpectedHead)) || r.PullRequestNumber < 0 ||
@@ -45,12 +52,38 @@ type PublishIntent struct {
 }
 
 type PublicationReceipt struct {
-	Repository        string `json:"repository"`
-	BranchRef         string `json:"branch_ref"`
-	CandidateTree     string `json:"candidate_tree"`
-	CommitSHA         string `json:"commit_sha"`
-	PullRequestNumber int    `json:"pull_request_number"`
-	PullRequestURL    string `json:"pull_request_url"`
+	Repository        string                        `json:"repository"`
+	BranchRef         string                        `json:"branch_ref"`
+	CandidateTree     string                        `json:"candidate_tree"`
+	CommitSHA         string                        `json:"commit_sha"`
+	PullRequestNumber int                           `json:"pull_request_number"`
+	PullRequestURL    string                        `json:"pull_request_url"`
+	TargetObservation *PublicationTargetObservation `json:"target_observation,omitempty"`
+}
+
+// A successful branch write and its later PR observation are separate facts.
+type PublicationTargetObservation struct {
+	State            string `json:"state"`
+	HeadRef          string `json:"head_ref"`
+	BaseRef          string `json:"base_ref"`
+	HeadRepositoryID int64  `json:"head_repository_id"`
+	BaseRepositoryID int64  `json:"base_repository_id"`
+	HeadCommit       string `json:"head_commit"`
+	PullRequestState string `json:"pull_request_state"`
+}
+
+func (o PublicationTargetObservation) Validate() error {
+	if o.State != "changed_after_push" && o.State != "unverified_after_push" {
+		return errors.New("invalid publication target observation")
+	}
+	if len(o.HeadRef) > 256 || len(o.BaseRef) > 256 ||
+		!utf8.ValidString(o.HeadRef) || !utf8.ValidString(o.BaseRef) ||
+		o.HeadRepositoryID < 0 || o.BaseRepositoryID < 0 ||
+		(o.HeadCommit != "" && !publicationObject(o.HeadCommit)) ||
+		(o.PullRequestState != "" && o.PullRequestState != "open" && o.PullRequestState != "closed") {
+		return errors.New("invalid publication target observation fields")
+	}
+	return nil
 }
 
 type PublicationConflict struct {

@@ -26,19 +26,21 @@ func TestPublishRequestPinsCandidateAndDestination(t *testing.T) {
 		}
 	}
 	for name, change := range map[string]func(*PublishRequest){
-		"missing approval":        func(r *PublishRequest) { r.AuthorizationRef = "" },
-		"oversized approval":      func(r *PublishRequest) { r.AuthorizationRef = strings.Repeat("a", 1025) },
-		"abbreviated commit":      func(r *PublishRequest) { r.CandidateHead = "abcdef0" },
-		"uppercase tree":          func(r *PublishRequest) { r.CandidateTree = strings.Repeat("A", 40) },
-		"invalid expected head":   func(r *PublishRequest) { r.ExpectedHead = "main" },
-		"existing PR without CAS": func(r *PublishRequest) { r.PullRequestNumber = 7 },
-		"negative PR":             func(r *PublishRequest) { r.PullRequestNumber = -1 },
-		"base overwrite":          func(r *PublishRequest) { r.Branch = r.BaseBranch },
-		"empty title":             func(r *PublishRequest) { r.Title = " \n" },
-		"oversized title":         func(r *PublishRequest) { r.Title = strings.Repeat("a", 257) },
-		"oversized body":          func(r *PublishRequest) { r.Body = strings.Repeat("a", (32<<10)+1) },
-		"NUL body":                func(r *PublishRequest) { r.Body = "hello\x00world" },
-		"invalid UTF8":            func(r *PublishRequest) { r.Title = string([]byte{0xff}) },
+		"unknown mode":             func(r *PublishRequest) { r.Mode = "replace" },
+		"existing mode without PR": func(r *PublishRequest) { r.Mode = "existing_pull_request"; r.ExpectedHead = strings.Repeat("c", 40) },
+		"missing approval":         func(r *PublishRequest) { r.AuthorizationRef = "" },
+		"oversized approval":       func(r *PublishRequest) { r.AuthorizationRef = strings.Repeat("a", 1025) },
+		"abbreviated commit":       func(r *PublishRequest) { r.CandidateHead = "abcdef0" },
+		"uppercase tree":           func(r *PublishRequest) { r.CandidateTree = strings.Repeat("A", 40) },
+		"invalid expected head":    func(r *PublishRequest) { r.ExpectedHead = "main" },
+		"existing PR without CAS":  func(r *PublishRequest) { r.PullRequestNumber = 7 },
+		"negative PR":              func(r *PublishRequest) { r.PullRequestNumber = -1 },
+		"base overwrite":           func(r *PublishRequest) { r.Branch = r.BaseBranch },
+		"empty title":              func(r *PublishRequest) { r.Title = " \n" },
+		"oversized title":          func(r *PublishRequest) { r.Title = strings.Repeat("a", 257) },
+		"oversized body":           func(r *PublishRequest) { r.Body = strings.Repeat("a", (32<<10)+1) },
+		"NUL body":                 func(r *PublishRequest) { r.Body = "hello\x00world" },
+		"invalid UTF8":             func(r *PublishRequest) { r.Title = string([]byte{0xff}) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := valid

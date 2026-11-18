@@ -127,7 +127,7 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 6 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 7 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
 	}
 	jobs, ok := document["job_spec_versions"].([]any)

@@ -18,7 +18,8 @@ type sessionCapabilities struct {
 	// forwards an api_request GET to.
 	SessionEvidenceVersions []int `json:"session_evidence_versions,omitempty"`
 	// ReviewCommitMessageVersions proves a review accepts the controller's commit message.
-	ReviewCommitMessageVersions []int `json:"review_commit_message_versions,omitempty"`
+	ReviewCommitMessageVersions   []int `json:"review_commit_message_versions,omitempty"`
+	ExistingPRPublicationVersions []int `json:"existing_pr_publication_versions,omitempty"`
 }
 
 // LiveCapabilities adds implementation capabilities only after the exact local
@@ -67,6 +68,9 @@ func readCapabilities(ctx context.Context, api API) ([]workerproto.Capability, b
 	}
 	if proves(document.ReviewCommitMessageVersions, 1) {
 		result = append(result, workerproto.Capability{Name: "review-commit-message", Version: "1"})
+	}
+	if proves(document.ExistingPRPublicationVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "existing-pr-publication", Version: "1"})
 	}
 	return result, true
 }

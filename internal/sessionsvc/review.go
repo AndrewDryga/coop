@@ -56,6 +56,8 @@ const maxReviewCommitMessageBytes = 4096
 type RunReviewRequest struct {
 	SessionID        string `json:"session_id"`
 	ExpectedRevision int64  `json:"expected_revision"`
+	// ParentHead keeps an existing-PR review on the job's exact admitted source.
+	ParentHead string `json:"parent_head,omitempty"`
 	// CommitMessage names the reviewed change in its commit; empty keeps "Reviewed changes".
 	// The review receipt is always added as the Coop-Review trailer.
 	CommitMessage string `json:"commit_message,omitempty"`
@@ -129,23 +131,24 @@ func (f ReviewGateFunc) Run(ctx context.Context, request ReviewGateRequest) (Rev
 const MaxReviewErrorBytes = session.MaxErrorDetailBytes
 
 type sessionReviewIntent struct {
-	OperationID        string                 `json:"operation_id"`
-	SessionID          string                 `json:"session_id"`
-	SessionRevision    int64                  `json:"session_revision"`
-	Repository         string                 `json:"repository"`
-	Workspace          string                 `json:"workspace"`
-	ForkGeneration     string                 `json:"fork_generation"`
-	CreationBase       string                 `json:"creation_base"`
-	SourceHead         string                 `json:"source_head"`
-	SourceTree         string                 `json:"source_tree"`
-	SourceBranch       string                 `json:"source_branch"`
-	SourceStatusDigest string                 `json:"source_status_digest"`
-	ParentHead         string                 `json:"parent_head"`
-	ParentTree         string                 `json:"parent_tree"`
-	JobDigest          string                 `json:"job_digest"`
-	Source             *session.SourceBinding `json:"source,omitempty"`
-	MaxPatchBytes      int                    `json:"max_patch_bytes"`
-	CommitMessage      string                 `json:"commit_message,omitempty"`
+	OperationID         string                 `json:"operation_id"`
+	SessionID           string                 `json:"session_id"`
+	SessionRevision     int64                  `json:"session_revision"`
+	Repository          string                 `json:"repository"`
+	Workspace           string                 `json:"workspace"`
+	ForkGeneration      string                 `json:"fork_generation"`
+	CreationBase        string                 `json:"creation_base"`
+	SourceHead          string                 `json:"source_head"`
+	SourceTree          string                 `json:"source_tree"`
+	SourceBranch        string                 `json:"source_branch"`
+	SourceStatusDigest  string                 `json:"source_status_digest"`
+	ParentHead          string                 `json:"parent_head"`
+	ParentTree          string                 `json:"parent_tree"`
+	JobDigest           string                 `json:"job_digest"`
+	Source              *session.SourceBinding `json:"source,omitempty"`
+	MaxPatchBytes       int                    `json:"max_patch_bytes"`
+	CommitMessage       string                 `json:"commit_message,omitempty"`
+	RequestedParentHead string                 `json:"requested_parent_head,omitempty"`
 }
 
 type sessionReviewSourceIdentity struct {
@@ -169,6 +172,9 @@ func (s *Service) RunReview(ctx context.Context, key string, req RunReviewReques
 	}
 	if !validReviewCommitMessage(req.CommitMessage) {
 		return ReviewDossier{}, &session.Error{Code: session.CodeInvalidRequest, Detail: fmt.Sprintf("commit message must be text of at most %d bytes", maxReviewCommitMessageBytes)}
+	}
+	if req.ParentHead != "" && !forkspace.ValidObjectID(req.ParentHead) {
+		return ReviewDossier{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "review parent must be an exact admitted commit"}
 	}
 	op, replay, err := s.store.ReserveOperation(ctx, "RunReview", key, req)
 	if err != nil {
@@ -442,7 +448,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 			}
 		}
 	}
-	parentHead, err := s.pinCurrentSessionParent(ctx, sess)
+	parentHead, err := s.pinReviewParent(ctx, sess, req.ParentHead)
 	if err != nil {
 		return sessionReviewIntent{}, fmt.Errorf("refresh current parent: %w", err)
 	}
@@ -466,7 +472,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 		ParentHead: parent.Head, ParentTree: parent.Tree,
 		JobDigest: sess.JobDigest, Source: session.CloneSourceBinding(sess.Source),
 		MaxPatchBytes: sess.MaxPatchBytes,
-		CommitMessage: req.CommitMessage,
+		CommitMessage: req.CommitMessage, RequestedParentHead: req.ParentHead,
 	}, nil
 }
 
@@ -564,6 +570,9 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 		!forkspace.ValidObjectID(intent.SourceTree) || !forkspace.ValidObjectID(intent.ParentHead) ||
 		!forkspace.ValidObjectID(intent.ParentTree) || intent.MaxPatchBytes <= 0 || intent.MaxPatchBytes > session.MaxPatchBytesLimit {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review operation intent is invalid")
+	}
+	if intent.RequestedParentHead != "" && (intent.RequestedParentHead != intent.ParentHead || intent.Source == nil || intent.Source.SelectedCommit != intent.RequestedParentHead) {
+		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review parent no longer matches its admitted source")
 	}
 	if intent.Source != nil && session.ValidateSourceBinding(*intent.Source) != nil {
 		return ReviewDossier{}, s.makeOperationUncertain(ctx, op, "review source binding is invalid")
@@ -682,7 +691,7 @@ func (s *Service) executeReviewIntent(ctx context.Context, op session.Operation,
 	dossier.Patch, dossier.PatchTruncated = patch, truncated
 	currentParentMatches := false
 	if sess, err := s.store.GetSession(ctx, intent.SessionID); err == nil {
-		if currentHead, err := s.pinCurrentSessionParent(ctx, sess); err == nil {
+		if currentHead, err := s.pinReviewParent(ctx, sess, intent.RequestedParentHead); err == nil {
 			if current, err := captureSessionReviewParent(intent.Repository, currentHead); err == nil {
 				currentParentMatches = current.Head == intent.ParentHead && current.Tree == intent.ParentTree
 			}

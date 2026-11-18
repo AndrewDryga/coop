@@ -10,6 +10,26 @@ import (
 
 const sessionSourceLabel = "source"
 
+func (s *Service) pinReviewParent(ctx context.Context, sess session.Session, requested string) (string, error) {
+	if requested == "" {
+		return s.pinCurrentSessionParent(ctx, sess)
+	}
+	execution, err := s.sessionExecution(ctx, sess)
+	if err != nil {
+		return "", &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
+	}
+	job, err := workerproto.DecodeJobSpec(sess.JobDocument)
+	if err != nil || job.Source == nil || sess.Source == nil ||
+		!forkspace.ValidObjectID(requested) || job.Source.Binding.SelectedCommit != requested || sess.Source.SelectedCommit != requested {
+		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "review parent does not match the job's admitted source"}
+	}
+	actual, err := sessionWorkspaceCommitContext(ctx, execution.Repository, requested)
+	if err != nil || actual != requested {
+		return "", &session.Error{Code: session.CodeRepositoryUnavailable, Detail: "admitted review parent is unavailable"}
+	}
+	return requested, nil
+}
+
 func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Session) (string, error) {
 	execution, err := s.sessionExecution(ctx, sess)
 	if err != nil {

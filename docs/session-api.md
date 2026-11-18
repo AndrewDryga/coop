@@ -512,7 +512,7 @@ use up one of those review attempts.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1]}`. Check these versions before choosing which protocol features to use. |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
 
@@ -1353,6 +1353,12 @@ The JSON response encodes the patch preview as base64. A shortened preview doesn
 publication, because co:op saves the exact candidate commit and verified LFS objects in private host
 storage, separate from the model's workspace.
 
+When a controller is fixing an existing PR, it may send `parent_head` with the review request.
+This must be the exact commit selected by the job's source binding. The candidate is reviewed on
+that immutable parent, including after the check finishes, so a newer default branch cannot
+remove the PR author's original changes. Changing the parent under the same idempotency key is
+refused. Use this field only when the worker advertises `existing-pr-publication:1`.
+
 For the same saved inputs, co:op creates the same single candidate commit on the reviewed parent,
 before running the check. `source_head` records the model's original commit before that candidate
 was prepared.
@@ -1434,6 +1440,8 @@ while running. Use the operation key to check its state, then fetch
 The result is one of:
 
 - `published`, with the exact commit, tree and PR result
+- `published_target_changed`, when the commit was pushed but the PR changed during the operation
+- `published_target_unverified`, when the commit was pushed but its PR view could not be confirmed
 - `conflict`, with the verified existing PR and its observed remote head
 - `refused`, with a stable error code
 
@@ -1449,6 +1457,27 @@ approval format. A `403` permanently refuses this operation. Temporary failures 
 The worker sends Git and LFS data directly from the saved candidate to GitHub, and creates a
 draft PR or updates the exact existing PR owned by the App. If a person has already marked that
 PR ready for review, co:op preserves that choice.
+
+To update an existing PR owned by a person, send `mode: "existing_pull_request"`, its exact
+number, branch, base branch and `expected_head`. This requires a review whose `parent_head`
+equals both that expected head and the job's selected commit, with a passed check and a publishable
+candidate. The worker proves the candidate
+descends from it, renews the controller grant after preparation, checks the PR again, and pushes
+with an explicit lease for that exact old commit. A newer or deleted branch is never overwritten.
+This mode never creates a PR or changes its title, body or draft state; `title` and `body` remain
+required bounded strings in the request but are unused in this mode.
+
+A confirmed push has a receipt even when the subsequent PR read fails or observes changed
+metadata. These results carry `target_observation` alongside the original branch, commit and PR
+identity. Its state is `changed_after_push` or `unverified_after_push`, with the bounded observed
+refs, repository IDs, head and PR state when available. A controller must report the warning and
+must not treat this as permission to resolve review threads or continue automatic edits.
+
+The worker journals an attempted push before Git runs and retains confirmed results independently
+of command acknowledgements. A confirmed result replays without new credentials. If an earlier
+attempt has no confirmed result and permission is then revoked or the branch changes, the terminal
+code is `publication_push_outcome_unverified`. The commit may already have been pushed. Check the
+frozen intent and GitHub history manually; do not automatically retarget or start another fix.
 
 If a push or PR response is lost, co:op checks the remote result before retrying. A candidate
 can't be discarded while publication is active. Later edits in the model workspace can't change

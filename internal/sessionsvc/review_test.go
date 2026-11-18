@@ -941,6 +941,74 @@ func TestSessionReviewArtifactIsRemovedWithDiscardedSession(t *testing.T) {
 	}
 }
 
+func TestExistingPullReviewPreservesHumanCommitsOnItsPinnedParent(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "default")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	git("checkout", "-qb", "human-pr")
+	if err := os.WriteFile(filepath.Join(repo, "original.txt"), []byte("human change\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "original.txt")
+	git("commit", "-qm", "human change")
+	selected := gitOut(repo, "rev-parse", "HEAD")
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(_ context.Context, request ReviewGateRequest) (ReviewGateResult, error) {
+		content, err := os.ReadFile(filepath.Join(request.Candidate, "original.txt"))
+		if err != nil || string(content) != "human change\n" {
+			t.Errorf("review lost the original PR change: %q, %v", content, err)
+		}
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	service.pullSource(t, repo, 42, selected, base, base)
+	sess := createReviewSession(t, service, "existing-pr")
+	if err := os.WriteFile(filepath.Join(sess.Workspace, "fix.txt"), []byte("selected fix\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sessionWorkspaceGit(t, sess.Workspace, "add", "fix.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "selected fix")
+	git("checkout", "-q", "main")
+	git("commit", "--allow-empty", "-qm", "default advanced")
+	req := RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, ParentHead: selected}
+	dossier, err := service.RunReview(context.Background(), "review-existing-pr", req)
+	if err != nil || !dossier.Publishable || dossier.ParentHead != selected {
+		t.Fatalf("pinned review = %+v, %v", dossier, err)
+	}
+	if bytes.Contains(dossier.Patch, []byte("original.txt")) || !bytes.Contains(dossier.Patch, []byte("fix.txt")) {
+		t.Fatalf("review must contain only the fix above the original head: %q", dossier.Patch)
+	}
+	publication := workerproto.PublishRequest{Mode: "existing_pull_request", AuthorizationRef: "selected-findings",
+		CandidateHead: dossier.CandidateHead, CandidateTree: dossier.CandidateTree, Branch: "human-pr", BaseBranch: "main",
+		ExpectedHead: selected, PullRequestNumber: 42, Title: "Unused", Body: "Unused"}
+	service.reviewPublisher = func(_ context.Context, directory string, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
+		if gitOut(directory, "show", "HEAD:original.txt") != "human change" || gitOut(directory, "show", "HEAD:fix.txt") != "selected fix" {
+			t.Error("publication lost the author's work or the selected fix")
+		}
+		return workerproto.PublishResult{Status: "published", Receipt: &workerproto.PublicationReceipt{
+			Repository: intent.Repository.RepositoryRef, BranchRef: "refs/heads/human-pr", CandidateTree: dossier.CandidateTree,
+			CommitSHA: dossier.CandidateHead, PullRequestNumber: 42, PullRequestURL: "https://github.com/" + intent.Repository.GitHubRepository + "/pull/42",
+		}}, nil
+	}
+	op, err := service.PublishReview(t.Context(), "publish-existing-pr", sess.ID, dossier.OperationID, publication)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.runPublishOperation(t.Context(), op.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := service.GetPublication(t.Context(), sess.ID, op.ID)
+	if err != nil || result.Status != "published" {
+		t.Fatalf("existing PR publication: %+v %v", result, err)
+	}
+	req.ParentHead = base
+	if _, err := service.RunReview(context.Background(), "review-existing-pr", req); session.CodeOf(err) != session.CodeIdempotencyConflict {
+		t.Fatalf("changing a saved review parent = %v", err)
+	}
+	if _, err := service.RunReview(context.Background(), "review-wrong-parent", req); err == nil {
+		t.Fatal("review accepted a parent outside its admitted source")
+	}
+}
+
 func newReviewTestService(t *testing.T, repo string, maxPatchBytes int, gate ReviewGate) *sessionFixture {
 	t.Helper()
 	service := newSessionFixture(t, Config{

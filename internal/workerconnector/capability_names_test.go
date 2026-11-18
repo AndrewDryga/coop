@@ -97,6 +97,23 @@ func TestReviewCommitMessageCapabilityRequiresExactLiveProof(t *testing.T) {
 	}
 }
 
+func TestExistingPRPublicationCapabilityRequiresExactLiveProof(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want int
+	}{
+		{`{"existing_pr_publication_versions":[1]}`, 1},
+		{`{}`, 0},
+		{`{"existing_pr_publication_versions":[2]}`, 0},
+		{`{"existing_pr_publication_versions":[1,2]}`, 0},
+	} {
+		got := LiveCapabilities(context.Background(), &capabilityAPI{response: json.RawMessage(test.body)})
+		if len(got) != test.want || (test.want == 1 && (got[0].Name != "existing-pr-publication" || got[0].Version != "1")) {
+			t.Fatalf("capability for %s = %+v", test.body, got)
+		}
+	}
+}
+
 // A new connector must not promise project runtimes while its older daemon still ignores them.
 func TestProjectRuntimeCapabilityRequiresExactLiveDaemonProof(t *testing.T) {
 	for _, test := range []struct {

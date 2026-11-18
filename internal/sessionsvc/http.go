@@ -315,7 +315,8 @@ type sessionCapabilitiesDTO struct {
 	SessionEvidenceVersions []int `json:"session_evidence_versions"`
 	// ReviewCommitMessageVersions proves a review accepts commit_message, so a controller names
 	// the reviewed change only to a daemon that would not refuse the field.
-	ReviewCommitMessageVersions []int `json:"review_commit_message_versions"`
+	ReviewCommitMessageVersions   []int `json:"review_commit_message_versions"`
+	ExistingPRPublicationVersions []int `json:"existing_pr_publication_versions"`
 }
 
 type sessionHTTPErrorBody struct {
@@ -379,6 +380,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			RepositoryFreshnessReceiptVersions: []int{2},
 			SessionEvidenceVersions:            []int{workerproto.SessionEvidenceVersion},
 			ReviewCommitMessageVersions:        []int{1},
+			ExistingPRPublicationVersions:      []int{1},
 		})
 		return
 	case "/v1/capacity":
@@ -1263,12 +1265,13 @@ func (h *sessionHTTPHandler) review(w http.ResponseWriter, r *http.Request, sess
 	var body struct {
 		ExpectedRevision int64  `json:"expected_revision"`
 		CommitMessage    string `json:"commit_message"`
+		ParentHead       string `json:"parent_head"`
 	}
 	if !decodeSessionJSON(w, r, &body) {
 		return
 	}
 	dossier, err := h.service.RunReview(r.Context(), sessionIdempotencyKey(r), RunReviewRequest{
-		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, CommitMessage: body.CommitMessage,
+		SessionID: sessionID, ExpectedRevision: body.ExpectedRevision, CommitMessage: body.CommitMessage, ParentHead: body.ParentHead,
 	})
 	if err != nil {
 		writeSessionServiceError(w, err)
