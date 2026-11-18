@@ -168,31 +168,9 @@ func NetworkTargetBundle(ctx context.Context, cfg *config.Config, target agents.
 				return egress.Bundle{}, fmt.Errorf("%s account %q has no portable %s credential", target.Provider, account, selection.EnvKey)
 			}
 		}
-		if selection.RequirePortable {
-			live := ag.LiveCredentials()
-			if live.Portability == nil || live.Portability(profileDir, time.Now().Add(RestrictedCredentialHorizon)) != agents.CredentialPortable {
-				return egress.Bundle{}, fmt.Errorf("%s account %q has no portable credential for restricted networking", target.Provider, account)
-			}
-		}
 		input.AuthMode = strings.TrimSpace(selection.AuthMode)
 		if input.AuthMode == "" {
 			return egress.Bundle{}, fmt.Errorf("%s account %q uses a sign-in method that restricted networking cannot use", target.Provider, account)
-		}
-	}
-	if client == egress.ClientACP {
-		// An environment or host key reaches an ACP session through the broker like any other run,
-		// and the broker shadows the client's own credential file; a key only that file holds
-		// cannot be kept out of the box.
-		portable := ProfileHostCredentialPresent(cfg, target.Provider, account) || account == cfg.DefaultProfileOf(target.Provider) &&
-			anyCredentialEnvPresent(ag.ActiveCredentialEnvKeys(profileDir, markerPresent), envFileKeys(cfg.EnvFile()))
-		if detector, ok := ag.(agents.StoredAPIKeyDetector); ok && markerPresent && !portable {
-			stored, err := detector.StoredAPIKey(profileDir)
-			if err != nil {
-				return egress.Bundle{}, fmt.Errorf("inspect %s account %q credential: %w", target.Provider, account, err)
-			}
-			if stored {
-				return egress.Bundle{}, fmt.Errorf("%s account %q uses a reusable API key in its native credential file, which ACP sessions do not support", target.Provider, account)
-			}
 		}
 	}
 	return ag.NetworkBundle(input)

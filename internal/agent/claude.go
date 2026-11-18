@@ -799,7 +799,6 @@ func (claudeAgent) LiveCredentials() LiveCredentialSpec {
 		Artifacts: []CredentialArtifact{{
 			Name: ".credentials.json", Primary: true, Project: projectClaudeCredential,
 		}},
-		Portability: claudeCredentialPortability,
 		// "failed to authenticate" / "oauth session expired" are what the CLI actually prints when a
 		// stored refresh token is dead ("Failed to authenticate: OAuth session expired and could not
 		// be refreshed"). Without them an expired account reads as an ordinary process failure and
@@ -842,26 +841,12 @@ func parseClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
 	return source.claudeAccessCredential, err
 }
 
-func decodeClaudeAccessCredential(data []byte) (claudeAccessCredential, error) {
-	projected, err := parseClaudeAccessCredential(data)
-	if err != nil {
-		return claudeAccessCredential{}, err
-	}
-	if projected.AccessToken == "" || projected.ExpiresAt <= 0 ||
-		!slices.Contains(projected.Scopes, "user:inference") {
-		return claudeAccessCredential{}, fmt.Errorf("claude credential has no access-only OAuth shape")
-	}
-	projected.Scopes = []string{"user:inference"}
-	return projected, nil
-}
-
 func projectClaudeCredential(data []byte) ([]byte, error) {
 	projected, err := parseClaudeAccessCredential(data)
 	if err != nil {
 		return nil, err
 	}
-	// A refresh-only login is safe to stage after stripping refresh authority, but unusable. Keep
-	// the empty access shape so Portability can report credential_refresh_required before launch.
+	// A refresh-only login is safe to stage after stripping refresh authority, but unusable.
 	if !slices.Contains(projected.Scopes, "user:inference") {
 		return nil, fmt.Errorf("claude credential has no inference scope")
 	}
@@ -880,18 +865,6 @@ func (a claudeAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []str
 		return nil
 	}
 	return a.CredentialEnvKeys()
-}
-
-func claudeCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
-	data, err := ReadCredentialArtifact(filepath.Join(profileDir, ".credentials.json"), claudeCredentialLimit)
-	if err != nil {
-		return CredentialRefreshRequired
-	}
-	credentials, err := decodeClaudeAccessCredential(data)
-	if err == nil && time.UnixMilli(credentials.ExpiresAt).After(deadline) {
-		return CredentialPortable
-	}
-	return CredentialRefreshRequired
 }
 
 const (

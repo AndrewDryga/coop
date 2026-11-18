@@ -437,7 +437,7 @@ func executeProviderLiveChild(target agents.Target, workflow, stage, sessionID, 
 		return fail(false, liveprovider.ReasonHarnessFailed, "harness", 0, false, false, "harness")
 	}
 	live := ag.LiveCredentials()
-	if len(live.Artifacts) == 0 || live.Portability == nil || len(live.AuthSignals) == 0 {
+	if len(live.Artifacts) == 0 || len(live.AuthSignals) == 0 {
 		return fail(false, liveprovider.ReasonUnsafeCredential, "harness", 0, false, false, "harness")
 	}
 	rt, err := runtime.Detect(cfg.RuntimeName)

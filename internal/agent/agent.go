@@ -5,7 +5,6 @@
 package agent
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
@@ -412,32 +410,11 @@ func validDownloads(downloads []BrokerDownload) bool {
 	return true
 }
 
-// StoredAPIKeyDetector is implemented only by adapters whose native marker can contain a
-// reusable API key. Coop uses it to refuse that marker before mounting it when the broker cannot
-// safely extract and replace it. OAuth/access-token markers deliberately return false.
-type StoredAPIKeyDetector interface {
-	StoredAPIKey(profileDir string) (bool, error)
-}
-
 // LiveCredentialSpec is the complete adapter-owned boundary for opt-in live compatibility tests.
-// Portability inspects only the isolated projected profile, never the source credential.
 type LiveCredentialSpec struct {
 	Artifacts   []CredentialArtifact
-	Portability func(profileDir string, deadline time.Time) CredentialPortability
 	AuthSignals []string
 }
-
-// CredentialPortability says whether an isolated file credential can be used without carrying
-// refresh authority. NotPortable covers host-bound keychains; RefreshRequired covers a portable
-// access-token shape whose current token will not outlive the requested deadline.
-type CredentialPortability uint8
-
-const (
-	CredentialUnknown CredentialPortability = iota
-	CredentialPortable
-	CredentialRefreshRequired
-	CredentialNotPortable
-)
 
 // ControllerJobConfig is an adapter whose box config differs in a controller job's box, where
 // the client runs headless for a controller and must start every session the same way.
@@ -546,8 +523,8 @@ type Agent interface {
 	// The caller reports marker presence; adapters decide precedence once from it and their selector.
 	ActiveCredentialEnvKeys(profileDir string, markerPresent bool) []string
 	// LiveCredentials declares the access-only credential projection and redacted compatibility
-	// diagnostics for this adapter. Filtered networking reads its Portability and the loop its
-	// AuthSignals; the opt-in live suite reads the rest, so a registered provider cannot evade it.
+	// diagnostics for this adapter. The loop reads its AuthSignals; the opt-in live suite reads the
+	// rest, so a registered provider cannot evade it.
 	LiveCredentials() LiveCredentialSpec
 	// NativeCredentials owns credential-only canonical import, identity and host renewal.
 	NativeCredentials() NativeCredentialSpec
@@ -679,22 +656,6 @@ func projectJSONLeaf(data []byte, outer, inner, leaf string) ([]byte, error) {
 		return nil, fmt.Errorf("encode credential selector: %w", err)
 	}
 	return append(projected, '\n'), nil
-}
-
-func jwtExpiresAfter(token string, deadline time.Time) bool {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return false
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return false
-	}
-	var claims struct {
-		ExpiresAt int64 `json:"exp"`
-	}
-	return json.Unmarshal(payload, &claims) == nil && claims.ExpiresAt > 0 &&
-		time.Unix(claims.ExpiresAt, 0).After(deadline)
 }
 
 // ClassifyCLIError returns a redacted diagnostic class without retaining provider output.

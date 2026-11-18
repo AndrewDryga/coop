@@ -1002,24 +1002,11 @@ func (codexAgent) CredentialBroker() CredentialBrokerSpec {
 	}
 }
 
-func (codexAgent) StoredAPIKey(profileDir string) (bool, error) {
-	data, err := readCodexCredential(filepath.Join(profileDir, "auth.json"))
-	if err != nil {
-		return false, err
-	}
-	var source codexSourceCredential
-	if err := json.Unmarshal(data, &source); err != nil {
-		return false, fmt.Errorf("decode Codex credential: %w", err)
-	}
-	return source.OpenAIAPIKey != "" && (source.AuthMode == "" || source.AuthMode == "apikey"), nil
-}
-
 func (codexAgent) LiveCredentials() LiveCredentialSpec {
 	return LiveCredentialSpec{
 		Artifacts: []CredentialArtifact{{
 			Name: "auth.json", Primary: true, Project: projectCodexCredential,
 		}},
-		Portability: codexCredentialPortability,
 		// Native workspace discovery and API-key inference use different 401 refusals.
 		AuthSignals: []string{"not logged in", "authentication required", "401 unauthorized", "invalid api key",
 			"unexpected status 401 unauthorized", "workspace routing discovery unauthorized (401)"},
@@ -1109,10 +1096,6 @@ type codexRefreshResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-func readCodexCredential(path string) ([]byte, error) {
-	return ReadCredentialArtifact(path, codexCredentialLimit)
-}
-
 func codexRefreshEndpoint() (string, string, error) {
 	endpoint := strings.TrimSpace(os.Getenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE"))
 	if endpoint == "" {
@@ -1151,21 +1134,6 @@ func (a codexAgent) ActiveCredentialEnvKeys(_ string, markerPresent bool) []stri
 		return nil
 	}
 	return a.CredentialEnvKeys()
-}
-
-func codexCredentialPortability(profileDir string, deadline time.Time) CredentialPortability {
-	data, err := readCodexCredential(filepath.Join(profileDir, "auth.json"))
-	if err != nil {
-		return CredentialRefreshRequired
-	}
-	credentials, err := decodeCodexAccessCredential(data)
-	if err != nil {
-		return CredentialRefreshRequired
-	}
-	if credentials.AuthMode == "apikey" || jwtExpiresAfter(credentials.Tokens.AccessToken, deadline) {
-		return CredentialPortable
-	}
-	return CredentialRefreshRequired
 }
 
 // MCP builds the config.toml mounted over the profile's own in every codex box — the direct CLI

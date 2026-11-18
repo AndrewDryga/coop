@@ -13,11 +13,20 @@ import (
 func TestProviderCredentialReadersRefuseFIFOsWithoutBlocking(t *testing.T) {
 	for _, tc := range []struct {
 		name, marker string
-		agent        Agent
+		read         func(profile string) bool // whether the reader accepted the file
 	}{
-		{name: "claude", marker: ".credentials.json", agent: claudeAgent{}},
-		{name: "codex", marker: "auth.json", agent: codexAgent{}},
-		{name: "grok", marker: "auth.json", agent: grokAgent{}},
+		{name: "claude", marker: ".credentials.json", read: func(profile string) bool {
+			_, err := ReadCredentialArtifact(filepath.Join(profile, ".credentials.json"), claudeCredentialLimit)
+			return err == nil
+		}},
+		{name: "codex", marker: "auth.json", read: func(profile string) bool {
+			_, err := ReadCredentialArtifact(filepath.Join(profile, "auth.json"), codexCredentialLimit)
+			return err == nil
+		}},
+		{name: "grok", marker: "auth.json", read: func(profile string) bool {
+			_, err := ReadCredentialArtifact(filepath.Join(profile, "auth.json"), grokCredentialLimit)
+			return err == nil
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			profile := t.TempDir()
@@ -27,8 +36,8 @@ func TestProviderCredentialReadersRefuseFIFOsWithoutBlocking(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				if got := tc.agent.LiveCredentials().Portability(profile, time.Now().Add(time.Hour)); got == CredentialPortable {
-					t.Errorf("FIFO credential reported portable")
+				if tc.read(profile) {
+					t.Errorf("FIFO credential was read")
 				}
 			}()
 			select {

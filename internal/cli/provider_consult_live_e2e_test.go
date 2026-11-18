@@ -463,7 +463,7 @@ func probeConsultLiveVersion(
 		return consultHarnessFailure(peer.Provider, false, "provider_registry"), agents.LiveCredentialSpec{}
 	}
 	live := ag.LiveCredentials()
-	if len(live.Artifacts) == 0 || live.Portability == nil || len(live.AuthSignals) == 0 {
+	if len(live.Artifacts) == 0 || len(live.AuthSignals) == 0 {
 		return consultHarnessFailure(peer.Provider, false, "credential_contract"), live
 	}
 	interactive := ag.Interactive(cfg)

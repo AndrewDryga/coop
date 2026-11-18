@@ -505,7 +505,7 @@ func liveCredentialsFor(provider string) (agents.Agent, agents.LiveCredentialSpe
 		return nil, agents.LiveCredentialSpec{}, fmt.Errorf("%s live credential contract is unavailable", provider)
 	}
 	live := ag.LiveCredentials()
-	if len(live.Artifacts) == 0 || live.Portability == nil || len(live.AuthSignals) == 0 {
+	if len(live.Artifacts) == 0 || len(live.AuthSignals) == 0 {
 		return nil, agents.LiveCredentialSpec{}, fmt.Errorf("%s live credential contract is unavailable", provider)
 	}
 	return ag, live, nil

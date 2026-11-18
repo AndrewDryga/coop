@@ -922,7 +922,6 @@ func (geminiAgent) LiveCredentials() LiveCredentialSpec {
 				return projectJSONLeaf(data, "security", "auth", "selectedType")
 			}},
 		},
-		Portability: func(string, time.Time) CredentialPortability { return CredentialNotPortable },
 		// A rejected key comes back as the service's own error inside the pinned CLI's failed result:
 		// "[API Error: {… API key not valid …}]".
 		AuthSignals: []string{"manual authorization is required", "authentication required", "must specify the gemini_api_key",

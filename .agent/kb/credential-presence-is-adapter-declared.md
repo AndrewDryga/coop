@@ -10,9 +10,9 @@ Adapters own the credential facts: `AuthMarker` names their login file and canon
 key; `CredentialEnvKeys` is the complete set of token keys they accept;
 `ActiveCredentialEnvKeys` selects the env family authoritative for one profile; and
 `NativeCredentials().Inspect` judges whether a canonical account record is ready.
-`CredentialBroker` declares the one pinned API-key route Coop has actually qualified, while the
-optional `StoredAPIKeyDetector` identifies a reusable API key hidden in a native marker so launch
-can refuse it instead of mounting it. Presence
+`CredentialBroker` declares the one pinned API-key route Coop has actually qualified. (A login
+only builds before v11 saved in `profiles/<account>` is refused before any launch reads it, so no
+adapter inspects a marker file for a stored API key any more.) Presence
 callers never reconstruct provider-specific precedence or OAuth schemas. `ProfileAuthed` and
 `AuthedAgents` are the public profile and provider views over the shared presence predicate.
 
@@ -96,6 +96,7 @@ does not recursively chmod provider transcripts or state; the private ancestors 
 descendants without taking ownership of their formats.
 
 ## Changelog
+- 2026-11-17 - removed `StoredAPIKeyDetector` and `LiveCredentialSpec.Portability` with the pre-v11 marker branches that alone used them
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-17 - removed `StoredCredentialStatus` and `MarkerCredentialSelector`, which no code had
   called since the pre-v11 profile readers went (audit AG-5); readiness is the canonical record's

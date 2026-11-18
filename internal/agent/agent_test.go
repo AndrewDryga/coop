@@ -2,7 +2,6 @@ package agent
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -11,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/mcp"
@@ -899,9 +897,6 @@ func TestMetadata(t *testing.T) {
 			}
 		}
 		live := a.LiveCredentials()
-		if live.Portability == nil {
-			t.Errorf("%s live credentials have no portability check", name)
-		}
 		if len(live.AuthSignals) == 0 {
 			t.Errorf("%s live credentials have no auth diagnostics", name)
 		}
@@ -1119,9 +1114,6 @@ func TestGeminiCredentialEnvPrecedence(t *testing.T) {
 		}
 		check("leftover settings " + body)
 	}
-	if _, ok := gemini.(StoredAPIKeyDetector); ok {
-		t.Error("Gemini reads a stored API key choice from the retired profile folder")
-	}
 }
 
 func TestGeminiHostCredentialSelectsAPIKeyWithoutClobberingSettings(t *testing.T) {
@@ -1172,55 +1164,6 @@ func TestGeminiHostCredentialSelectsAPIKeyWithoutClobberingSettings(t *testing.T
 	}
 	if data, err := os.ReadFile(outside); err != nil || string(data) != `{"theme":"outside"}` {
 		t.Fatalf("linked settings target changed: %q, %v", data, err)
-	}
-}
-
-func TestPortableCredentialSafetyRequiresValidityBeyondDeadline(t *testing.T) {
-	root := t.TempDir()
-	deadline := time.Now().Add(time.Hour)
-	future := deadline.Add(time.Hour)
-	past := deadline.Add(-time.Minute)
-
-	claude, _ := Get("claude")
-	claudeLive := mustLiveCredentials(t, claude)
-	claudeDir := filepath.Join(root, "claude")
-	mustWrite(t, filepath.Join(claudeDir, ".credentials.json"), fmt.Sprintf(
-		`{"claudeAiOauth":{"accessToken":"access","expiresAt":%d,"scopes":["user:inference"]}}`, future.UnixMilli()))
-	if got := claudeLive.Portability(claudeDir, deadline); got != CredentialPortable {
-		t.Fatal("unexpired Claude access token was not portable")
-	}
-	mustWrite(t, filepath.Join(claudeDir, ".credentials.json"), fmt.Sprintf(
-		`{"claudeAiOauth":{"accessToken":"access","refreshToken":"refresh","expiresAt":%d,"scopes":["user:inference"]}}`, past.UnixMilli()))
-	if got := claudeLive.Portability(claudeDir, deadline); got != CredentialRefreshRequired {
-		t.Fatal("expired Claude refresh credential was treated as safe to copy")
-	}
-
-	codex, _ := Get("codex")
-	codexLive := mustLiveCredentials(t, codex)
-	codexDir := filepath.Join(root, "codex")
-	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"exp":%d}`, future.Unix())))
-	mustWrite(t, filepath.Join(codexDir, "auth.json"), `{"auth_mode":"chatgpt","tokens":{"id_token":"identity","access_token":"x.`+payload+`.x"},"last_refresh":"2026-07-15T00:00:00Z"}`)
-	if got := codexLive.Portability(codexDir, deadline); got != CredentialPortable {
-		t.Fatal("unexpired Codex access token was not portable")
-	}
-
-	gemini, _ := Get("gemini")
-	if got := mustLiveCredentials(t, gemini).Portability(filepath.Join(root, "gemini"), deadline); got != CredentialNotPortable {
-		t.Fatal("host-bound Gemini file keychain was treated as portable")
-	}
-
-	grok, _ := Get("grok")
-	grokLive := mustLiveCredentials(t, grok)
-	grokDir := filepath.Join(root, "grok")
-	mustWrite(t, filepath.Join(grokDir, "auth.json"), fmt.Sprintf(
-		`{"issuer::id":{"key":"access","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`, future.Format(time.RFC3339Nano)))
-	if got := grokLive.Portability(grokDir, deadline); got != CredentialPortable {
-		t.Fatal("unexpired Grok access token was not portable")
-	}
-	mustWrite(t, filepath.Join(grokDir, "auth.json"), fmt.Sprintf(
-		`{"issuer::id":{"key":"access","refresh_token":"refresh","expires_at":%q,"auth_mode":"oauth","oidc_issuer":"issuer","oidc_client_id":"client","principal_id":"principal","principal_type":"user","user_id":"user","team_id":"team","create_time":"2026-07-16T01:00:00Z"}}`, past.Format(time.RFC3339Nano)))
-	if got := grokLive.Portability(grokDir, deadline); got != CredentialRefreshRequired {
-		t.Fatal("expired Grok refresh credential was treated as safe to copy")
 	}
 }
 

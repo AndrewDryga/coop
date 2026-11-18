@@ -147,21 +147,7 @@ func selectCredentialPlanWithMarkers(ctx context.Context, cfg *config.Config, sp
 		return nil, nil
 	}
 	if spec.Login {
-		agent, ok := agents.Get(spec.Agent)
-		if !ok {
-			return nil, nil
-		}
-		profileDir := cfg.AgentProfileDir(spec.Agent, cfg.ActiveProfile(spec.Agent))
-		if detector, ok := agent.(agents.StoredAPIKeyDetector); ok && profileMarkerPresent(agent, profileDir) {
-			stored, err := detector.StoredAPIKey(profileDir)
-			if err != nil {
-				return nil, fmt.Errorf("inspect %s stored credential: %w", agent.DisplayName(), err)
-			}
-			if stored {
-				return nil, fmt.Errorf("%s sign-in cannot mount its existing reusable API key; remove that account with 'coop credentials %s %s rm' before signing in again", agent.DisplayName(), spec.Agent, cfg.ActiveProfile(spec.Agent))
-			}
-		}
-		return nil, nil
+		return nil, nil // sign-in runs in a fresh staging folder that holds no credential yet
 	}
 	plan := &credentialPlan{}
 	for _, name := range credentialScope(cfg, spec) {
@@ -246,20 +232,6 @@ func credentialBrokerCandidateFor(cfg *config.Config, spec RunSpec, name, profil
 				return nil, fmt.Errorf("%s has more than one active environment credential; keep only one", agent.DisplayName())
 			}
 			credentialKey, credential = key, value
-		}
-	}
-	if credentialKey == "" && markerPresent {
-		if detector, ok := agent.(agents.StoredAPIKeyDetector); ok {
-			stored, err := detector.StoredAPIKey(profileDir)
-			if err != nil {
-				return nil, fmt.Errorf("inspect %s stored credential: %w", agent.DisplayName(), err)
-			}
-			if stored {
-				if broker.Valid() {
-					return nil, fmt.Errorf("%s has a reusable API key in its native credential file; remove it and use %s with --egress filtered instead", agent.DisplayName(), broker.CredentialEnv)
-				}
-				return nil, fmt.Errorf("%s has a reusable API key in its native credential file; remove it and sign in with the provider instead", agent.DisplayName())
-			}
 		}
 	}
 	if credentialKey == "" {
