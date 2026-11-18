@@ -815,11 +815,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if err != nil {
 		return -1, err
 	}
-	releaseCredentials, err := runCredentialUseLeases(cfg, rt, &spec)
-	if err != nil {
+	if err := checkRunHistorySettled(cfg, spec); err != nil {
 		return -1, err
 	}
-	defer releaseCredentials()
 	if spec.Review && !spec.FormatCorrection {
 		if p.Review.Compose != "" {
 			composeFile = ComposeFileAt(spec.Repo, p.Review.Compose)
