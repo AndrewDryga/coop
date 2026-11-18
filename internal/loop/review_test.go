@@ -788,3 +788,53 @@ func TestReviewSubjectSnapshotsRejectLifecycleGenerationChange(t *testing.T) {
 		t.Fatalf("replacement review subject validation = %v, want generation change", err)
 	}
 }
+
+// Review bookkeeping reads each queue a fixed number of times per step, not once per subject: a
+// 20-subject signoff over a 1,500-task archive read the whole queue some sixty times.
+func TestReviewBookkeepingReadsTheQueueAFixedNumberOfTimes(t *testing.T) {
+	t.Setenv(tasks.TestLeaseAuthorityRootEnv, t.TempDir())
+	reads := func(n int) map[string]int64 {
+		t.Helper()
+		root := t.TempDir()
+		var subjects []string
+		evidence := ""
+		for i := range n {
+			id := fmt.Sprintf("subject-%02d", i)
+			taskForLease(t, root, stateDone, id)
+			subjects = append(subjects, id)
+			evidence += "AUDIT EVIDENCE — " + id + " — gate: make check — findings: none\n"
+		}
+		taskForLease(t, root, stateTodo, "unrelated")
+		hosts := []string{root}
+		counts := map[string]int64{}
+		measure := func(step string, run func() error) {
+			t.Helper()
+			before := tasks.TaskTreeReads()
+			if err := run(); err != nil {
+				t.Fatalf("%s over %d subjects: %v", step, n, err)
+			}
+			counts[step] = tasks.TaskTreeReads() - before
+		}
+		var snapshots []reviewSubjectSnapshot
+		measure("snapshot", func() (err error) { snapshots, err = snapshotReviewSubjects(hosts, subjects); return err })
+		measure("validate", func() error { return validateReviewSubjects(hosts, snapshots) })
+		measure("titles", func() error { titlesOf(hosts, subjects); return nil })
+		measure("verdict", func() error {
+			_, err := applyReviewVerdictInRepo("", hosts, subjects, evidence+"REVIEW COMPLETE — PASS — reopened: none")
+			return err
+		})
+		measure("block", func() error { return blockReopenedTasks(hosts, subjects, 3) })
+		for _, id := range subjects {
+			if current, ok, err := tasks.CurrentTask(root, id); err != nil || !ok || current.State != stateBlocked {
+				t.Fatalf("after the review cap, %s = %+v, %v, %v; want it blocked", id, current, ok, err)
+			}
+		}
+		return counts
+	}
+	one, ten := reads(1), reads(10)
+	for step, n := range ten {
+		if n != one[step] {
+			t.Errorf("%s read the queue %d times for ten subjects and %d for one; want the same count", step, n, one[step])
+		}
+	}
+}

@@ -388,14 +388,8 @@ func stateWords(state string) string {
 // invents a title, but it also never fails because of one.
 func taskTitle(hosts []string, id string) string {
 	for _, host := range hosts {
-		items, err := tasks.ReadTaskTree(host)
-		if err != nil {
-			continue
-		}
-		for _, item := range items {
-			if item.ID == id {
-				return item.Title
-			}
+		if item, ok, err := tasks.CurrentTask(host, id); err == nil && ok {
+			return item.Title
 		}
 	}
 	return id

@@ -26,7 +26,8 @@ re-samples `ui.TermWidth(os.Stderr)` on every paint, so a resize is picked up (`
 2. a queue-count change, polled every `progressPoll` = 2s by `monitorProgress` — counts only,
    never the activity string, and a torn read of 0/0 is rejected (`updateLoopBarCounts`). A tick
    re-reads the tree only when a state folder's stamp changed or `progressRefresh` = 30s passed
-   (`progressTick`), so an idle loop costs a few `stat` calls, not a read of every archived task;
+   (`progressTick`), so an idle loop costs a few `stat` calls, not a read of every archived task.
+   The attempt start builds the tick first and the bar from its counts, one read for both;
 3. the spinner tick, every `spinInterval` = 120ms (`spinLoop`), started by `runIterationWithMode` only
    when `ui.SpinnerEnabled()`.
 
@@ -93,6 +94,8 @@ loudly. A glitch here is cursor arithmetic to root-cause, never a reason to remo
 [[nonzero-progress-segments-stay-visible]] for the segment-visibility contract of the bar it paints.
 
 ## Changelog
+- 2026-11-17 — the attempt start reads the queue once: the bar starts from the progress tick's
+  baseline instead of a second read (audit LP-23).
 - 2026-11-17 — clip, truncate and progressLineWidth measure display columns, not runes: a
   CJK or emoji task title wrapped the bar and left a stale row per repaint (task
   2026-11-17-the-loop-s-live-bar-measures-display-width-so-wi). Verified against internal/ui/live.go

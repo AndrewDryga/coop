@@ -182,15 +182,17 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 
 	termOut, termErr := io.Writer(os.Stdout), io.Writer(os.Stderr)
 	var bar *loopBar
+	var progress *progressTick
 	var funnel *lineWriter
 	var liveWidth func() int
 	if live {
 		liveWidth = func() int { return ui.TermWidth(os.Stderr) }
 		region := ui.NewRegion(os.Stderr, liveWidth)
-		// A failed read starts the bar from zero counts and the progress tick reads again. Ending
-		// the attempt here handed callers no window set, and the loop crashed on it.
-		c0, _, _ := tasks.QueueProgress(hosts)
-		bar = newLoopBar(region, liveWidth, time.Now(), c0, activity)
+		// One queue read starts both the bar and its progress tick. A failed read starts the bar
+		// from zero counts and the tick reads again. Ending the attempt here handed callers no
+		// window set, and the loop crashed on it.
+		progress = newProgressTick(hosts, time.Now())
+		bar = newLoopBar(region, liveWidth, time.Now(), progress.last, activity)
 		funnel = &lineWriter{fn: bar.history} // agent/loop lines scroll above the bar
 		termOut, termErr = funnel, funnel
 		// Route coop's own status lines (ui.Note etc. — from here AND box.Run's startup: "shadowed",
@@ -278,7 +280,7 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 	if live {
 		stop = make(chan struct{})
 		wg.Add(1)
-		go func() { defer wg.Done(); monitorProgress(hosts, stop, bar) }()
+		go func() { defer wg.Done(); monitorProgress(progress, stop, bar) }()
 		if ui.SpinnerEnabled() {
 			wg.Add(1)
 			go func() { defer wg.Done(); spinLoop(bar, stop) }()
@@ -450,10 +452,9 @@ func (c *Control) iterationActivityTask(id string) *forkspace.ExecutionTaskRef {
 // monitorProgress watches the queue while an iteration runs and pushes count changes into the live
 // bar. The activity is owned by runIteration and cannot drift to another queue item when a task
 // moves; only done/blocked/total counts are monitored.
-func monitorProgress(hosts []string, stop <-chan struct{}, bar *loopBar) {
+func monitorProgress(progress *progressTick, stop <-chan struct{}, bar *loopBar) {
 	t := time.NewTicker(progressPoll)
 	defer t.Stop()
-	progress := newProgressTick(hosts, time.Now()) // the bar was built with this baseline
 	for {
 		select {
 		case <-stop:

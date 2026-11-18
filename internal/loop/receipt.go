@@ -270,20 +270,17 @@ func reviewSubject(hosts []string, id string) (tasks.QueuedTask, error) {
 func lifecycleTaskSubject(hosts []string, id string) (tasks.QueuedTask, error) {
 	var found *tasks.QueuedTask
 	for _, root := range hosts {
-		items, err := tasks.ReadTaskTree(root)
+		task, ok, err := tasks.CurrentTask(root, id)
 		if err != nil {
 			return tasks.QueuedTask{}, err
 		}
-		for _, task := range items {
-			if task.ID != id {
-				continue
-			}
-			candidate := tasks.QueuedTask{Root: root, Item: task}
-			if found != nil {
-				return tasks.QueuedTask{}, errors.New("exists in multiple lifecycle queues")
-			}
-			found = &candidate
+		if !ok {
+			continue
 		}
+		if found != nil {
+			return tasks.QueuedTask{}, errors.New("exists in multiple lifecycle queues")
+		}
+		found = &tasks.QueuedTask{Root: root, Item: task}
 	}
 	if found == nil {
 		return tasks.QueuedTask{}, errors.New("is no longer in a lifecycle queue")
