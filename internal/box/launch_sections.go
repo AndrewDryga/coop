@@ -164,6 +164,14 @@ func (s *launchSections) mountProtection() {
 	}
 }
 
+// gitIdentity says once when the global Git config (includes followed) names no author, so a
+// person learns before the first commit, not from a commit with none.
+func (s *launchSections) gitIdentity(found bool) {
+	if s.on && !found {
+		ui.Caution("Your global Git config sets no user.name or user.email, so commits in this box have no author.")
+	}
+}
+
 func (s *launchSections) prepareSecrets() {
 	if s.on && !s.secretsOpened {
 		s.section("Protecting secrets")

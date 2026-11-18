@@ -1146,3 +1146,18 @@ func TestBoundedCauseKeepsTheReasonAndTheError(t *testing.T) {
 		t.Fatalf("empty output = %q, want the error alone", got)
 	}
 }
+
+// A launch whose global Git config names no author says so once; one with an author, or a quiet
+// launch, says nothing.
+func TestLaunchSaysWhenNoGitIdentityIsFound(t *testing.T) {
+	want := "  ⚠ Your global Git config sets no user.name or user.email, so commits in this box have no author.\n"
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).gitIdentity(false) }); got != want {
+		t.Fatalf("missing identity = %q, want %q", got, want)
+	}
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}}).gitIdentity(true) }); got != "" {
+		t.Fatalf("found identity printed %q", got)
+	}
+	if got := captureStderr(t, func() { newLaunchSections(RunSpec{Cmd: []string{"sh"}, Quiet: true}).gitIdentity(false) }); got != "" {
+		t.Fatalf("quiet launch printed %q", got)
+	}
+}

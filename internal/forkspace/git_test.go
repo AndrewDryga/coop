@@ -61,6 +61,54 @@ func TestWantsSigning(t *testing.T) {
 	}
 }
 
+// A global config that only includes another file (a common dotfiles layout) is read the way git
+// reads it: identity and signing come from the included file. Only the global config's own
+// includes count: an includeIf "gitdir:" cannot match without a repository, and the repository's
+// config, includes and all, is never read.
+func TestGlobalGitConfigFollowsTheGlobalIncludes(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "nosystem"))
+	repo := initRepo(t)
+	dotfiles := filepath.Join(dir, "dotfiles.gitconfig")
+	evil := filepath.Join(dir, "evil.gitconfig")
+	write := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(dotfiles, "[user]\n\tname = Dot Files\n\temail = dot@example.com\n\tsigningkey = ABCD1234\n[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /trusted/gpg\n")
+	write(evil, "[gpg]\n\tprogram = /tmp/evil\n[user]\n\tname = Planted\n")
+	global := filepath.Join(dir, "global")
+	write(global, "[include]\n\tpath = "+dotfiles+"\n[includeIf \"gitdir:"+repo+"/\"]\n\tpath = "+evil+"\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	gitIn(t, repo, "config", "include.path", evil) // repo-local include: never read
+	t.Chdir(repo)
+
+	if got := GlobalGitConfig("--get", "user.name"); got != "Dot Files" {
+		t.Errorf("user.name = %q, want the included Dot Files", got)
+	}
+	if got := GlobalGitConfig("--get", "user.email"); got != "dot@example.com" {
+		t.Errorf("user.email = %q, want the included address", got)
+	}
+	if !WantsSigning() {
+		t.Error("WantsSigning = false with commit.gpgsign=true in the included file")
+	}
+	want := []string{
+		"-c", "commit.gpgsign=true",
+		"-c", "user.signingkey=",
+		"-c", "gpg.ssh.defaultKeyCommand=",
+		"-c", "gpg.program=/trusted/gpg",
+		"-c", "user.signingkey=ABCD1234",
+	}
+	if got := TrustedSignArgs(); !slices.Equal(got, want) {
+		t.Errorf("TrustedSignArgs = %v, want %v (from the global include only)", got, want)
+	}
+}
+
 // TrustedSignArgs must read signing config from your GLOBAL git config — so neither a fork nor the
 // agent-writable parent repo can point gpg.program at a planted binary — and track gpg.format to
 // the matching program key. (`git config --global` ignores -C, writing the GIT_CONFIG_GLOBAL file.)

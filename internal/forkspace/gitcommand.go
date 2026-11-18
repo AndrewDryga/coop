@@ -180,13 +180,17 @@ func inheritedTerminal(stream any, own *os.File) bool {
 	return err == nil
 }
 
-// GlobalGitConfig reads the host user's GLOBAL git config (`git config --global <args>`), or ""
-// when it is unset or cannot be read: the one scope an agent cannot write, for every value coop
-// reads and then executes or opens. Git starts with a git dir that cannot exist, so it never looks
-// for a repository from coop's working folder, which may be a box's, where a FIFO at .git/HEAD
-// would hold it; and it is stopped at gitStallLimit.
+// GlobalGitConfig reads the host user's GLOBAL git config (`git config --global --includes <args>`),
+// or "" when it is unset or cannot be read: the one scope an agent cannot write, for every value
+// coop reads and then executes or opens. Git itself resolves the global file's [include] and
+// [includeIf] entries, as it does for the person's own commands, so a dotfiles layout that keeps
+// user.name, user.email or signing in an included file works; only files the global config names
+// are read, never a repository's config. includeIf "gitdir:" and "onbranch:" never match here:
+// git starts with a git dir that cannot exist, so there is no repository to compare. That same
+// git dir keeps git from looking for a repository from coop's working folder, which may be a
+// box's, where a FIFO at .git/HEAD would hold it; and git is stopped at gitStallLimit.
 func GlobalGitConfig(args ...string) string {
-	cmd := boundedGitCommand(context.Background(), "", append([]string{"config", "--global"}, args...)...)
+	cmd := boundedGitCommand(context.Background(), "", append([]string{"config", "--global", "--includes"}, args...)...)
 	cmd.Dir = "/"
 	cmd.Env = append(withoutGitEnv(os.Environ()), "GIT_DIR="+noGitDir, "GIT_CEILING_DIRECTORIES=/")
 	out, err := cmd.Output()

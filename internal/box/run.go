@@ -1525,7 +1525,9 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		for source, target := range spec.native.gitRewrites() {
 			rewrites[source] = target
 		}
-		p, err := artifacts.writeFile(artifacts.parent, gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask, rewrites))
+		gitConfig := gitConfigForBox(coAuthor, hooksPath, excludesPath, spec.AssignedTask, rewrites)
+		sections.gitIdentity(strings.Contains(gitConfig, "[user]\n")) // buildGitConfig writes [user] only for an identity
+		p, err := artifacts.writeFile(artifacts.parent, gitConfig)
 		if err != nil {
 			return -1, fmt.Errorf("prepare box Git config: %w", err)
 		}

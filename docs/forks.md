@@ -270,7 +270,8 @@ To review in your editor's source control panel, run `coop fork open <name>`. It
 directory with the first of these that's set:
 
 1. `COOP_EDITOR`, a co:op-only override
-2. `git config --global core.editor`, your normal Git editor (co:op reads only the global value)
+2. `git config --global core.editor`, your normal Git editor (co:op reads only the global value,
+   including files it `[include]`s)
 3. a GUI editor detected on `PATH`: `cursor`, `code`, `zed`, `idea`, `subl`
 4. `$VISUAL` or `$EDITOR`
 

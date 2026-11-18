@@ -259,10 +259,15 @@ finish in <dir> within ..." and the central helpers (forkctl, cli, tasks and loo
 errors through it. A command a person sees (stdin or stdout the terminal: a pager, a signing
 prompt) is left to run. Inheriting coop's stdin is not enough: the signing helpers pass it on every
 rebase, and in an unattended loop it is a pipe or `/dev/null`, so that rebase is stopped too.
-`GlobalGitConfig` reads `git config --global` from `/` with a git dir that
-cannot exist, so it never searches a box's repository from coop's working folder.
+`GlobalGitConfig` reads `git config --global --includes` from `/` with a git dir that
+cannot exist, so it never searches a box's repository from coop's working folder. Git follows the
+global file's `[include]`s itself (identity, signing and the editor all come through it, as for the
+person's own git), but `includeIf "gitdir:"`/`"onbranch:"` cannot match without a repository and no
+repository config is ever read: trust still starts only at the global file.
 
 ## Changelog
+- 2026-11-17 — `GlobalGitConfig` follows the global config's includes (owner decision on audit find
+  FS-3), and a launch whose global config names no author says so (`launchSections.gitIdentity`).
 - 2026-11-17 — the climb paragraph still said redirects are accepted and pointed at a section of
   that name; it now matches the 2026-11-08 rule that refuses them. 2026-11-10 audit, find FS-12.
 - 2026-11-17 — a folder with `HEAD` and `objects` and no `.git` passed for a bare repository and
