@@ -143,6 +143,8 @@ func sessionOwnsCompanion(owner session.Session, binding session.CompanionReposi
 	return false
 }
 
+// stageCompanionDiscard moves a companion the caller has just planned, under the session runtime
+// lock it still holds: the plan is the ownership proof, so the move rechecks only its identity.
 func (s *Service) stageCompanionDiscard(ctx context.Context, owner session.Session, plan sessionCompanionDiscardPlan) (string, error) {
 	stateRoot, rootErr := filepath.EvalSymlinks(s.stateRoot)
 	parent := filepath.Join(stateRoot, companionDiscardRoot)
@@ -170,7 +172,7 @@ func (s *Service) stageCompanionDiscard(ctx context.Context, owner session.Sessi
 	}
 	// purgeCompanionDiscard also resumes a receipt written just before a crash
 	// interrupted this rename. It rechecks identity and cleanliness first.
-	if err := s.moveCompanionDiscard(ctx, stage, receipt); err != nil {
+	if err := s.moveCompanionDiscard(ctx, stage, receipt, true); err != nil {
 		if _, treeErr := os.Lstat(filepath.Join(stage, companionDiscardTree)); errors.Is(treeErr, os.ErrNotExist) {
 			_ = os.Remove(filepath.Join(stage, companionDiscardReceiptName))
 			_ = os.Remove(stage)
@@ -189,7 +191,10 @@ func (s *Service) stageCompanionDiscard(ctx context.Context, owner session.Sessi
 	return stage, nil
 }
 
-func (s *Service) moveCompanionDiscard(ctx context.Context, stage string, receipt companionDiscardReceipt) error {
+// moveCompanionDiscard renames the planned workspace into the stage. planned says the plan was made
+// moments ago under the same session runtime lock, so its full verification still stands; a receipt
+// resumed after a crash was planned under a lock since released and is verified again.
+func (s *Service) moveCompanionDiscard(ctx context.Context, stage string, receipt companionDiscardReceipt, planned bool) error {
 	plan := receipt.Plan
 	info, err := os.Lstat(plan.Workspace)
 	if errors.Is(err, os.ErrNotExist) {
@@ -202,9 +207,11 @@ func (s *Service) moveCompanionDiscard(ctx context.Context, stage string, receip
 	if err != nil || !identity.sameDirectory(plan.WorkspaceIdentity) {
 		return errors.New("companion discard identity changed")
 	}
-	binding := session.CompanionRepository{Name: plan.Name, Repository: plan.Repo, Workspace: plan.Workspace, BaseCommit: plan.Head}
-	if err := verifySessionCompanionContext(ctx, binding); err != nil {
-		return err
+	if !planned {
+		binding := session.CompanionRepository{Name: plan.Name, Repository: plan.Repo, Workspace: plan.Workspace, BaseCommit: plan.Head}
+		if err := verifySessionCompanionContext(ctx, binding); err != nil {
+			return err
+		}
 	}
 	stateRoot, err := filepath.EvalSymlinks(s.stateRoot)
 	if err != nil {
@@ -350,7 +357,7 @@ func (s *Service) purgeCompanionDiscard(ctx context.Context, stage string) error
 				return err
 			}
 		}
-		if err := s.moveCompanionDiscard(ctx, stage, receipt); err != nil {
+		if err := s.moveCompanionDiscard(ctx, stage, receipt, false); err != nil {
 			return err
 		}
 		info, err = root.Lstat(companionDiscardTree)

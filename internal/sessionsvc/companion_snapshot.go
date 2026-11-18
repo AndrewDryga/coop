@@ -182,9 +182,7 @@ func createCachedSessionSnapshot(ctx context.Context, stateRoot string, binding 
 	if err = projectCompanionSnapshot(ctx, cached.Workspace, stage); err != nil {
 		return err
 	}
-	projected := binding
-	projected.Workspace = stage
-	if err = verifySessionCompanionContext(ctx, projected); err != nil {
+	if err = verifyCompanionProjection(stage, binding.BaseCommit); err != nil {
 		return err
 	}
 	if err = verifySessionSubmodules(ctx, stage, binding.BaseCommit); err != nil {
@@ -328,6 +326,39 @@ func verifyCompanionSnapshot(ctx context.Context, entry, key string, binding ses
 		return err
 	}
 	return verifySessionSubmodules(ctx, binding.Workspace, binding.BaseCommit)
+}
+
+// verifyCompanionProjection checks the identity and links of a projection: a fresh copy of a cache
+// entry verifySessionCompanionContext proved just before, made by projectCompanionSnapshot into a
+// private stage under the same snapshot lock. Repeating the full Git verification on the copy cost
+// every reuse a second checkout status and fsck; what the copy can still get wrong is a path that
+// is not its own real directory or Git metadata that is not self-contained.
+func verifyCompanionProjection(stage, commit string) error {
+	info, err := os.Lstat(stage)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("companion projection is not a real directory")
+	}
+	if real, err := filepath.EvalSymlinks(stage); err != nil || filepath.Clean(real) != stage {
+		return errors.New("companion projection must name its real directory, not a symlink or alias")
+	}
+	metadataPath := filepath.Join(stage, ".git")
+	metadata, err := os.Lstat(metadataPath)
+	if err != nil || metadata.Mode()&os.ModeSymlink != 0 || !metadata.IsDir() {
+		return errors.New("companion projection Git metadata is not self-contained")
+	}
+	marker, err := os.ReadFile(filepath.Join(metadataPath, sessionCompanionMarkerFile))
+	if err != nil || string(marker) != sessionCompanionMarker+commit+"\n" {
+		return errors.New("companion projection ownership marker does not match")
+	}
+	if history, err := os.ReadFile(filepath.Join(metadataPath, sessionCompanionHistoryFile)); err != nil || string(history) != sessionCompanionHistoryFull {
+		return errors.New("companion projection history marker is invalid")
+	}
+	for _, name := range []string{filepath.Join("objects", "info", "alternates"), "logs", "commondir"} {
+		if _, err := os.Lstat(filepath.Join(metadataPath, name)); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("companion projection Git metadata has %s", name)
+		}
+	}
+	return nil
 }
 
 func readCompanionSnapshotReceipt(entry string) (companionSnapshotReceipt, error) {

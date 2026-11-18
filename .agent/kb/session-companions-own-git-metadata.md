@@ -3,7 +3,7 @@ name: session-companions-own-git-metadata
 description: companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 subsystem: sessions
 sources: [internal/sessionsvc/companion.go, internal/sessionsvc/companion_snapshot.go, internal/sessionsvc/primary_snapshot.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/companion_snapshot_gc.go, internal/sessionsvc/job_tree.go, internal/forkspace/git.go, internal/forkspace/lfs.go, internal/forkspace/lfs_status.go, internal/sessionsvc/service.go, internal/cli/fork_cmd.go, internal/box/run.go, internal/sessionsvc/companion_gc.go]
-updated: 2026-11-17
+updated: 2026-11-18
 ---
 
 # Session companions own their Git metadata
@@ -87,6 +87,12 @@ hardlinks are durable references: cache eviction cannot remove bytes a session s
 closing one session only releases its own references. Private cache projection stages are never
 mounted; reuse/GC removes an interrupted stage under the same snapshot lock.
 
+The full checkout verification (`verifySessionCompanionContext`: status against a fresh index,
+fsck) runs once per step. A cache hit verifies the cache entry fully and its fresh projection,
+copied under the same snapshot lock, only for identity and links (`verifyCompanionProjection`).
+Reclaim verifies in the discard plan and the move that follows under the same session runtime lock
+rechecks only the directory identity; a discard receipt resumed after a crash is verified again.
+
 Cache GC keeps referenced or unproven entries, considers unused entries after an hour and evicts
 unreferenced entries sooner under pressure or above the disposable-byte budget. A directory-bound
 versioned receipt plus a durable eviction marker makes interrupted deletion resumable. GC atomically
@@ -111,6 +117,7 @@ No filesystem reflink support is required: private state on both Btrfs and ext4 
 and the existing allocated-block accountant counts each payload once.
 
 ## Changelog
+- 2026-11-18 — the full verification runs once per reuse and once per reclaim; the projection and the planned move check identity and links only (task 2026-11-17-verify-a-companion-s-ownership-once-per-step-und).
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K5-5; checked with grep).
 - 2026-11-04 — a read-only primary fork without an immutable primary receipt is refused by name instead of kept when it shares no inodes (task 2026-11-04-drop-the-old-session-store-row-readers).
 - 2026-11-04 — linked companions and bounded, shallow or missing history markers are refused now; the owner accepted a code proof and every store on this Mac had none. The empty-submodule check stays, since a running box can produce one.

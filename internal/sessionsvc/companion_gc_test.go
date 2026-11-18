@@ -494,3 +494,84 @@ func TestCompanionGCInvalidatesAccountingEvenWhenLaterInventoryFails(t *testing.
 		t.Fatal("successful cleanup left the pre-cleanup storage report cached")
 	}
 }
+
+// Reusing a cached snapshot verified the cache entry and then its fresh projection in full, and
+// reclaiming a companion verified it in the plan and again before the move, both under one lock.
+// Each step now runs the full verification (one fsck) once; a resumed move still verifies.
+func TestCompanionReuseAndReclaimVerifyOncePerStep(t *testing.T) {
+	ctx := context.Background()
+	service, owner := companionGCFixture(t, 1, true)
+	binding := owner.Companions[0]
+	verifications := countGitProcesses(t)
+	reused := binding
+	reused.Workspace = filepath.Join(filepath.Dir(binding.Workspace), "reused")
+	if err := createCachedSessionCompanion(ctx, service.stateRoot, reused); err != nil {
+		t.Fatal(err)
+	}
+	if got := verifications("--connectivity-only"); got != 1 {
+		t.Fatalf("cache reuse verified %d times, want once", got)
+	}
+	if err := verifySessionCompanionContext(ctx, reused); err != nil {
+		t.Fatalf("projection is not a verified companion: %v", err)
+	}
+
+	verifications = countGitProcesses(t)
+	unlock := service.lockSessionRuntime(owner.ID)
+	err := service.reclaimClosedCompanion(ctx, owner.ID, binding)
+	unlock()
+	if err != nil || pathExists(binding.Workspace) {
+		t.Fatalf("reclaim: %v", err)
+	}
+	if got := verifications("--connectivity-only"); got != 1 {
+		t.Fatalf("reclaim verified %d times, want once", got)
+	}
+}
+
+// A projection that is not its own real directory with self-contained Git metadata is refused.
+func TestCompanionProjectionChecksIdentityAndLinks(t *testing.T) {
+	ctx := context.Background()
+	service, owner := companionGCFixture(t, 1, false)
+	commit := owner.Companions[0].BaseCommit
+	entries, err := os.ReadDir(filepath.Join(service.stateRoot, companionSnapshotRoot))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("snapshot inventory: %v, %v", entries, err)
+	}
+	cached := filepath.Join(service.stateRoot, companionSnapshotRoot, entries[0].Name(), "tree")
+	for name, damage := range map[string]func(stage string) error{
+		"metadata link": func(stage string) error {
+			metadata := filepath.Join(stage, ".git")
+			if err := os.Rename(metadata, metadata+"-real"); err != nil {
+				return err
+			}
+			return os.Symlink(metadata+"-real", metadata)
+		},
+		"marker": func(stage string) error {
+			return os.WriteFile(filepath.Join(stage, ".git", sessionCompanionMarkerFile), []byte("other\n"), 0o600)
+		},
+		"alternates": func(stage string) error {
+			return os.WriteFile(filepath.Join(stage, ".git", "objects", "info", "alternates"), []byte("/elsewhere\n"), 0o600)
+		},
+		"linked worktree": func(stage string) error {
+			return os.WriteFile(filepath.Join(stage, ".git", "commondir"), []byte("/elsewhere\n"), 0o600)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stage, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := projectCompanionSnapshot(ctx, cached, stage); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyCompanionProjection(stage, commit); err != nil {
+				t.Fatalf("faithful projection refused: %v", err)
+			}
+			if err := damage(stage); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyCompanionProjection(stage, commit); err == nil {
+				t.Fatal("damaged projection accepted")
+			}
+		})
+	}
+}
