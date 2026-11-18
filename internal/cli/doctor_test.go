@@ -34,6 +34,11 @@ func TestDoctorProbesKeepOpenNetworkingUnlessChosen(t *testing.T) {
 	if got := doctorConfig(chosen); got.Egress != "none" {
 		t.Fatalf("doctor replaced the operator's COOP_EGRESS with %q", got.Egress)
 	}
+	// The fixture's long hidden name cannot be covered under every letter case by mount protection
+	// on a Mac, so the probes accept that exposure for the fixture; the person's config does not.
+	if got := doctorConfig(chosen); !got.AllowCaseExposedSecrets || chosen.AllowCaseExposedSecrets {
+		t.Fatalf("probe accepts case exposure = %v, operator config = %v", got.AllowCaseExposedSecrets, chosen.AllowCaseExposedSecrets)
+	}
 	// A chosen filtered mode would refuse every probe, exactly like the filtered default.
 	filtered := &config.Config{}
 	filtered.SetEgress("filtered")

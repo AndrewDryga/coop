@@ -100,12 +100,17 @@ func doctorImage(repo string, cfg *config.Config, exists func(string) bool) (img
 // none. The probes check the ordinary image, which a filtered run never uses (it runs the locked
 // client image, checked when it starts), and they skip launch admission, so a filtered mode,
 // default or chosen, would refuse every one of them.
+//
+// The probes also accept letter-case exposure. Doctor's fixture hides config/stripe.live.json, whose
+// name has more letters than mount protection can cover under every spelling on a Mac disk that
+// ignores case, so without a built box image (mount protection) every probe was refused over the
+// fixture's own file. The fixture holds no real secret, and each check still reads the exact path.
 func doctorConfig(cfg *config.Config) *config.Config {
-	if cfg.Explicit("COOP_EGRESS") && cfg.Egress != "filtered" {
-		return cfg
-	}
 	probe := cfg.Clone()
-	probe.SetEgress("open")
+	probe.AllowCaseExposedSecrets = true
+	if !cfg.Explicit("COOP_EGRESS") || cfg.Egress == "filtered" {
+		probe.SetEgress("open")
+	}
 	return probe
 }
 
