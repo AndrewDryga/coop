@@ -636,8 +636,8 @@ func TestFilteredRunServicesCarryTheRunLabels(t *testing.T) {
 			t.Errorf("a filtered create lacks the run's labels:\n%s", call)
 		}
 	}
-	if creates != 2 {
-		t.Fatalf("Compose creates = %d, want the seed and the final:\n%s", creates, data)
+	if creates != 1 {
+		t.Fatalf("Compose creates = %d, want only the final one on the existing network:\n%s", creates, data)
 	}
 }
 
@@ -645,14 +645,19 @@ func TestFilteredRunServicesCarryTheRunLabels(t *testing.T) {
 // orphaned and its replacement starts empty. Once the filtered network exists the seed declares the
 // subnet the final override pins, so Compose recreates only the containers (keeping their anonymous
 // volumes) instead of the network, whose disconnect fails for a service `coop up` moved off it.
+// An existing internal, isolated network already answers the addresses, so its launch skips the
+// seed run; one that is missing, or not isolated, is seeded.
 func TestFilteredLaunchSeedsOntoTheExistingSubnet(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		firstSeen  bool // the network does not exist until the seed creates it
+		open       bool // the existing network gives the host an address
 		seedSubnet bool
+		creates    int
 	}{
-		{name: "network exists", seedSubnet: true},
-		{name: "first launch", firstSeen: true},
+		{name: "network exists", creates: 1},
+		{name: "first launch", firstSeen: true, creates: 2},
+		{name: "network not isolated", open: true, creates: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := t.TempDir()
@@ -672,6 +677,21 @@ func TestFilteredLaunchSeedsOntoTheExistingSubnet(t *testing.T) {
 				extraNetworks: []runtime.DockerNetwork{{Name: ComposeProject(repo) + "_filtered", Internal: true, IsolatedGateway: true,
 					Subnets: []netip.Prefix{netip.MustParsePrefix("172.31.0.0/16")}, Gateways: []netip.Addr{netip.MustParseAddr("172.31.0.1")}}},
 			}
+			if tc.open {
+				// A network an earlier Coop made gives the host an address: the launch removes it and
+				// seeds a new, isolated one.
+				fixture.extraNetworks[0].IsolatedGateway = false
+				docker := &isolatedAfterSeed{filteredDaemonFixture: fixture}
+				recorder := filepath.Join(t.TempDir(), "runtime.log")
+				_, _, _, prepared, err := resolveServiceBindings(t.Context(), docker, overrideRecorderRuntime(t, recorder), RunSpec{Repo: repo}, compose,
+					&networkstate.Approval{Services: digests}, serviceGrants(servicePolicy(t, "db")), nil, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(prepared.cleanup)
+				checkCreates(t, recorder, tc.creates, tc.seedSubnet)
+				return
+			}
 			var docker filteredDocker = fixture
 			if tc.firstSeen {
 				docker = &networkAfterSeed{filteredDaemonFixture: fixture}
@@ -683,31 +703,61 @@ func TestFilteredLaunchSeedsOntoTheExistingSubnet(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(prepared.cleanup)
-			data, err := os.ReadFile(recorder)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var creates []string
-			for _, call := range strings.Split(string(data), "CALL ")[1:] {
-				if strings.Contains(call, " rm ") {
-					t.Fatalf("a filtered launch removed service containers: %q", call)
-				}
-				if strings.Contains(call, " up --no-start ") {
-					creates = append(creates, call)
-				}
-			}
-			if len(creates) != 2 {
-				t.Fatalf("Compose creates = %d, want the seed and the final:\n%s", len(creates), data)
-			}
-			seed, final := creates[0], creates[1]
-			if got := strings.Contains(seed, "subnet: 172.31.0.0/16"); got != tc.seedSubnet || strings.Contains(seed, "ipv4_address") {
-				t.Fatalf("seed declares the subnet = %v, want %v, and no fixed address:\n%s", got, tc.seedSubnet, seed)
-			}
-			if !strings.Contains(final, "subnet: 172.31.0.0/16") || !strings.Contains(final, "ipv4_address") {
-				t.Fatalf("final override does not pin the subnet and the addresses:\n%s", final)
-			}
+			checkCreates(t, recorder, tc.creates, tc.seedSubnet)
 		})
 	}
+}
+
+// checkCreates reads the recorded Compose calls: want creates, the last one the final override
+// pinning the subnet and the addresses, and a seed before it declaring the subnet when seedSubnet.
+func checkCreates(t *testing.T, recorder string, want int, seedSubnet bool) {
+	t.Helper()
+	data, err := os.ReadFile(recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var creates []string
+	for _, call := range strings.Split(string(data), "CALL ")[1:] {
+		if strings.Contains(call, " rm ") && !strings.Contains(call, "network rm ") {
+			t.Fatalf("a filtered launch removed service containers: %q", call)
+		}
+		if strings.Contains(call, " up --no-start ") {
+			creates = append(creates, call)
+		}
+	}
+	if len(creates) != want {
+		t.Fatalf("Compose creates = %d, want %d:\n%s", len(creates), want, data)
+	}
+	final := creates[len(creates)-1]
+	if !strings.Contains(final, "subnet: 172.31.0.0/16") || !strings.Contains(final, "ipv4_address: 172.31.0.17") {
+		t.Fatalf("final override does not pin the subnet and the addresses:\n%s", final)
+	}
+	if want == 2 {
+		seed := creates[0]
+		if got := strings.Contains(seed, "subnet: 172.31.0.0/16"); got != seedSubnet || strings.Contains(seed, "ipv4_address") {
+			t.Fatalf("seed declares the subnet = %v, want %v, and no fixed address:\n%s", got, seedSubnet, seed)
+		}
+	}
+}
+
+// isolatedAfterSeed is a daemon whose filtered network is isolated only once the seed has run.
+type isolatedAfterSeed struct {
+	*filteredDaemonFixture
+	looked bool
+}
+
+func (d *isolatedAfterSeed) Networks(ctx context.Context) ([]runtime.DockerNetwork, error) {
+	networks, err := d.filteredDaemonFixture.Networks(ctx)
+	if !d.looked || err != nil {
+		d.looked = true
+		return networks, err
+	}
+	for i := range networks {
+		if strings.HasSuffix(networks[i].Name, "_filtered") {
+			networks[i].IsolatedGateway = true
+		}
+	}
+	return networks, nil
 }
 
 // networkAfterSeed is a daemon whose filtered network appears only once the seed has created it.

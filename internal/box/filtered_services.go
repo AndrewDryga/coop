@@ -556,37 +556,43 @@ func resolveServiceBindings(ctx context.Context, docker filteredDocker, rt runti
 	if existing.Name != "" && !existing.IsolatedGateway && rt.RemoveNetwork(ctx, network) == nil {
 		existing = runtime.DockerNetwork{}
 	}
-	seedSubnet, _, _ := filteredServiceAddresses(existing, closure)
 	labels := runServiceLabels(spec, owner)
 	if labels != nil {
 		labels[serviceDefinitionLabel] = serviceDefinition(data, closure)
 	}
-	seed, err := filteredServiceOverride(network, closure, seedSubnet, nil, labels)
-	if err != nil {
-		return "", nil, nil, nil, err
-	}
-	seedPath, cleanupSeed, err := writeFilteredServiceOverride(spec.Repo, seed, exposedRoots...)
-	if err != nil {
-		return "", nil, nil, nil, err
-	}
-	seedArgs := append(append([]string(nil), args...), "-f", seedPath, "up", "--no-start", "--force-recreate")
-	seedArgs = append(seedArgs, selected...)
 	var composeErr bytes.Buffer
-	err = runCompose(rt, io.Discard, &composeErr, "up --no-start", seedArgs)
-	cleanupSeed()
-	if err != nil {
-		return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
-	}
-	seeded, err := serviceNetwork()
-	if err != nil {
-		return "", nil, nil, nil, err
-	}
-	subnet, addresses, err := filteredServiceAddresses(seeded, closure)
-	if err == nil && !seeded.IsolatedGateway {
-		err = errFilteredServicesReachHost
-	}
-	if err != nil {
-		return "", nil, nil, nil, err
+	// The addresses come from the network alone, so an internal, isolated network that already
+	// exists answers them without the seed run: Compose leaves a network declared alike untouched
+	// (checked on Docker 29.8 with Compose 5.5), and the run below recreates the containers anyway.
+	subnet, addresses, err := filteredServiceAddresses(existing, closure)
+	if err != nil || !existing.IsolatedGateway {
+		seedSubnet, _, _ := filteredServiceAddresses(existing, closure)
+		seed, err := filteredServiceOverride(network, closure, seedSubnet, nil, labels)
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		seedPath, cleanupSeed, err := writeFilteredServiceOverride(spec.Repo, seed, exposedRoots...)
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		seedArgs := append(append([]string(nil), args...), "-f", seedPath, "up", "--no-start", "--force-recreate")
+		seedArgs = append(seedArgs, selected...)
+		err = runCompose(rt, io.Discard, &composeErr, "up --no-start", seedArgs)
+		cleanupSeed()
+		if err != nil {
+			return "", nil, nil, nil, composeFailure("prepare filtered services", err, composeErr.String())
+		}
+		seeded, err := serviceNetwork()
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		subnet, addresses, err = filteredServiceAddresses(seeded, closure)
+		if err == nil && !seeded.IsolatedGateway {
+			err = errFilteredServicesReachHost
+		}
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
 	}
 	final, err := filteredServiceOverride(network, closure, subnet, addresses, labels)
 	if err != nil {
