@@ -94,7 +94,10 @@ Reclaim verifies in the discard plan and the move that follows under the same se
 rechecks only the directory identity; a discard receipt resumed after a crash is verified again.
 
 Cache GC keeps referenced or unproven entries, considers unused entries after an hour and evicts
-unreferenced entries sooner under pressure or above the disposable-byte budget. A directory-bound
+unreferenced entries sooner under pressure or above the disposable-byte budget. The budget counts
+only unreferenced entries (their sealed receipt sizes): a referenced one frees nothing when
+evicted. Above it, the oldest unreferenced entries go first, only until the rest fit, so a worker
+whose live sessions hold more than the budget still keeps its newest warm snapshot. A directory-bound
 versioned receipt plus a durable eviction marker makes interrupted deletion resumable. GC atomically
 retires the authenticated directory out of the reusable key namespace and syncs its parent before
 removing payloads. It removes ownership last; a crash after that can leave only an empty directory,
@@ -117,6 +120,7 @@ No filesystem reflink support is required: private state on both Btrfs and ext4 
 and the existing allocated-block accountant counts each payload once.
 
 ## Changelog
+- 2026-11-18 — the warm-snapshot budget counts only unreferenced snapshots and evicts oldest first until under it (task 2026-11-17-count-only-unused-snapshots-against-a-worker-s-w).
 - 2026-11-18 — the full verification runs once per reuse and once per reclaim; the projection and the planned move check identity and links only (task 2026-11-17-verify-a-companion-s-ownership-once-per-step-und).
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K5-5; checked with grep).
 - 2026-11-04 — a read-only primary fork without an immutable primary receipt is refused by name instead of kept when it shares no inodes (task 2026-11-04-drop-the-old-session-store-row-readers).

@@ -727,3 +727,50 @@ func TestAMalformedSnapshotReceiptIsNotReportedAsChangedOwnership(t *testing.T) 
 		t.Fatalf("malformed receipt = %v", err)
 	}
 }
+
+// The warm-snapshot budget counted snapshots live sessions use, so a busy worker whose sessions held
+// more than the budget evicted every unused snapshot and each next job paid a full clone. Only
+// unused snapshots count now, and the oldest go only until the rest fit.
+func TestSnapshotBudgetCountsOnlyUnusedSnapshots(t *testing.T) {
+	ctx := context.Background()
+	service, owner := companionGCFixture(t, 1, false)
+	root, err := filepath.EvalSymlinks(service.stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(root, companionSnapshotRoot)
+	entries, err := os.ReadDir(parent)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("snapshot inventory: %v, %v", entries, err)
+	}
+	used := filepath.Join(parent, entries[0].Name())
+	receipt, err := readCompanionSnapshotReceipt(used)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := receipt.AllocatedBytes
+	receipt.AllocatedBytes = 10 * size // the live session holds ten times the budget
+	if err = writeCompanionSnapshotReceipt(used, receipt); err != nil {
+		t.Fatal(err)
+	}
+	older, newer := filepath.Join(parent, strings.Repeat("e", 64)), filepath.Join(parent, strings.Repeat("f", 64))
+	for age, path := range map[time.Duration]string{40 * time.Minute: older, 10 * time.Minute: newer} {
+		if err = buildCompanionSnapshot(ctx, path, filepath.Base(path), owner.Companions[0]); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.Chtimes(path, time.Now().Add(-age), time.Now().Add(-age)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	budget := size + size/2 // room for one unused snapshot, not two
+	sweep := &companionSnapshotSweep{}
+	for pass := range 2 {
+		removed, problems := pruneCompanionSnapshotsSweep(ctx, root, time.Now(), budget, 4, false, sweep)
+		if len(problems) != 0 || removed != 1-pass {
+			t.Fatalf("pass %d removed %d snapshots: %v", pass, removed, problems)
+		}
+	}
+	if pathExists(older) || !pathExists(newer) || !pathExists(used) {
+		t.Fatalf("want only the older unused snapshot evicted: older=%v newer=%v used=%v", pathExists(older), pathExists(newer), pathExists(used))
+	}
+}

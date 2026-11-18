@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -40,9 +41,8 @@ func (s *Service) companionSnapshotPressure(volume forkspace.Filesystem) bool {
 }
 
 type companionSnapshotSweep struct {
-	cursor               int
-	bytes, previousBytes int64
-	beforeCandidate      func(string) // deterministic filesystem/deadline fixture
+	cursor          int
+	beforeCandidate func(string) // deterministic filesystem/deadline fixture
 }
 
 func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now time.Time, budget int64, max int, pressure bool, sweep *companionSnapshotSweep) (int, []string) {
@@ -63,9 +63,13 @@ func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now tim
 	if len(entries) == 0 || max <= 0 {
 		return 0, nil
 	}
-	// Never walk payloads before deciding to reclaim. Budget sizes were measured
+	// Never walk whole payloads before deciding to reclaim. Budget sizes were measured
 	// while sealing the immutable cache, and are only a warm-cache eviction hint.
 	// Physical telemetry continues to measure live inodes independently.
+	var overBudget map[string]bool
+	if !pressure {
+		overBudget = unusedSnapshotsOverBudget(ctx, parent, entries, budget)
+	}
 	start := sweep.cursor % len(entries)
 	removed, attempts := 0, 0
 	scanLimit := len(entries)
@@ -76,10 +80,6 @@ func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now tim
 		index := (start + offset) % len(entries)
 		// Advance before any ownership check, lock or recursive work can time out.
 		sweep.cursor = index + 1
-		if index == 0 {
-			sweep.previousBytes = sweep.bytes
-			sweep.bytes = 0
-		}
 		entry := entries[index]
 		name := entry.Name()
 		if !entry.IsDir() || (!validSessionDigest(name) && !strings.HasPrefix(name, ".snapshot-")) {
@@ -101,7 +101,6 @@ func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now tim
 			problems = append(problems, "snapshot name does not match receipt")
 			continue
 		}
-		sweep.bytes += receipt.AllocatedBytes
 		info, err := entry.Info()
 		if err != nil {
 			problems = append(problems, err.Error())
@@ -115,8 +114,7 @@ func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now tim
 		}
 		_, deleting := os.Lstat(filepath.Join(path, "deleting"))
 		unfinished := strings.HasPrefix(name, ".snapshot-")
-		overBudget := sweep.bytes > budget || sweep.previousBytes > budget
-		if deleting != nil && !pressure && !overBudget && now.Sub(info.ModTime()) < companionSnapshotWarmTime {
+		if deleting != nil && !pressure && !overBudget[name] && now.Sub(info.ModTime()) < companionSnapshotWarmTime {
 			continue
 		}
 		if unfinished && !retiredSnapshotName(name) && now.Sub(info.ModTime()) < companionSnapshotWarmTime {
@@ -136,10 +134,100 @@ func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now tim
 		}
 		if didRemove {
 			removed++
-			sweep.bytes -= receipt.AllocatedBytes
 		}
 	}
 	return removed, problems
+}
+
+// unusedSnapshotsOverBudget names the unused complete snapshots to evict before their warm hour is
+// up: the budget covers only snapshots no session uses, since a used one frees nothing when
+// evicted. Counting the used ones too left a worker whose live sessions held more than the budget
+// with no warm snapshot at all, so every next job paid a full clone. The oldest go first, only
+// until the rest fit. Nothing is walked while every snapshot together fits; the use probe is a
+// hint, and pruneCompanionSnapshot still proves a snapshot unused before evicting it.
+func unusedSnapshotsOverBudget(ctx context.Context, parent string, entries []fs.DirEntry, budget int64) map[string]bool {
+	type unused struct {
+		name     string
+		bytes    int64
+		modified time.Time
+	}
+	var snapshots []unused
+	var total int64
+	for _, entry := range entries {
+		name := entry.Name()
+		if ctx.Err() != nil {
+			return nil
+		}
+		if !entry.IsDir() || !validSessionDigest(name) {
+			continue
+		}
+		path := filepath.Join(parent, name)
+		receipt, err := readCompanionSnapshotReceipt(path)
+		info, infoErr := entry.Info()
+		if err != nil || infoErr != nil || !receipt.Complete || receipt.Key != name {
+			continue // the sweep reports it
+		}
+		snapshots = append(snapshots, unused{name, receipt.AllocatedBytes, info.ModTime()})
+		total += receipt.AllocatedBytes
+	}
+	if total <= budget {
+		return nil
+	}
+	total = 0
+	kept := snapshots[:0]
+	for _, snapshot := range snapshots {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if used, err := companionSnapshotInUse(filepath.Join(parent, snapshot.name, "tree")); err == nil && !used {
+			kept = append(kept, snapshot)
+			total += snapshot.bytes
+		}
+	}
+	slices.SortFunc(kept, func(a, b unused) int { return a.modified.Compare(b.modified) })
+	evict := map[string]bool{}
+	for _, snapshot := range kept {
+		if total <= budget {
+			break
+		}
+		evict[snapshot.name] = true
+		total -= snapshot.bytes
+	}
+	return evict
+}
+
+// companionSnapshotInUse reads the link count of the first payload file a projection shares: a
+// projection links every one of them, so a single file tells. It stops there, where
+// companionSnapshotHeld walks a whole unused tree.
+func companionSnapshotInUse(tree string) (bool, error) {
+	used := false
+	found := false
+	err := filepath.WalkDir(tree, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(tree, path)
+		if err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() || !sharedCompanionFile(relative) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return errors.New("snapshot link count is unavailable")
+		}
+		used, found = stat.Nlink > 1, true
+		return fs.SkipAll
+	})
+	if err == nil && !found {
+		err = errors.New("snapshot has no shared payload")
+	}
+	return used, err
 }
 
 func pruneCompanionSnapshot(ctx context.Context, path, key string, unfinished bool) (bool, error) {
