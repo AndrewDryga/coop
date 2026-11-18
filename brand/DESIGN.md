@@ -45,7 +45,7 @@ asset.
 | Layout | Generous section rhythm, strong headings, evidence near claims | Task → workspace → reviewable output |
 | Controls | Compact rectangles, dark labels on solid primary buttons, visible focus | Amber primary action, with cyan links and focus |
 | Semantics | Success, warning and failure always have words/icons | Status colors separate from amber brand and cyan workspace meaning |
-| Motion | Specific transitions, the same gentle easing, reduced-motion support | Short state changes, with no gate pulse or perpetual activity animation |
+| Motion | Specific transitions, the same gentle easing, reduced-motion support | Short state changes and scenes that replay as you scroll to them, with no gate pulse |
 | Brand device | A product-specific mechanism carries the story | The geometric coop and its circular entrance, plus bounded workspace diagrams |
 
 Protectorate stays the umbrella brand. Its forcefield mark, orange accent and brand wordmark
@@ -53,7 +53,7 @@ are not co:op website components. Emisar's gate and emerald primary buttons belo
 Emisar. Ryker's logo belongs to Ryker. Don't redraw any sibling mark to match co:op. Using
 the family typography for page content doesn't replace anyone's wordmark.
 
-Put a quiet "A Protectorate product" endorsement in the footer, and a useful product family
+Put a quiet "By Protectorate" endorsement in the footer, and a useful product family
 section near the end of the page. Don't put three equal product pitches above co:op's first
 CTA. Keep internal brand and design-guide links off the public site.
 
@@ -205,9 +205,9 @@ artifact. On mobile, the diagram reads task → workspace → output from top to
 all labels intact. A meaningful boundary is continuous. Don't add decorative gaps, escaping
 particles or beams that suggest uncontrolled access.
 
-This is an explanatory diagram. It isn't an invented product dashboard, so label it as an
-illustration. Show real screenshots and casts separately, and make them easy to tell apart
-from illustrations. If you show a workflow animation, keep a complete static view too.
+This is an explanatory diagram. It isn't an invented product dashboard, and it carries no
+illustration label or caption. Show real screenshots and casts separately. If you show a
+workflow animation, keep a complete static view too.
 
 ## 7. Components and behavior
 
@@ -218,7 +218,7 @@ from illustrations. If you show a workflow animation, keep a complete static vie
 | Inline link | Cyan, underlined in body copy, with visible focus. Avoid vague "Learn more" |
 | Focus | 2px cyan outline, 3px offset. Never remove it, and keep it unclipped |
 | Code panel | Real selectable text, descriptive caption, neutral inset, working copy control |
-| Copy state | Default → "Copied" → default. Failure says "Select and copy the command". Announce through a polite live region |
+| Copy state | Default → "Copied" → default. Failure selects the command and says "Copy blocked. Press Cmd+C or Ctrl+C." Announce through a polite live region |
 | Task row | Plain-language task, status word/icon, optional result. Mono only for ids/commands |
 | Hover row | Neutral 4% white wash. Do not recolor child text or turn a metric green |
 | Status | Text plus a matching icon. Use "Passed" only when verification passed |
@@ -238,13 +238,15 @@ Use Emisar's easing, `cubic-bezier(0.16, 1, 0.3, 1)`, at co:op's quieter pace: 1
 hover, 200ms for state changes and at most 480ms for an optional first assembly.
 Transitions name their properties. Never use `transition: all`.
 
-No autoplay terminal typing, spinning logo, looping border light or scroll-jacking. The
-homepage's scroll cue may loop: an arrow that bobs a few pixels, fades over 400ms once you scroll
-and holds still under reduced motion. An optional workflow playback starts only when the user
-starts it. It needs pause and replay
-controls, an equivalent transcript and a static initial state. Nothing starts hidden unless
-an enhancement that initialized successfully can reveal it. Honor reduced motion in CSS and
-JavaScript. Under reduced motion, turn off smooth scrolling and automatic playback as well.
+No spinning logo, looping border light or scroll-jacking. The homepage's scroll cue may loop:
+an arrow that bobs a few pixels, fades over 400ms once you scroll and holds still under reduced
+motion. Feature scenes are drawn finished, so the page reads whole without motion. Where a scene
+fits its card, it steps back just before it scrolls into view and replays once on screen:
+commands type out and their lines arrive one at a time. The watch and team scenes keep looping
+while they are on screen and wait while they are off it. Nothing starts hidden unless an
+enhancement that initialized successfully can reveal it. Honor reduced motion in CSS and
+JavaScript. Under reduced motion, turn off smooth scrolling and every replay, and leave each
+scene finished.
 
 ## 8. Page structure and language
 
