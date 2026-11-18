@@ -41,7 +41,7 @@ var ErrNotRegular = errors.New("an existing entry is not a regular file")
 // the actions it left. Only an exception a person must act on (a hooks path or prepare hook
 // coop refused to take over) speaks. Existing files are never clobbered.
 func Init(repo, stack string, gateLangs, agentDirs []string, services ...string) ([]Notice, error) {
-	dockerfile, _, err := initDockerfile(repo, stack)
+	dockerfile, err := initDockerfile(repo, stack)
 	if err != nil {
 		return nil, err
 	}
@@ -177,37 +177,35 @@ type Notice struct {
 
 // Validate and render before any scaffold or Git hook writes. Re-init follows the
 // same prerequisite contract even when a customized Dockerfile already exists.
-func initDockerfile(repo, stack string) (content string, detected bool, err error) {
+func initDockerfile(repo, stack string) (string, error) {
 	switch stack {
 	case "":
 		if _, err := os.Stat(filepath.Join(repo, ".tool-versions")); err != nil {
-			return "", false, nil
+			return "", nil
 		}
-		detected = true
 	case "asdf":
 	default:
 		// coop init refuses any other --stack as a bad argument before it gets here.
-		return "", false, fmt.Errorf("unknown stack %q", stack)
+		return "", fmt.Errorf("unknown stack %q", stack)
 	}
 	toolVersionsPath := filepath.Join(repo, ".tool-versions")
 	if _, err := os.Stat(toolVersionsPath); err != nil {
 		// Name the exact file coop looked for: "needs a .tool-versions" leaves the reader
 		// guessing which directory it was expected in when init ran from a subdirectory.
-		return "", false, fmt.Errorf("%s does not exist", toolVersionsPath)
+		return "", fmt.Errorf("%s does not exist", toolVersionsPath)
 	}
 	tools, err := toolVersions(repo)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
-	content, err = asdfDockerfile(tools)
-	return content, detected, err
+	return asdfDockerfile(tools)
 }
 
 // CheckStack validates a --stack argument and its prerequisites without writing or printing
 // anything, so the caller can refuse an unusable value BEFORE it names the project it is about to
 // change or asks the user a single first-run question. Init re-checks it on the write path.
 func CheckStack(repo, stack string) error {
-	_, _, err := initDockerfile(repo, stack)
+	_, err := initDockerfile(repo, stack)
 	return err
 }
 

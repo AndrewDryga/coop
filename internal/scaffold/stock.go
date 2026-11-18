@@ -111,7 +111,7 @@ func stockContents(repo, rel string) []string {
 			}
 		}
 	case project.DefaultDockerfile:
-		if dockerfile, _, err := initDockerfile(repo, "asdf"); err == nil {
+		if dockerfile, err := initDockerfile(repo, "asdf"); err == nil {
 			out = append(out, dockerfile)
 		}
 	}
