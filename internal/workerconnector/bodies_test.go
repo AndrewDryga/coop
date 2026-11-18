@@ -260,6 +260,51 @@ func TestGenericAPIReplaysSavedResponseAfterLostUploadAcknowledgement(t *testing
 	}
 }
 
+// A controller that refused a saved response for good used to get the command redelivered and the
+// body re-uploaded forever, with its spool never freed. A refusal now settles the command: a read
+// fails, a mutation is uncertain because the private API call already ran.
+func TestGenericAPIPermanentUploadRefusalSettlesAndFreesTheSpool(t *testing.T) {
+	for _, tc := range []struct {
+		method, path, state string
+	}{
+		{"GET", "/v1/sessions/s/turns/t/artifacts/a", "failed"},
+		{"POST", "/v1/sessions/s/checkpoint", "uncertain"},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			transport := &testBodyTransport{uploadErr: &BodyStatusError{Status: 503}}
+			calls := 0
+			executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "application/octet-stream")
+				_, _ = w.Write([]byte("immutable result"))
+			}), transport)
+			command := createCommand(time.Now().Add(time.Minute))
+			command.Payload = apiPayload(tc.method, tc.path, nil)
+			if tc.method == "POST" {
+				command.Payload = apiPayload(tc.method, tc.path, json.RawMessage(`{"expected_revision":1}`))
+			}
+			if _, err := executor.Execute(context.Background(), command); !errors.Is(err, errArtifactTransfer) {
+				t.Fatalf("a 503 must stay retryable: %v", err)
+			}
+			transport.uploadErr = &BodyStatusError{Status: 403}
+			result, err := executor.Execute(context.Background(), command)
+			if err != nil || result.State != tc.state || calls != 1 || !strings.Contains(string(result.Error), "response_upload_refused") {
+				t.Fatalf("refused upload = %+v, %v, calls=%d; want %s", result, err, calls, tc.state)
+			}
+			spool := executor.journal.path(command.CommandID) + ".body"
+			if _, err := os.Stat(spool); err != nil {
+				t.Fatalf("the spool went before the result was acknowledged: %v", err)
+			}
+			if err := executor.journal.acknowledgeResults([]string{command.CommandID}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(spool); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("acknowledged spool retained: %v", err)
+			}
+		})
+	}
+}
+
 func TestGenericAPILeaseMustStillBeValidAfterFetchingBody(t *testing.T) {
 	now := time.Now()
 	transport := &testBodyTransport{input: []byte("body"), onFetch: func() { now = now.Add(time.Hour) }}

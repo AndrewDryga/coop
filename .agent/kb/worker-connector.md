@@ -148,6 +148,8 @@ The traps the code does not make obvious:
 - **Response uploads resume from saved bytes.** Binary and large JSON bodies are spooled privately,
   hashed and journaled before upload. A lost upload acknowledgement resends that exact spool after
   restart, without rerunning the API. The controller's command-result acknowledgement releases it.
+  An upload the controller refuses for good (a 4xx other than 408/429) settles the command as
+  `response_upload_refused`: failed for a read, uncertain for a mutation, since the API call ran.
   Request bodies are verified before forwarding with their exact Content-Length.
 - **HTTP outcomes stay HTTP outcomes.** A successfully transported 409 is a successful transport
   receipt containing status 409, not a succeeded session operation. Controllers must interpret the
@@ -195,6 +197,7 @@ The traps the code does not make obvious:
   survives durable delivery.
 
 ## Changelog
+- 2026-11-17 — a permanently refused response upload settles the command instead of retrying forever; the spool goes on acknowledgement (task 2026-11-17-settle-a-command-whose-saved-response-the-contro).
 - 2026-11-17 — the hello's storage and capabilities come from `LiveReports` (`storage.go`): storage is the last report, refreshed in the background one at a time, so a slow `/v1/storage` no longer stalls the single poll goroutine; capabilities are read once the daemon answers, then kept for the connection. The event scan cursor is written only when a scan stops early (audit WC-7/WC-8; settled-origin retirement and the uncertain-origin backoff are still open).
 - 2026-11-17 — the api_request tunnel filters `GET /v1/sessions/{id}/events` through the narration projection and cuts `GET /v1/storage` to its `storage` object (audit WC-2, owner choice A).
 - 2026-11-17 — a held create's retry caps at 15 s, not 2 min, and the disk-space wait holds the same way (audit K6-8; checked internal/workerconnector/first_download_waits.go).

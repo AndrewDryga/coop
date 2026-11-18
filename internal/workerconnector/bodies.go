@@ -214,7 +214,7 @@ func (e *Executor) uploadSavedResponse(ctx context.Context, commandID string, re
 		return nil, fmt.Errorf("%w: %v", errArtifactTransfer, err)
 	}
 	if err := e.bodyTransport.UploadResponseBody(ctx, commandID, *response.BodyRef, file); err != nil {
-		return nil, fmt.Errorf("%w: upload saved response: %v", errArtifactTransfer, err)
+		return nil, classifyResponseUpload(err)
 	}
 	return encodeWireJSON(response)
 }

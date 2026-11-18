@@ -116,6 +116,13 @@ func (e *Executor) execute(ctx context.Context, command workerproto.Command, exp
 		}
 	}
 	response, err := e.forwardRequest(ctx, entry, command, request, expiresAt)
+	if errors.Is(err, errResponseUploadRefused) {
+		// The private API call already ran, so a refused mutation may have applied.
+		if readOnlyCommand(command) {
+			return e.complete(entry, failureResult(command, "response_upload_refused", err.Error()))
+		}
+		return e.complete(entry, uncertainResult(command, "response_upload_refused", err.Error()))
+	}
 	if errors.Is(err, errArtifactTransfer) || errors.Is(err, ErrLeaseExpired) {
 		return workerproto.CommandResult{}, err
 	}
@@ -183,12 +190,29 @@ func (e *Executor) complete(entry journalEntry, result workerproto.CommandResult
 
 var errArtifactTransfer = errors.New("body transfer failed for now")
 
-func classifyArtifactFetch(err error, what string) error {
+// permanentBodyRefusal is a controller answer that a retry would only repeat: a 4xx other
+// than 408 and 429.
+func permanentBodyRefusal(err error) bool {
 	var status *BodyStatusError
-	if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 && status.Status != 408 && status.Status != 429 {
+	return errors.As(err, &status) && status.Status >= 400 && status.Status < 500 && status.Status != 408 && status.Status != 429
+}
+
+func classifyArtifactFetch(err error, what string) error {
+	if permanentBodyRefusal(err) {
 		return fmt.Errorf("%w: %s: %v", ErrRequestRejected, what, err)
 	}
 	return fmt.Errorf("%w: %s: %v", errArtifactTransfer, what, err)
+}
+
+// errResponseUploadRefused is a saved response the controller refused for good. Retrying would
+// resend the same bytes forever, so the command settles and its spool is freed on acknowledgement.
+var errResponseUploadRefused = errors.New("controller refused the saved response")
+
+func classifyResponseUpload(err error) error {
+	if permanentBodyRefusal(err) {
+		return fmt.Errorf("%w: upload saved response: %v", errResponseUploadRefused, err)
+	}
+	return fmt.Errorf("%w: upload saved response: %v", errArtifactTransfer, err)
 }
 
 func resultFromCall(command workerproto.Command, resource json.RawMessage, err error) workerproto.CommandResult {
