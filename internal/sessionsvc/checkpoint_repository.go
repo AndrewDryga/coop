@@ -204,12 +204,14 @@ func visitCheckpointTrees(ctx context.Context, repository, base, head, tree stri
 
 // Only object data enters the quarantine repository: no source config, refs,
 // hooks, alternates, paths or executable archive metadata are ever installed.
-func readCheckpointRepository(ctx context.Context, repository string, input io.Reader) error {
+func readCheckpointRepository(ctx context.Context, repository string, input io.Reader) (err error) {
 	reader := workerproto.NewWorkspaceCheckpointTarReader(input)
 	seen := filepath.Join(repository, ".git", "checkpoint-seen")
 	if err := os.Mkdir(seen, 0700); err != nil {
 		return err
 	}
+	objects := &checkpointObjectWriters{ctx: ctx, repository: repository}
+	defer func() { err = objects.finish(err) }()
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
@@ -227,22 +229,17 @@ func readCheckpointRepository(ctx context.Context, repository string, input io.R
 		}
 		if len(parts) == 3 && parts[0] == "objects" && forkspace.ValidObjectID(parts[2]) &&
 			(parts[1] == "commit" || parts[1] == "tree" || parts[1] == "blob") {
+			// The duplicate mark also stages the member's bytes for its type's one hash-object.
 			mark, err := os.OpenFile(filepath.Join(seen, parts[2]), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if err != nil {
 				return errors.New("duplicate checkpoint Git object")
 			}
-			if err := mark.Close(); err != nil {
+			_, err = io.Copy(mark, reviewScanReader{ctx, reader})
+			if err := errors.Join(err, mark.Close()); err != nil {
 				return err
 			}
-			command, err := forkspace.GitCommandWithEnv(ctx, repository, sessionCompanionGitEnv(),
-				"hash-object", "-w", "-t", parts[1], "--stdin")
-			if err != nil {
+			if err := objects.write(parts[1], parts[2], filepath.Join(seen, parts[2])); err != nil {
 				return err
-			}
-			output := &sessionWorkspaceLimitedWriter{limit: 128}
-			command.Stdin, command.Stdout = reader, output
-			if err := command.Run(); err != nil || output.truncated || strings.TrimSpace(output.buf.String()) != parts[2] {
-				return errors.New("checkpoint Git object digest does not match")
 			}
 			continue
 		}
@@ -265,6 +262,75 @@ func readCheckpointRepository(ctx context.Context, repository string, input io.R
 			return err
 		}
 	}
+}
+
+// checkpointObjectWriters writes staged objects through one `git hash-object --stdin-paths`
+// per object type, not one process per object, and checks every printed id, in order, against the
+// member's name. A checkpoint of thousands of objects used to start thousands of processes while
+// its session was fenced.
+type checkpointObjectWriters struct {
+	ctx        context.Context
+	repository string
+	writers    map[string]*checkpointObjectWriter
+	staged     []string
+}
+
+type checkpointObjectWriter struct {
+	command *exec.Cmd
+	stdin   io.WriteCloser
+	output  *sessionWorkspaceLimitedWriter
+	want    []string
+}
+
+func (w *checkpointObjectWriters) write(kind, oid, path string) error {
+	if strings.ContainsAny(path, "\n\r") {
+		return errors.New("checkpoint staging path is not a single line")
+	}
+	writer := w.writers[kind]
+	if writer == nil {
+		command, err := forkspace.GitCommandWithEnv(w.ctx, w.repository, sessionCompanionGitEnv(),
+			"hash-object", "-w", "--no-filters", "-t", kind, "--stdin-paths")
+		if err != nil {
+			return err
+		}
+		stdin, err := command.StdinPipe()
+		if err != nil {
+			return err
+		}
+		writer = &checkpointObjectWriter{command: command, stdin: stdin, output: &sessionWorkspaceLimitedWriter{limit: 1 << 30}}
+		command.Stdout = writer.output
+		if err := command.Start(); err != nil {
+			return err
+		}
+		if w.writers == nil {
+			w.writers = map[string]*checkpointObjectWriter{}
+		}
+		w.writers[kind] = writer
+	}
+	writer.want = append(writer.want, oid)
+	w.staged = append(w.staged, path)
+	if _, err := io.WriteString(writer.stdin, path+"\n"); err != nil {
+		return errors.New("checkpoint Git object digest does not match") // git refused an earlier object
+	}
+	return nil
+}
+
+// finish waits for every writer, then empties the staged copies: the marks stay for the
+// duplicate and LFS checks, and the bytes now live in the object store.
+func (w *checkpointObjectWriters) finish(err error) error {
+	for _, writer := range w.writers {
+		if err != nil {
+			_ = writer.command.Process.Kill()
+		}
+		waitErr := errors.Join(writer.stdin.Close(), writer.command.Wait())
+		if err == nil && (waitErr != nil || writer.output.truncated || strings.Join(writer.want, "\n")+"\n" != writer.output.buf.String()) {
+			err = errors.New("checkpoint Git object digest does not match")
+		}
+	}
+	for _, path := range w.staged {
+		err = errors.Join(err, os.Truncate(path, 0))
+	}
+	return err
 }
 
 func checkpointLFSPath(oid string) string {
