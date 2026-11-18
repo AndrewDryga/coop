@@ -36,7 +36,9 @@ func guardHooks(t *testing.T) map[string]string {
 // The guard is compiled into the helper image, so its contract is pinned at the source. Every attached
 // hook has a guard. A guard that only gives a new object a name, or changes an object without showing
 // its bytes, passes BLIND, so the box can create a file, folder, symlink or node named like a secret.
-// A guard that can reveal bytes, a symlink's target or a second name never does.
+// A guard that can reveal bytes, a symlink's target or a second name never does, and nor does a
+// rename: a file the box mapped and then renamed onto a secret name would read the host's later
+// in-place writes through the mapping.
 func TestGuardsPassBlindOnlyWhereNothingIsRevealed(t *testing.T) {
 	hooks := guardHooks(t)
 	for _, name := range hookNames {
@@ -49,7 +51,7 @@ func TestGuardsPassBlindOnlyWhereNothingIsRevealed(t *testing.T) {
 			t.Errorf("the %s guard refuses a new file named like a secret:%s", name, hooks[name])
 		}
 	}
-	for _, name := range []string{"inode_follow_link", "inode_readlink", "inode_link", "mmap_file", "file_mprotect", "inode_getxattr", "inode_listxattr", "inode_get_acl", "inode_file_getattr", "unix_stream_connect", "unix_may_send"} {
+	for _, name := range []string{"inode_follow_link", "inode_readlink", "inode_link", "inode_rename", "mmap_file", "file_mprotect", "inode_getxattr", "inode_listxattr", "inode_get_acl", "inode_file_getattr", "unix_stream_connect", "unix_may_send"} {
 		if strings.Contains(hooks[name], "BLIND") {
 			t.Errorf("the %s guard can reveal a file named like a secret:%s", name, hooks[name])
 		}

@@ -3,7 +3,7 @@ name: filesystem-enforcement
 description: APFS (Mac) and ext4/xfs (Linux) Docker admissions enforce secret objects and Unicode path rules with packaged BPF hooks, guarded execution and durable cleanup custody; systemd slices under Docker's systemd cgroup driver
 subsystem: box
 sources: [internal/cli/tempreap.go, internal/cli/net_approve.go, internal/box/caseapproval.go, internal/box/run.go, internal/box/filesystem.go, internal/box/filesystem_controller.go, internal/fsfilter/controller.go, internal/fsfilter/assets/shared.h, cmd/coop-fs/controller_linux.go, internal/box/filesystem_controller_live_test.go, internal/box/filesystem_diagnostics.go, internal/box/filesystem_snapshot.go, internal/box/filesystem_walk.go, internal/box/filesystem_execution.go, internal/box/filesystem_services.go, internal/box/filesystem_recover.go, internal/box/filesystem_probe.go, internal/box/hidden_files.go, internal/fsfilter/policy.go, internal/fsfilter/unicode.go, internal/fsfilter/protocol.go, internal/fsfilter/assets/filter.c, internal/fsfilter/assets/loader.c, internal/fsimage/image.go, internal/fsimage/Dockerfile, cmd/coop-fs/main_linux.go, cmd/coop-fs/admit_linux.go, internal/cli/doctor.go, internal/box/filesystem_live_test.go, internal/box/filesystem_partial_live_test.go, internal/box/filesystem_preload_live_test.go, internal/box/filesystem_normalizer_live_test.go, internal/box/testdata/filesystem_normalizer_fixture.c, internal/runtime/docker_image.go, internal/runtime/docker_lifecycle.go, internal/runtime/docker_execution.go, internal/box/filesystem_cgroups.go, internal/box/filesystem_profile_linux.go, internal/systemdbus/systemdbus.go, cmd/coop-fs/slices_linux.go, internal/runtime/selinux.go, internal/box/filesystem_apparmor.go, internal/fsfilter/apparmor.go, cmd/coop-fs/apparmor_linux.go, internal/cli/setup_cmd.go]
-updated: 2026-11-08
+updated: 2026-11-17
 ---
 
 ## Selection and policy
@@ -151,7 +151,10 @@ its new length joins `hookGenerations`: records an earlier release wrote must st
 controller scan fails every launch and recovery can't retire them with their own image. Global attachments apply
 only to the frozen cgroup parent and its descendants. Secret reads, xattr/ACL/`fileattr` metadata
 and endpoint mutations are denied; .coopignore is readable but cannot be changed, including through
-aliases. `inode_getattr` alone lets a hidden non-directory leaf through (operation `STAT`), because
+aliases. A file the launch did not capture but whose name is on the built-in list (reason 6) can be
+created, written, truncated or removed (BLIND), never read, linked or renamed to: `inode_rename`
+passes no BLIND, since a box could map a file, rename it onto `.env` and read the host's later
+in-place writes through the mapping (no hook runs on a page fault; owner decision, audit FT-1). `inode_getattr` alone lets a hidden non-directory leaf through (operation `STAT`), because
 tools stat every listed name and Terraform refuses a module folder otherwise. An LSM hook can only
 allow or deny, so it cannot report the mount backend's empty-file size: stat shows the real size,
 times, mode, owner and link count. Hidden ancestors, hidden directories, a dead owner and a missing
@@ -307,6 +310,7 @@ is its proof; a missing stop line on an offline or open run points here first.
 
 ## Changelog
 
+- 2026-11-17 — `inode_rename` never passes BLIND: a rename onto a late secret name is refused, closing the map-then-rename read (audit FT-1). Not yet proven on a live kernel; `TestFilesystemLateSecretsRuntime` carries the check.
 - 2026-11-08 — Unix socket peers get the file rules (a security review reached a socket under a hidden folder from an offline box); `TestFilesystemHiddenSocketsRuntime` fails against the old filter and passes with the hooks.
 - 2026-11-08 — `coop setup apparmor`: helper profile, record-matched controller reuse; 21 live tests under the profile and a reboot check on Ubuntu 24.04.
 - 2026-11-08 — SELinux hosts (label=disable on Coop's containers), kernel hook precheck, doctor fixtures on the home disk; live tests pass on Fedora CoreOS 44 (SELinux enforcing, xfs, kernel 7.2): non-service tests in one run, the five service tests in a rerun after the compose label fix.

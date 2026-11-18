@@ -432,13 +432,6 @@ INLINE int file_access(struct file *file, int operation, struct policy *policy) 
 INLINE int opened(unsigned int flags, int truncates) {
     return ((flags & (truncates ? 3|512 : 3)) ? WRITE : 0) | ((flags & 3) == 1 ? BLIND : 0);
 }
-/* A rename may give a name like a secret only to what no other name reaches: a folder, which keeps
- * its own rules, or a file with a single link. */
-INLINE int single(struct dentry *d) {
-    struct inode *inode = d ? d->d_inode : 0;
-    u32 mode = inode ? inode->i_mode & 0170000 : 0;
-    return mode == 0040000 || (mode == 0100000 && inode->i_nlink == 1);
-}
 /* Preserve prior LSM decisions; the cgroup map retains the exact parent object. */
 #define HOOK(name, argc) \
     static int check_##name(u64 *ctx, struct policy *policy); \
@@ -469,7 +462,10 @@ HOOK(inode_setattr, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_unlink, 2) { return access((void *)ctx[1], MOVE|BLIND, policy); }
 HOOK(inode_rmdir, 2) { return access((void *)ctx[1], MOVE|BLIND, policy); }
 HOOK(inode_link, 3) { return access((void *)ctx[0], MOVE, policy) && access((void *)ctx[2], MOVE, policy); }
-HOOK(inode_rename, 4) { return access((void *)ctx[1], MOVE, policy) && access((void *)ctx[3], MOVE | (single((void *)ctx[1]) ? BLIND : 0), policy); }
+/* A rename never gives a file a name like a secret: a mapping the box made before the rename would
+ * keep reading what the host writes in place under the new name, and no hook runs on a page fault.
+ * A folder's own name is never checked, so folders keep their rules. */
+HOOK(inode_rename, 4) { return access((void *)ctx[1], MOVE, policy) && access((void *)ctx[3], MOVE, policy); }
 HOOK(inode_create, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 HOOK(inode_mkdir, 3) { return access((void *)ctx[1], WRITE|BLIND, policy); }
 /* A new symlink named like a secret shows nothing: following it and readlink keep the read rule. */

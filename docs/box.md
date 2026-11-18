@@ -126,7 +126,9 @@ every file name the box opens against the built-in list. In practice:
   original file is replaced.
 - A new file whose name is on the built-in list, such as `late.pem` or `.env`, is unreadable in the
   box as soon as it exists, in any letter case or Unicode spelling. The box can still create,
-  overwrite, truncate or delete such a file, but it can't read one or give it another name.
+  overwrite, truncate or delete such a file, but it can't read one, give it another name, or rename
+  another file to such a name. A tool in the box that saves a new secret file by writing a
+  temporary file and renaming it must write it inside an already hidden folder.
 - Restart the affected agent or service after you change `.coopignore`, create a hidden folder,
   mark an already-public file or folder as secret, or create an unprotected hardlink to a secret
   from the host. Protection that is already running does not reload its rules or revoke memory

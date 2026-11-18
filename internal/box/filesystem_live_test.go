@@ -330,7 +330,9 @@ print('guarded box works')`}})
 
 // A secret made on the host after the box started is denied by name at open time, which mount
 // covers laid once at start cannot do; a protected folder cannot be renamed away either. Linux QA
-// found such files readable on native Linux, where only mount protection was used.
+// found such files readable on native Linux, where only mount protection was used. The box can
+// write a new secret-named file, but never rename a file onto such a name: a mapping it made first
+// would read what the host later writes there in place.
 func TestFilesystemLateSecretsRuntime(t *testing.T) {
 	image := os.Getenv("COOP_FILESYSTEM_CLIENT_IMAGE")
 	if image == "" || os.Getenv("COOP_FILESYSTEM_RUNTIME_TEST") != "1" {
@@ -380,6 +382,11 @@ assert open('public-late').read()=='inert late secret'
 try: os.rename('keys','moved')
 except OSError as e: assert e.errno==errno.EPERM,('rename',e)
 else: raise AssertionError('protected folder renamed')
+with open('direct.env','w') as f: f.write('KEY=1')
+open('staged','w').write('x')
+try: os.rename('staged','fresh.env')
+except OSError as e: assert e.errno==errno.EPERM,('rename onto a secret name',e)
+else: raise AssertionError('a file was renamed onto a secret name')
 print('late secrets denied')`}})
 	if report.Backend != "bpf" {
 		t.Fatalf("launch used %q protection: %s", report.Backend, report.Reason)
