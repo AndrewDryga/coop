@@ -5,9 +5,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/safefile"
@@ -215,31 +216,28 @@ func isComposeFile(name string) bool {
 	return false
 }
 
-// serviceKeyRe matches a top-level compose service name: a 2-space-indented "name:".
-var serviceKeyRe = regexp.MustCompile(`^  ([A-Za-z0-9._-]+):\s*$`)
-
-// composeServices shallow-scans a compose file's top-level services: block for the service
-// names (no YAML dependency — coop is stdlib-light, and the names are all a listing needs).
+// composeServices reads the keys of a compose file's top-level services mapping, in file order,
+// whatever its indentation, comments or flow style. A file that is not YAML lists none.
 func composeServices(data []byte) []string {
-	var names []string
-	inServices := false
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimRight(line, " \t")
-		if trimmed == "services:" {
-			inServices = true
-			continue
-		}
-		if !inServices {
-			continue
-		}
-		if len(trimmed) > 0 && !strings.HasPrefix(trimmed, " ") && !strings.HasPrefix(trimmed, "\t") {
-			break // a new top-level key ends the services block
-		}
-		if m := serviceKeyRe.FindStringSubmatch(line); m != nil {
-			names = append(names, m[1])
-		}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil
 	}
-	return names
+	top := doc.Content[0].Content
+	for i := 0; i+1 < len(top); i += 2 {
+		if top[i].Value != "services" || top[i+1].Kind != yaml.MappingNode {
+			continue
+		}
+		var names []string
+		services := top[i+1].Content
+		for j := 0; j+1 < len(services); j += 2 {
+			if name := services[j].Value; name != "<<" {
+				names = append(names, name)
+			}
+		}
+		return names
+	}
+	return nil
 }
 
 // ComposeServiceNames is the exported reader for composeServices — the service names actually

@@ -45,6 +45,19 @@ func TestDetectDocker(t *testing.T) {
 	if names, err := ComposeServiceNames(repo, "docker-compose.yml"); err != nil || !slices.Equal(names, []string{"db", "redis"}) {
 		t.Errorf("services = %v, %v; want [db redis]", names, err)
 	}
+	// Any valid layout lists its services: four-space indent, a comment after the key, flow style.
+	for name, body := range map[string]string{
+		"four spaces":  "services:\n    web:\n        image: nginx\n    db:\n        image: postgres\n",
+		"comment":      "services: # ours\n  web: # front\n    image: nginx\n  db: {image: postgres}\n",
+		"flow mapping": "services: {web: {image: nginx}, db: {image: postgres}}\n",
+	} {
+		if got := composeServices([]byte(body)); !slices.Equal(got, []string{"web", "db"}) {
+			t.Errorf("%s: services = %v, want [web db]", name, got)
+		}
+	}
+	if got := composeServices([]byte("services: [\n")); got != nil {
+		t.Errorf("a broken file listed %v, want none", got)
+	}
 	// An empty repo finds nothing.
 	if detectDocker(t.TempDir()).any() {
 		t.Error("empty repo should find no Docker")
