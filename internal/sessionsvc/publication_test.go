@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
@@ -107,6 +108,59 @@ func TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves(t *t
 	}
 	if _, err := service.PublishReview(ctx, "different", sess.ID, review.OperationID, changed); err == nil {
 		t.Fatal("another commit substituted for approved review")
+	}
+}
+
+// A background publish used to wait out a running turn while holding one of the few background
+// slots, stalling recovery and other publishes. It now leaves the intent for a later tick.
+func TestBackgroundPublicationSkipsBusySession(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "busy-publish")
+	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "result.txt"), "reviewed\n")
+	sessionWorkspaceGit(t, sess.Workspace, "add", "result.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "work")
+	ctx := t.Context()
+	review, err := service.RunReview(ctx, "busy-review", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := workerproto.PublishRequest{AuthorizationRef: "approved", CandidateHead: review.CandidateHead, CandidateTree: review.CandidateTree, Branch: "coop/fix", BaseBranch: "main", Title: "Fix", Body: "Reviewed work"}
+	calls := 0
+	service.reviewPublisher = func(_ context.Context, _ string, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
+		calls++
+		return workerproto.PublishResult{Status: "published", Receipt: &workerproto.PublicationReceipt{Repository: intent.Repository.RepositoryRef, BranchRef: "refs/heads/coop/fix", CandidateTree: review.CandidateTree, CommitSHA: review.CandidateHead, PullRequestNumber: 7, PullRequestURL: "https://github.com/" + intent.Repository.GitHubRepository + "/pull/7"}}, nil
+	}
+	op, err := service.PublishReview(ctx, "busy-publish", sess.ID, review.OperationID, req)
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("admit: %+v %v", op, err)
+	}
+	release := service.lockSessionRuntime(sess.ID) // a turn starts before the background tick
+	done := make(chan error, 1)
+	go func() { done <- service.runPublishOperation(ctx, op.ID) }()
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		release()
+		t.Fatal("a background publish waited for the running turn")
+	}
+	if !errors.Is(err, errPublishSessionBusy) || calls != 0 {
+		t.Fatalf("busy session: err=%v calls=%d", err, calls)
+	}
+	waiting, err := service.Store().GetOperationByID(ctx, op.ID)
+	if err != nil || waiting.State != session.OperationRunning || waiting.ErrorCode != "" || !bytes.Equal(waiting.Result, op.Result) {
+		t.Fatalf("busy session changed the publication: %+v %v", waiting, err)
+	}
+	release()
+	if err := service.runPublishOperation(ctx, op.ID); err != nil || calls != 1 {
+		t.Fatalf("later tick: err=%v calls=%d", err, calls)
+	}
+	if _, result, err := service.GetPublication(ctx, sess.ID, op.ID); err != nil || result.Receipt.CommitSHA != review.CandidateHead {
+		t.Fatalf("published result: %+v %v", result, err)
 	}
 }
 

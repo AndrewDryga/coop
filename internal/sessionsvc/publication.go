@@ -103,6 +103,10 @@ func (s *Service) publicationCandidate(ctx context.Context, intent workerproto.P
 	return directory, nil
 }
 
+// errPublishSessionBusy reports a publication left running because its session's runtime was
+// busy; it is not a failure.
+var errPublishSessionBusy = errors.New("publication waits for a busy session")
+
 func (s *Service) runPublishOperation(ctx context.Context, operationID string) error {
 	op, err := s.store.GetOperationByID(ctx, operationID)
 	if err != nil {
@@ -119,7 +123,12 @@ func (s *Service) runPublishOperation(ctx context.Context, operationID string) e
 		intent.Request.Validate() != nil || intent.Repository.Validate() != nil {
 		return s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidRequest, Detail: "invalid publication intent"})
 	}
-	release := s.lockSessionRuntime(intent.SessionID)
+	// A background slot must not wait out a whole turn: leave the intent running and let the
+	// ticker try again once the session's runtime is free.
+	release, ok := s.tryLockSessionRuntime(intent.SessionID)
+	if !ok {
+		return errPublishSessionBusy
+	}
 	defer release()
 	bound, err := s.store.GetSession(ctx, intent.SessionID)
 	if err != nil || bound.State == session.SessionDiscarded || bound.JobDigest != intent.JobDigest || bound.JobRef != intent.JobRef {
