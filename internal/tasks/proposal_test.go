@@ -473,6 +473,72 @@ func TestForkProposalRecordsSurviveAKilledWriter(t *testing.T) {
 	})
 }
 
+// A host process killed inside removeImportedProposalSource leaves the renamed source in the box's
+// outbox. The import and the drain check clear it when the host's record says that proposal was
+// imported from exactly those bytes; a leftover name the host has no imported record for, one with
+// other content, and any other stray name still refuse, since the box can write any name there.
+func TestAnImportedProposalsLeftoverIsClearedOnlyWhenTheHostImportedIt(t *testing.T) {
+	leftoverName := func(id string) string { return "." + id + ".json-imported-4242-1700000000000000000" }
+	setup := func(t *testing.T, name string) (string, ForkAssignment, string, []byte) {
+		t.Helper()
+		repo, _, assignment := proposalAssignment(t, name)
+		proposal := testForkProposal(strings.Repeat("7", 32), "Clear an interrupted removal")
+		data := writeForkProposal(t, assignment.Owner, proposal)
+		if imported, err := ImportForkProposals(repo, assignment.Owner.Fork); err != nil || len(imported) != 1 {
+			t.Fatalf("import = %+v, %v", imported, err)
+		}
+		return repo, assignment, proposal.ID, data
+	}
+	plant := func(t *testing.T, owner ForkTaskOwner, name string, data []byte) string {
+		t.Helper()
+		path := filepath.Join(ForkProposalOutbox(owner), name)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	t.Run("cleared", func(t *testing.T) {
+		repo, assignment, id, data := setup(t, "proposal-leftover-cleared")
+		leftover := plant(t, assignment.Owner, leftoverName(id), data)
+		if err := forkProposalsDrained(repo, assignment.Owner.Fork); err != nil {
+			t.Fatalf("drain check over the host's own leftover = %v", err)
+		}
+		if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
+			t.Fatalf("the drain check left the leftover: %v", err)
+		}
+		plant(t, assignment.Owner, leftoverName(id), data)
+		if _, err := ImportForkProposals(repo, assignment.Owner.Fork); err != nil {
+			t.Fatalf("import over the host's own leftover = %v", err)
+		}
+		if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
+			t.Fatalf("the import left the leftover: %v", err)
+		}
+	})
+	for _, tc := range []struct{ name, file, body string }{
+		{"other content", leftoverName(strings.Repeat("7", 32)), "{}\n"},
+		{"no imported record", leftoverName(strings.Repeat("8", 32)), ""},
+		{"other stray name", "." + strings.Repeat("7", 32) + ".json-imported-x-1", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, assignment, _, data := setup(t, "proposal-leftover-"+strings.ReplaceAll(tc.name, " ", "-"))
+			body := data
+			if tc.body != "" {
+				body = []byte(tc.body)
+			}
+			stray := plant(t, assignment.Owner, tc.file, body)
+			if err := forkProposalsDrained(repo, assignment.Owner.Fork); err == nil || !strings.Contains(err.Error(), "unimported task proposals") {
+				t.Fatalf("drain check = %v, want a refusal", err)
+			}
+			if _, err := ImportForkProposals(repo, assignment.Owner.Fork); err == nil || !strings.Contains(err.Error(), "unsupported entry") {
+				t.Fatalf("import = %v, want a refusal", err)
+			}
+			if _, err := os.Lstat(stray); err != nil {
+				t.Fatalf("a refused entry was removed: %v", err)
+			}
+		})
+	}
+}
+
 func TestForkProposalCollisionDoesNotMutateExistingTask(t *testing.T) {
 	repo, root, assignment := proposalAssignment(t, "proposal-collision")
 	proposal := testForkProposal(strings.Repeat("5", 32), "Existing collision")

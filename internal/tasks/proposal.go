@@ -571,6 +571,53 @@ func removeImportedProposalSource(authorityRepo string, owner ForkTaskOwner, rec
 	return root.Remove(tmp)
 }
 
+// importedLeftoverID is the proposal id in name when name is what removeImportedProposalSource
+// renames an imported proposal to before it removes it: `.<id>.json-imported-<pid>-<nanos>`.
+func importedLeftoverID(name string) (string, bool) {
+	rest, ok := strings.CutPrefix(name, ".")
+	if !ok {
+		return "", false
+	}
+	id, tail, ok := strings.Cut(rest, ".json-imported-")
+	if !ok || !validAssignmentID(id) {
+		return "", false
+	}
+	pid, nanos, ok := strings.Cut(tail, "-")
+	digits := func(s string) bool {
+		return s != "" && strings.Trim(s, "0123456789") == ""
+	}
+	return id, ok && digits(pid) && digits(nanos)
+}
+
+// clearImportedLeftover removes name from the outbox when it is what a host process killed inside
+// removeImportedProposalSource left behind: the leftover name of a proposal the host already
+// imported, holding exactly the source that import recorded. The box can write the outbox, so the
+// name alone proves nothing; anything else is left for the caller to refuse.
+func clearImportedLeftover(root *os.Root, name string, records map[string]ForkProposalRecord) (bool, error) {
+	id, ok := importedLeftoverID(name)
+	if !ok {
+		return false, nil
+	}
+	record, ok := records[id]
+	if !ok || record.Phase != ForkProposalImported {
+		return false, nil
+	}
+	data, before, err := readForkProposalFile(root, name)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil || proposalDigest(data) != record.SourceDigest {
+		return false, nil
+	}
+	if after, err := root.Lstat(name); err != nil || !os.SameFile(before, after) {
+		return false, nil
+	}
+	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return true, nil
+}
+
 func sourceMatchesRecord(authorityRepo string, owner ForkTaskOwner, record ForkProposalRecord, required bool) error {
 	root, err := openForkProposalOutbox(authorityRepo, owner)
 	if err != nil {
@@ -665,6 +712,11 @@ func scanForkProposalOutbox(authorityRepo string, index ForkAssignmentIndex, own
 	total := 0
 	var imported []ImportedForkProposal
 	for _, entry := range entries {
+		if cleared, err := clearImportedLeftover(root, entry.Name(), recordsByID); err != nil {
+			return nil, fmt.Errorf("remove the leftover of imported fork task proposal %s: %w", entry.Name(), err)
+		} else if cleared {
+			continue
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			return nil, fmt.Errorf("fork proposal outbox contains unsupported entry %q", entry.Name())
 		}
@@ -810,20 +862,45 @@ func forkProposalsDrained(authorityRepo string, identity forkspace.Identity) err
 		if err != nil {
 			return err
 		}
-		root, err := openForkProposalOutbox(authorityRepo, owner)
+		imported := map[string]ForkProposalRecord{}
+		for _, record := range records {
+			if record.AssignmentID == index.AssignmentID {
+				imported[record.ProposalID] = record
+			}
+		}
+		drained, err := outboxDrained(authorityRepo, owner, imported)
 		if err != nil {
 			return err
 		}
-		entries, readErr := readDirBounded(root, forkProposalCountLimit)
-		root.Close()
-		if readErr != nil {
-			return readErr
-		}
-		if len(entries) > 0 {
+		if !drained {
 			return fmt.Errorf("fork assignment %s has unimported task proposals", index.AssignmentID)
 		}
 	}
 	return nil
+}
+
+// outboxDrained reports whether an assignment's outbox is empty once the leftover of a removal a
+// killed host interrupted is cleared.
+func outboxDrained(authorityRepo string, owner ForkTaskOwner, records map[string]ForkProposalRecord) (bool, error) {
+	root, err := openForkProposalOutbox(authorityRepo, owner)
+	if err != nil {
+		return false, err
+	}
+	defer root.Close()
+	entries, err := readDirBounded(root, forkProposalCountLimit)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		cleared, err := clearImportedLeftover(root, entry.Name(), records)
+		if err != nil {
+			return false, fmt.Errorf("remove the leftover of imported fork task proposal %s: %w", entry.Name(), err)
+		}
+		if !cleared {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func finalizeForkProposalRecords(authorityRepo string, index ForkAssignmentIndex) error {
