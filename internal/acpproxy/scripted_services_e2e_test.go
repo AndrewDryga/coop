@@ -211,7 +211,7 @@ func TestScriptedACPRemovesAKilledSessionsServicesFirst(t *testing.T) {
 				t.Fatalf("the killed session's service went at call %d, the next session's first box ran at call %d:\n%s", removed, firstBox, formatCalls(calls))
 			}
 			project := "label=com.docker.compose.project=" + killedProject
-			for _, selects := range [][]string{{"network", "ls", "-q", "--filter", project}, {"volume", "ls", "-q", "--filter", project}} {
+			for _, selects := range [][]string{{"network", "ls", "--no-trunc", "--filter", project, "--format", "[{{json .ID}},{{json .Name}}]"}, {"volume", "ls", "-q", "--filter", project}} {
 				if at := slices.IndexFunc(calls, func(call []string) bool { return slices.Equal(call, selects) }); at < removed || at > firstBox {
 					t.Fatalf("%q ran at call %d, want it between the service's removal (%d) and the first box (%d):\n%s", selects, at, removed, firstBox, formatCalls(calls))
 				}
@@ -396,7 +396,7 @@ func servicesTeardown(t *testing.T, calls [][]string, workspace, superID string)
 	project := "label=com.docker.compose.project=" + box.ComposeProjectFor(workspace, superID)
 	steps := [][]string{
 		{"ps", "-q", "-a", "--filter", project, "--filter", "label=com.docker.compose.project.working_dir=" + filepath.Join(workspace, ".agent")},
-		{"network", "ls", "-q", "--filter", project},
+		{"network", "ls", "--no-trunc", "--filter", project, "--format", "[{{json .ID}},{{json .Name}}]"},
 		{"volume", "ls", "-q", "--filter", project},
 	}
 	start, at := -1, 0
