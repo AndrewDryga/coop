@@ -88,6 +88,88 @@ func TestFilteredBuildInterruptReturnsThroughCleanup(t *testing.T) {
 	}
 }
 
+// An interrupted ordinary build returns through BuildPlanned, so the staged copy of the project is
+// removed from TMPDIR rather than left behind by a killed coop.
+func TestOrdinaryBuildInterruptRemovesStagedContext(t *testing.T) {
+	if os.Getenv("COOP_TEST_BUILD_INTERRUPT") == "ordinary" {
+		cfg := &config.Config{RepoOverride: os.Getenv("COOP_TEST_BUILD_REPO"), ConfigDir: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box:test"}
+		a := &app{cfg: cfg, rt: runtime.Runtime{Name: os.Getenv("COOP_TEST_BUILD_RUNTIME")}, rtSet: true}
+		code, err := a.cmdBuild([]string{"--egress", "open"})
+		fmt.Printf("build returned: %d %v\n", code, err)
+		return
+	}
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			root := t.TempDir()
+			repo, tmp := filepath.Join(root, "repo"), filepath.Join(root, "tmp")
+			for _, dir := range []string{filepath.Join(repo, ".agent"), tmp} {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(repo, ".agent", "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ready := filepath.Join(root, "ready")
+			rt := filepath.Join(root, "docker")
+			body := "#!/bin/sh\ncase \"$1\" in\ninfo) exit 0 ;;\nimage) exit 1 ;;\nbuild)\n" +
+				"trap 'exit 143' TERM\n" +
+				"echo $$ > " + strconv.Quote(ready) + "\nwhile :; do sleep 0.05; done ;;\nesac\n"
+			if err := os.WriteFile(rt, []byte(body), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), wait.Deadline)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestOrdinaryBuildInterruptRemovesStagedContext$")
+			cmd.Env = append(os.Environ(), "COOP_TEST_BUILD_INTERRUPT=ordinary", "COOP_TEST_BUILD_REPO="+repo,
+				"COOP_TEST_BUILD_RUNTIME="+rt, "XDG_STATE_HOME="+t.TempDir(), "TMPDIR="+tmp,
+				"DOCKER_HOST=", "DOCKER_CONTEXT=", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+			var output bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &output
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			runtimePID := 0
+			defer func() {
+				if runtimePID != 0 {
+					_ = syscall.Kill(runtimePID, syscall.SIGKILL)
+				}
+				_ = cmd.Process.Kill()
+			}()
+			wait.For(t, "the build's runtime child", func() bool {
+				select {
+				case err := <-done:
+					t.Fatalf("build exited before runtime readiness: %v\n%s", err, &output)
+				default:
+				}
+				data, err := os.ReadFile(ready)
+				if err == nil {
+					runtimePID, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+				}
+				return runtimePID > 0
+			})
+			staged, _ := filepath.Glob(filepath.Join(tmp, "coop-buildctx-*"))
+			if len(staged) == 0 {
+				t.Fatal("the build ran without a staged context to clean up")
+			}
+			if err := cmd.Process.Signal(sig); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil || !strings.Contains(output.String(), "build returned: 1") {
+				t.Fatalf("interrupt bypassed build cleanup: %v\n%s", err, &output)
+			}
+			if left, _ := filepath.Glob(filepath.Join(tmp, "coop-buildctx-*")); len(left) != 0 {
+				t.Fatalf("interrupted build left its staged context: %v", left)
+			}
+			if err := syscall.Kill(runtimePID, 0); err == nil {
+				t.Fatal("the runtime child survived cancellation")
+			}
+		})
+	}
+}
+
 func TestFilteredBuildNamesUntrackedCustomDockerfile(t *testing.T) {
 	cfg := projectBoxConfig(t, false)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

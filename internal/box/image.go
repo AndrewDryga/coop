@@ -290,7 +290,7 @@ func ManagedBaseRepair(rt runtime.Runtime, cfg *config.Config) (builtBy string, 
 // BuildManagedBase builds the managed base alone. It reads nothing and writes build output to w:
 // an ACP child or a session daemon can reach it, and their stdio is not a terminal.
 func BuildManagedBase(rt runtime.Runtime, cfg *config.Config, version string, w io.Writer) error {
-	return buildBaseImage(rt, cfg, false, version, w, w)
+	return buildBaseImage(context.Background(), rt, cfg, false, version, w, w)
 }
 
 // ImageExists reports whether the given image is present locally.
@@ -345,7 +345,7 @@ func BuildWith(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool, 
 			ui.Note("building %s (shared base) first — %s inherits it via COOP_BASE_IMAGE", cfg.BaseImage, plan.Dockerfile)
 		}
 	}
-	return BuildPlanned(rt, cfg, repo, plan, fresh, version, stdin, stdout)
+	return BuildPlanned(context.Background(), rt, cfg, repo, plan, fresh, version, stdin, stdout)
 }
 
 // BuildPlan is what a build is about to do, resolved before it starts so a caller can say so in
@@ -449,29 +449,30 @@ func PlanBuild(rt runtime.Runtime, cfg *config.Config, repo string, fresh bool) 
 
 // BuildPlanned performs a plan PlanBuild resolved. It prints nothing of its own — the runtime's
 // build output goes to stdout/stderr, and the caller owns every sentence coop speaks around it.
-func BuildPlanned(rt runtime.Runtime, cfg *config.Config, repo string, plan BuildPlan, fresh bool, version string, stdin io.Reader, stdout io.Writer) error {
+// Canceling ctx stops the runtime's build and returns, so the staged copies are still removed.
+func BuildPlanned(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, plan BuildPlan, fresh bool, version string, stdin io.Reader, stdout io.Writer) error {
 	if !plan.Project {
-		return buildBaseImage(rt, cfg, fresh, version, stdout, os.Stderr)
+		return buildBaseImage(ctx, rt, cfg, fresh, version, stdout, os.Stderr)
 	}
 	if plan.BaseFirst {
-		if err := buildBaseImage(rt, cfg, fresh, version, stdout, os.Stderr); err != nil {
+		if err := buildBaseImage(ctx, rt, cfg, fresh, version, stdout, os.Stderr); err != nil {
 			return err
 		}
 	}
 	if plan.Toolchain {
-		return buildToolchainImage(rt, cfg, repo, plan, fresh, stdin, stdout)
+		return buildToolchainImage(ctx, rt, cfg, repo, plan, fresh, stdin, stdout)
 	}
 	// Build from a shadow-filtered COPY of the repo, not the repo itself: secret shadowing is a
 	// run-time -v overlay, so without this a `COPY .env /` / `COPY . .` in an agent-authored
 	// .agent/Dockerfile would bake a shadowed secret into a persistent (pushable) image layer. The
 	// staged context omits every shadowed path (and .git), so a targeted COPY of a secret fails the
 	// build loudly instead of leaking silently.
-	ctx, cleanup, err := stageBuildContext(repo)
+	dir, cleanup, err := stageBuildContext(repo)
 	if err != nil {
 		return &StageError{Err: err}
 	}
 	defer cleanup()
-	err = runBuild(rt, stdin, stdout, os.Stderr, projectBuildArgs(ctx, plan.Dockerfile, plan.Image, cfg.BaseImage, plan.usesBase, fresh)...)
+	err = runBuild(ctx, rt, stdin, stdout, os.Stderr, projectBuildArgs(dir, plan.Dockerfile, plan.Image, cfg.BaseImage, plan.usesBase, fresh)...)
 	if err == nil {
 		StampImageInputs(cfg, repo, plan.Image) // record inputs so a later run can flag drift
 	}
@@ -553,7 +554,7 @@ func projectBuildArgs(ctx, dfRel, img, baseImage string, usesBase, fresh bool, l
 
 // buildBaseImage builds the shared base for the platform the runtime builds for, from a staged
 // context holding only the embedded definition, then stamps it for the staleness checks.
-func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version string, stdout, stderr io.Writer) error {
+func buildBaseImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, fresh bool, version string, stdout, stderr io.Writer) error {
 	if !boxAgentIdentity().valid() {
 		return errors.New("this Linux user ID cannot build Coop boxes: the box user must be non-root and distinct from the gateway user 65532")
 	}
@@ -583,7 +584,7 @@ func buildBaseImage(rt runtime.Runtime, cfg *config.Config, fresh bool, version 
 	if IsManagedBase(cfg.BaseImage) {
 		previous = rt.ImageID(cfg.BaseImage)
 	}
-	if err := runBuild(rt, nil, stdout, stderr, baseBuildArgs(cfg, fresh, flags, dir)...); err != nil {
+	if err := runBuild(ctx, rt, nil, stdout, stderr, baseBuildArgs(cfg, fresh, flags, dir)...); err != nil {
 		return err
 	}
 	StampImageMeta(cfg, cfg.BaseImage, version) // record builder + definition so a later run can flag skew/age
@@ -940,12 +941,12 @@ func ignoredBuildPaths(repo string) func(string) bool {
 
 // runBuild runs one image build and names its failure the way a person reads it: the runtime
 // they invoked, and the status it exited with.
-func runBuild(rt runtime.Runtime, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
+func runBuild(ctx context.Context, rt runtime.Runtime, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
 	out, errOut := buildOutput(stdout), buildOutput(stderr)
 	if stdout == stderr {
 		errOut = out // one log stays one writer, so its lines keep their order and one goroutine writes it
 	}
-	code, err := rt.Run(stdin, out, errOut, args...)
+	code, err := rt.RunContext(ctx, stdin, out, errOut, args...)
 	if err != nil {
 		return err
 	}

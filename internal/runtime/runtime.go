@@ -287,6 +287,16 @@ func (r Runtime) Run(stdin io.Reader, stdout, stderr io.Writer, args ...string) 
 	return exitCode(r.Name, cmd.Run())
 }
 
+// RunContext is Run that a canceled ctx ends: TERM to the runtime client, then KILL. The client
+// stays in coop's process group, so a terminal Ctrl-C still reaches it directly, and a SIGTERM sent
+// to coop alone still stops it — either way the caller returns and its deferred cleanup runs.
+func (r Runtime) RunContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) (int, error) {
+	args = withSELinuxLabel(r.selinuxFor(args), args)
+	cmd := exec.Command(r.Name, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	return runForegroundCommand(ctx, cmd)
+}
+
 // runForegroundCommand runs a client that shares coop's controlling terminal, in coop's OWN
 // process group. It must not get a group of its own: a background process group is SUSPENDED the
 // moment it configures or reads the terminal (SIGTTOU/SIGTTIN), so an interactive box would hang

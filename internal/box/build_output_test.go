@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -77,7 +78,7 @@ func TestProjectBuildsShowDockerWarningsWithoutColor(t *testing.T) {
 		t.Fatal(err)
 	}
 	var ordinary bytes.Buffer
-	if err := runBuild(runtime.Runtime{Name: script}, nil, io.Discard, &ordinary, "build", "."); err != nil {
+	if err := runBuild(context.Background(), runtime.Runtime{Name: script}, nil, io.Discard, &ordinary, "build", "."); err != nil {
 		t.Fatal(err)
 	}
 	if ordinary.String() != plainDockerWarning {
@@ -85,7 +86,7 @@ func TestProjectBuildsShowDockerWarningsWithoutColor(t *testing.T) {
 	}
 	// A daemon's build log takes both streams: it stays one writer, in the order Docker wrote it.
 	var log bytes.Buffer
-	if err := runBuild(runtime.Runtime{Name: script}, nil, &log, &log, "build", "."); err != nil {
+	if err := runBuild(context.Background(), runtime.Runtime{Name: script}, nil, &log, &log, "build", "."); err != nil {
 		t.Fatal(err)
 	}
 	if want := plainDockerWarning + "#9 DONE 0.1s\n"; log.String() != want {

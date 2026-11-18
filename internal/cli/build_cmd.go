@@ -140,7 +140,11 @@ func (a *app) buildPlanned(repo string, plan box.BuildPlan, fresh bool) ([]box.I
 	for i, tag := range tags {
 		changes[i].Before = a.rt.ImageID(tag)
 	}
-	if err := box.BuildPlanned(a.rt, a.cfg, repo, plan, fresh, resolveVersion(), os.Stdin, os.Stdout); err != nil {
+	// A Ctrl-C or a SIGTERM to coop alone cancels the build, so the staged context copies in TMPDIR
+	// are removed on the way out instead of left behind by a killed process.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := box.BuildPlanned(ctx, a.rt, a.cfg, repo, plan, fresh, resolveVersion(), os.Stdin, os.Stdout); err != nil {
 		return nil, err
 	}
 	for i, tag := range tags {

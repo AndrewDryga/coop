@@ -2,6 +2,7 @@ package box
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -90,7 +91,7 @@ func TestToolchainBuildSeesOnlyTheGeneratedFiles(t *testing.T) {
 	if !plan.Project || !plan.Toolchain || plan.Image != ImageForRepo(repo, cfg.BaseImage, "") || plan.BaseFirst {
 		t.Fatalf("plan = %+v", plan)
 	}
-	if err := BuildPlanned(rt, cfg, repo, plan, false, "", strings.NewReader(""), io.Discard); err != nil {
+	if err := BuildPlanned(context.Background(), rt, cfg, repo, plan, false, "", strings.NewReader(""), io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(log)

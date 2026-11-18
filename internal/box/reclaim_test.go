@@ -524,7 +524,7 @@ func TestBaseRebuildRemovesTheImageItReplaced(t *testing.T) {
 				tagCount(old): test.tagsLeft,
 			})
 			cfg := &config.Config{BaseImage: test.base, ConfigDir: t.TempDir(), BoxHome: t.TempDir()}
-			if err := buildBaseImage(rt, cfg, true, "vTest", io.Discard, io.Discard); err != nil {
+			if err := buildBaseImage(context.Background(), rt, cfg, true, "vTest", io.Discard, io.Discard); err != nil {
 				t.Fatal(err)
 			}
 			recorded := string(mustReadFile(t, calls))

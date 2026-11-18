@@ -126,7 +126,7 @@ func stageToolchainContext(dockerfile string, toolVersions []byte) (dir string, 
 
 // buildToolchainImage builds plan's toolchain image from a context holding only the generated
 // Dockerfile and .tool-versions.
-func buildToolchainImage(rt runtime.Runtime, cfg *config.Config, repo string, plan BuildPlan, fresh bool, stdin io.Reader, stdout io.Writer) error {
+func buildToolchainImage(ctx context.Context, rt runtime.Runtime, cfg *config.Config, repo string, plan BuildPlan, fresh bool, stdin io.Reader, stdout io.Writer) error {
 	dockerfile, toolVersions, ok, err := toolchainDefinition(repo)
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func buildToolchainImage(rt runtime.Runtime, cfg *config.Config, repo string, pl
 	}
 	defer cleanup()
 	previous := rt.ImageID(plan.Image) // a fresh rebuild under the same tag leaves this one untagged
-	if err := runBuild(rt, stdin, stdout, os.Stderr, projectBuildArgs(dir, "Dockerfile", plan.Image, cfg.BaseImage, true, fresh)...); err != nil {
+	if err := runBuild(ctx, rt, stdin, stdout, os.Stderr, projectBuildArgs(dir, "Dockerfile", plan.Image, cfg.BaseImage, true, fresh)...); err != nil {
 		return err
 	}
 	StampImageInputs(cfg, repo, plan.Image) // for coop build --check and the age reminder

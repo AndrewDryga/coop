@@ -125,7 +125,7 @@ func prepareControllerImage(cfg *config.Config, rt runtime.Runtime, grant *Contr
 	if output == nil {
 		output = os.Stderr
 	}
-	if err := BuildPlanned(rt, buildCfg, grant.Repository, plan, false, "", strings.NewReader(""), output); err != nil {
+	if err := BuildPlanned(context.Background(), rt, buildCfg, grant.Repository, plan, false, "", strings.NewReader(""), output); err != nil {
 		return "", fmt.Errorf("build project toolchain: %w", err)
 	}
 	return image, nil
@@ -225,7 +225,7 @@ func controllerToolchainImage(cfg *config.Config, rt runtime.Runtime, repository
 	buildCfg := cfg.Clone()
 	buildCfg.BaseImage = base
 	plan := BuildPlan{Project: true, Toolchain: true, Image: image, usesBase: true, BaseFirst: cfg.ImageOverride == "" && !ImageExists(rt, base)}
-	if err := BuildPlanned(rt, buildCfg, repository, plan, false, "", strings.NewReader(""), output); err != nil {
+	if err := BuildPlanned(context.Background(), rt, buildCfg, repository, plan, false, "", strings.NewReader(""), output); err != nil {
 		return "", toolchainBuildError(err)
 	}
 	return image, nil
