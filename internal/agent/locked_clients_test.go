@@ -195,6 +195,21 @@ func TestProviderBundlesCarryFunctionNotChatter(t *testing.T) {
 			}
 		}
 	}
+	// The brokers carry the same rule on paths: a route that forwards a client's analytics or
+	// telemetry would send it with the user's real credential.
+	for _, selection := range []string{"chatgpt", "apikey"} {
+		routes, err := codexBrokerRoutes(selection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, route := range routes {
+			for _, word := range []string{"analytics", "telemetry", "events", "metrics", "logs"} {
+				if strings.Contains(strings.ToLower(route.Path), word) {
+					t.Errorf("codex %s broker grants %s %s%s: refuse the client's chatter instead of forwarding it", selection, route.Method, route.Host, route.Path)
+				}
+			}
+		}
+	}
 	claude, err := claudeAgent{}.NetworkBundle(NetworkBundleInput{Client: egress.ClientCLI})
 	if err != nil {
 		t.Fatal(err)

@@ -153,7 +153,9 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	for _, path := range []string{"/backend-api/wham/usage", "/backend-api/wham/rate-limit-reset-credits", "/backend-api/wham/settings/user", "/backend-api/wham/security-setup", "/backend-api/ps/connectors/directory/list", "/backend-api/ps/connectors/directory/list_workspace"} {
 		add("GET", path, "")
 	}
-	add("POST", "/backend-api/codex/analytics-events/events", "")
+	// No analytics route: the client's analytics upload is telemetry, switched off in the box
+	// (mcp.CodexManagedDefaults), and a stray post is a recorded refusal, never sent with the
+	// user's credential. A live filtered ChatGPT-login turn finished with it refused (2026-11-18).
 	add("POST", "/backend-api/ps/apps/batch", "")
 	for _, method := range []string{"GET", "POST", "DELETE"} {
 		add(method, "/backend-api/ps/mcp", "")
