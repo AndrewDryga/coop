@@ -1025,6 +1025,7 @@ var environmentOnlyKeys = map[string]struct{}{
 // boxEnvironmentKeys are read inside the box, so they belong in agents/env.
 var boxEnvironmentKeys = map[string]struct{}{
 	"COOP_CONSULT_STREAM_LIMIT": {},
+	"COOP_DELEGATE_TIMEOUT":     {},
 }
 
 var retiredMainConfigKeys = map[string]struct{}{

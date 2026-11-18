@@ -516,9 +516,10 @@ refused login, and it skips that target for the rest of the run. Before trying a
 that the failed attempt changed no Git history or files, including tracked, untracked, staged and
 ignored files. The only exception is co:op's own run record in `.agent/runs`.
 
-co:op limits the prompt size, output size and duration of each delegate attempt. The standard image
-includes the `flock`, `setsid` and `timeout` this needs, and a custom image missing them refuses to
-run the delegate.
+co:op limits the prompt size, output size and duration of each delegate attempt. An attempt may run
+30 minutes; set `COOP_DELEGATE_TIMEOUT` in `agents/env` to a whole number of seconds from `1` to
+`86400` to change that. The standard image includes the `flock`, `setsid` and `timeout` this needs,
+and a custom image missing them refuses to run the delegate.
 
 A delegate can't start another delegate, but it can still ask a configured `coop-consult` for
 read-only advice.

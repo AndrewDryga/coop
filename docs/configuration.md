@@ -67,6 +67,7 @@ On Docker, co:op also removes all Linux capabilities (`--cap-drop ALL`). Even if
 | `COOP_<AGENT>_MODEL`, like `COOP_CLAUDE_MODEL` | the CLI's default | The agent-wide default model, everywhere that agent runs. See [picking models](agents.md#picking-models). |
 | `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | How long `coop-consult` waits for each peer, in seconds. See below. |
 | `COOP_CONSULT_STREAM_LIMIT` | `0` (unlimited) | The most output, in bytes, `coop-consult` accepts from a peer's reply or diagnostics. It discards a larger reply. Set it in `agents/env`. See [limits](agents.md#limits). |
+| `COOP_DELEGATE_TIMEOUT` | `1800` (30 minutes) | How long one `coop-delegate` attempt may run, in whole seconds from `1` to `86400`. Set it in `agents/env`. See [delegates](agents.md#delegates). |
 | `COOP_PRESETS_DIR` | `~/.config/coop/presets` | Absolute path of the folder for global presets. See [where presets live](agents.md#where-presets-live). |
 | `COOP_MCP_FILE` | `~/.config/coop/agents/mcp.json` | Absolute path of the file that defines MCP servers. If you set it, the file must exist. It must be a regular file of at most 4 MiB, outside any directory co:op mounts in full. |
 | `COOP_SHELL` | `bash` | The shell `coop shell` opens. |
@@ -129,7 +130,7 @@ doesn't let a broken file pass. Every command except `coop version` stops until 
 
 co:op reads `COOP_HOME`, `COOP_CONF`, `NO_COLOR`, `COOP_ACP_WARM`, `COOP_ACP_TRACE` and
 `COOP_SPINNER` only from the process environment, so you can't set them inside `coop.conf`. The box
-reads `COOP_CONSULT_STREAM_LIMIT`, so it belongs in `agents/env`.
+reads `COOP_CONSULT_STREAM_LIMIT` and `COOP_DELEGATE_TIMEOUT`, so they belong in `agents/env`.
 
 ### What can sync
 

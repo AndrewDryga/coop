@@ -218,6 +218,7 @@ func TestMainConfAbsentVersusInvalid(t *testing.T) {
 		{"box setting", "COOP_CONSULT_STREAM_LIMIT=1\n", "COOP_CONSULT_STREAM_LIMIT is read inside the box, not from coop.conf."},
 		{"retired box setting", "COOP_NO_ASDF=1\n", `Setting "COOP_NO_ASDF" was retired.`},
 		{"box consult limit", "COOP_CONSULT_STREAM_LIMIT=10\n", "COOP_CONSULT_STREAM_LIMIT is read inside the box, not from coop.conf."},
+		{"box delegate timeout", "COOP_DELEGATE_TIMEOUT=3600\n", "COOP_DELEGATE_TIMEOUT is read inside the box, not from coop.conf."},
 		{"invalid value", "COOP_CACHE=maybe\n", "Invalid value for COOP_CACHE."},
 		{"retired key", "COOP_LOOP_MODEL=old\n", `Setting "COOP_LOOP_MODEL" was retired.`},
 		{"retired package override", "COOP_AGENT_PACKAGES=@openai/codex@0.1.0\n", `Setting "COOP_AGENT_PACKAGES" was retired.`},
