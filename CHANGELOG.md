@@ -289,6 +289,20 @@
   fragment no longer breaks the page's contents menu and search.
 - **Two `make check` runs in one checkout keep their own logs.** Each run writes to its own folder
   and prints where its logs are.
+- **Late fixes from the same review.** `coop check-secrets` lists a changed Dockerfile or Compose
+  file that `project.yaml` names, wherever it lives. A launch refuses an MCP server whose header
+  or env value is null, an object or a list, naming the server and key. `coop fork --loop` and
+  `-d` refuse `--continue` and `--new`, and `coop context` refuses a second `--task`. When Coop
+  cannot create its run-files folder in the state folder it stops and names the folder. A
+  `COOP_RUNTIME` that names Docker by its path gets kernel file protection like plain `docker`.
+  `coop sessions connect` reports a lasting poll error once and polls a down controller less
+  often, and a response upload the controller refuses for good settles instead of retrying
+  forever. A box commit made with `git cherry-pick -x` binds its task. A host process killed
+  while removing an imported fork proposal no longer blocks that fork's imports and merge. A
+  loop's final review no longer rereads the whole queue per reviewed task, a refreshing
+  `coop tasks watch` no longer makes a claim look leased, and a custom-command loop signs commits
+  left by failed attempts. Signing rewrites commits without checking files out, which is much
+  faster on large repositories. ShellCheck is pinned like the gate's other analyzers.
 
 ## 13.2.1
 
