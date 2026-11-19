@@ -1651,6 +1651,26 @@ func TestSessionHTTPDiscardRetireQuarantinedBody(t *testing.T) {
 	if mixed.Code != http.StatusBadRequest {
 		t.Fatalf("retire mixed with a plan = %d %s; want 400", mixed.Code, mixed.Body.String())
 	}
+	// A plan id that can never work is the caller's mistake or a stale plan. Both used to answer
+	// operation_uncertain, which tells a controller to wait and ask again.
+	notAPlan := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/discard",
+		fmt.Sprintf(`{"plan_operation_id":%q}`, created.Operation.ID), "discard-not-a-plan", "application/json",
+	)
+	if notAPlan.Code != http.StatusBadRequest || !strings.Contains(notAPlan.Body.String(), `"code":"invalid_request"`) {
+		t.Fatalf("discard with a non-plan operation = %d %s; want 400 invalid_request", notAPlan.Code, notAPlan.Body.String())
+	}
+	unfinished, _, err := service.store.ReserveOperation(t.Context(), "PlanDiscard", "plan-never-finished", struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := sessionHTTPTestRequest(
+		t, handler, http.MethodPost, "/v1/sessions/"+created.Session.ID+"/discard",
+		fmt.Sprintf(`{"plan_operation_id":%q}`, unfinished.ID), "discard-unfinished-plan", "application/json",
+	)
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), `"code":"discard_plan_stale"`) {
+		t.Fatalf("discard with an unfinished plan = %d %s; want 409 discard_plan_stale", stale.Code, stale.Body.String())
+	}
 }
 
 // A queued turn has not started: its response leaves the times out, not Go's year 1.

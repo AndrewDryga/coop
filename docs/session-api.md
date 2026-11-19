@@ -825,8 +825,15 @@ Other workspace states you can fix also refuse with `409 invalid_session_state` 
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
 large untracked files, a missing or changed bound task, or a restore that must finish first.
 Restore answers `400 invalid_request` for a malformed descriptor or a bundle it must not apply
-(submodule changes, an unused LFS object, a file that would replace fork authority). A worker fault
-stays `500 internal_error`.
+(submodule changes, an unused LFS object, a file that would replace fork authority). It also
+answers `400 invalid_request` when `Content-Length` is missing or differs from the descriptor's
+size, and `415` when the content type differs from the descriptor's. A worker fault stays
+`500 internal_error`.
+
+The bundle download answers `404 operation_not_found` when the operation isn't a finished
+checkpoint, and the same code with the detail `workspace checkpoint bundle is no longer stored`
+when cleanup has removed the bundle. Neither is worth a retry. A `500` means the worker couldn't
+read its own store, so retry that one.
 
 To capture a checkpoint, the session must be idle, writable and bound to a task. You can capture an
 open, exhausted or closed session, but not a discarded one. Capture keeps a closed session closed
@@ -1451,6 +1458,9 @@ while running. Use the operation key to check its state, then fetch
 `GET /v1/sessions/{session_id}/publications/{operation_id}` for the completed `operation` and
 `publication` response. Retry with the same key and identical request.
 
+If the worker refused the publish, a retry with the same key returns that saved error with its
+status again, as other mutations do. It never answers `202` for a publish that already failed.
+
 The result is one of:
 
 - `published`, with the exact commit, tree and PR result
@@ -1543,6 +1553,10 @@ Discard first checks that the plan belongs to the session named in the request p
 the current workspace with every recorded detail in the plan. If the plan is stale, the workspace
 was replaced or work is running, nothing is deleted. Otherwise, co:op deletes the fork workspace and
 private ACP state, and saves a record that the session was discarded.
+
+A `plan_operation_id` that names some other kind of operation returns `400 invalid_request`. A plan
+that didn't finish, or that belongs to another session, returns `409 discard_plan_stale`: make a new
+plan. Neither attempted anything, so neither is `operation_uncertain`.
 
 At startup, the daemon blocks sessions whose workspace ownership it can't verify. This includes
 old session records without a store-owner binding, v1 reservations, and sessions whose fork record

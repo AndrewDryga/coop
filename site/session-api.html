@@ -955,8 +955,14 @@ intact and no checkpoint bundle is published; correct the content before request
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
 large untracked files, a missing or changed bound task, or a restore that must finish first.
 Restore answers <code>400 invalid_request</code> for a malformed descriptor or a bundle it must not apply
-(submodule changes, an unused LFS object, a file that would replace fork authority). A worker fault
-stays <code>500 internal_error</code>.</p>
+(submodule changes, an unused LFS object, a file that would replace fork authority). It also
+answers <code>400 invalid_request</code> when <code>Content-Length</code> is missing or differs from the descriptor&#39;s
+size, and <code>415</code> when the content type differs from the descriptor&#39;s. A worker fault stays
+<code>500 internal_error</code>.</p>
+<p>The bundle download answers <code>404 operation_not_found</code> when the operation isn&#39;t a finished
+checkpoint, and the same code with the detail <code>workspace checkpoint bundle is no longer stored</code>
+when cleanup has removed the bundle. Neither is worth a retry. A <code>500</code> means the worker couldn&#39;t
+read its own store, so retry that one.</p>
 <p>To capture a checkpoint, the session must be idle, writable and bound to a task. You can capture an
 open, exhausted or closed session, but not a discarded one. Capture keeps a closed session closed
 and can&#39;t restart model execution. To restore a checkpoint, create an unused replacement session
@@ -1575,6 +1581,8 @@ provide its number and the exact commit you expect it to point to. The operation
 while running. Use the operation key to check its state, then fetch
 <code>GET /v1/sessions/{session_id}/publications/{operation_id}</code> for the completed <code>operation</code> and
 <code>publication</code> response. Retry with the same key and identical request.</p>
+<p>If the worker refused the publish, a retry with the same key returns that saved error with its
+status again, as other mutations do. It never answers <code>202</code> for a publish that already failed.</p>
 <p>The result is one of:</p>
 <ul>
 <li><code>published</code>, with the exact commit, tree and PR result</li>
@@ -1647,6 +1655,9 @@ the plan.</p>
 the current workspace with every recorded detail in the plan. If the plan is stale, the workspace
 was replaced or work is running, nothing is deleted. Otherwise, co:op deletes the fork workspace and
 private ACP state, and saves a record that the session was discarded.</p>
+<p>A <code>plan_operation_id</code> that names some other kind of operation returns <code>400 invalid_request</code>. A plan
+that didn&#39;t finish, or that belongs to another session, returns <code>409 discard_plan_stale</code>: make a new
+plan. Neither attempted anything, so neither is <code>operation_uncertain</code>.</p>
 <p>At startup, the daemon blocks sessions whose workspace ownership it can&#39;t verify. This includes
 old session records without a store-owner binding, v1 reservations, and sessions whose fork record
 or workspace is missing. It also blocks a stored session this build no longer reads: one with no

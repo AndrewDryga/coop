@@ -34,6 +34,11 @@ func (s *Service) PublishReview(ctx context.Context, key, sessionID, reviewID st
 	if err != nil {
 		return op, err
 	}
+	if replay && op.State == session.OperationFailed {
+		// Replay the saved refusal as every other mutation does. Returning the failed operation
+		// with no error answered 202, and the worker connector reports any 2xx as success.
+		return op, wrapServiceOperationError(op.ID, &session.Error{Code: op.ErrorCode, Detail: op.ErrorDetail})
+	}
 	if !replay || op.State == session.OperationReserved {
 		// This lock and the durable intent fence discard both before and after
 		// the asynchronous worker starts, including the restart gap.

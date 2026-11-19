@@ -814,11 +814,21 @@ func (s *Service) readWorkspaceCheckpointArtifact(ctx context.Context, operation
 
 func (s *Service) OpenWorkspaceCheckpointBundle(ctx context.Context, operationID string) (*os.File, workerproto.WorkspaceCheckpoint, error) {
 	op, err := s.store.GetOperationByID(ctx, operationID)
-	if err != nil || op.Method != "CheckpointWorkspace" || op.State != session.OperationSucceeded ||
+	if err != nil {
+		// A store that cannot answer is not a missing bundle: the caller should retry, not give up.
+		return nil, workerproto.WorkspaceCheckpoint{}, err
+	}
+	if op.Method != "CheckpointWorkspace" || op.State != session.OperationSucceeded ||
 		op.ResourceType != "workspace_checkpoint" || op.ResourceID == "" {
 		return nil, workerproto.WorkspaceCheckpoint{}, session.ErrOperationNotFound
 	}
+	// The operation record outlives its bundle, which cleanup removes. Say the bundle is gone
+	// rather than answer a server fault the caller would retry.
+	removed := &session.Error{Code: session.CodeOperationNotFound, Detail: "workspace checkpoint bundle is no longer stored"}
 	artifact, err := s.readWorkspaceCheckpointArtifact(ctx, operationID)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, workerproto.WorkspaceCheckpoint{}, removed
+	}
 	if err != nil {
 		return nil, workerproto.WorkspaceCheckpoint{}, err
 	}
@@ -827,6 +837,9 @@ func (s *Service) OpenWorkspaceCheckpointBundle(ctx context.Context, operationID
 		return nil, workerproto.WorkspaceCheckpoint{}, errors.New("workspace checkpoint operation identity does not match")
 	}
 	file, err := os.OpenFile(artifact.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, checkpoint, removed
+	}
 	if err != nil {
 		return nil, checkpoint, err
 	}

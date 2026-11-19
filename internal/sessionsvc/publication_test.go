@@ -106,8 +106,18 @@ func TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves(t *t
 	if _, err := service.PublishReview(ctx, "publish", sess.ID, review.OperationID, changed); session.CodeOf(err) != session.CodeIdempotencyConflict {
 		t.Fatalf("changed publication replay: %v", err)
 	}
-	if _, err := service.PublishReview(ctx, "different", sess.ID, review.OperationID, changed); err == nil {
+	_, refused := service.PublishReview(ctx, "different", sess.ID, review.OperationID, changed)
+	if refused == nil {
 		t.Fatal("another commit substituted for approved review")
+	}
+	// A replay of the refused publish answers the saved refusal again. It used to return the failed
+	// operation with no error, which the HTTP route sent as 202 and the connector read as success.
+	failed, again := service.PublishReview(ctx, "different", sess.ID, review.OperationID, changed)
+	if again == nil || session.CodeOf(again) != session.CodeOf(refused) || failed.State != session.OperationFailed {
+		t.Fatalf("replayed refused publish = %+v %v; want the saved %v", failed, again, refused)
+	}
+	if code, status, _ := sessionHTTPError(again); status < 400 || code != string(session.CodeOf(refused)) {
+		t.Fatalf("replayed refused publish answers %d %s", status, code)
 	}
 }
 

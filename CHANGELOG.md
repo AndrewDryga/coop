@@ -4,6 +4,18 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Changed session API answers: four errors now name the real problem.** Controllers that match
+  on the old answers need a look.
+  - Retrying a publish that the worker had refused returns the saved error again. It used to answer
+    `202` with a failed operation, which the worker connector reported as success.
+  - A workspace restore with a missing or wrong `Content-Length` answers `400`, and one whose
+    content type differs from the descriptor's answers `415`. Both used to answer `413`.
+  - A discard whose `plan_operation_id` names some other operation answers `400 invalid_request`,
+    and one whose plan never finished answers `409 discard_plan_stale`. Both used to answer
+    `409 operation_uncertain`.
+  - A checkpoint bundle that cleanup removed answers `404` with the reason instead of `500`, and a
+    worker that can't read its store answers `500` instead of `404`.
+
 - **`coop usage` counts history in a provider home that is a link.** If your `~/.claude`,
   `~/.codex`, `~/.gemini` or `~/.grok` is a link, as dotfiles setups make it, its history was
   skipped and the total showed as partial with no reason. Homes that a box can write are still

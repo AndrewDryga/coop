@@ -719,8 +719,14 @@ func (h *sessionHTTPHandler) restoreWorkspaceCheckpoint(w http.ResponseWriter, r
 		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint descriptor is invalid")
 		return
 	}
-	if r.ContentLength <= 0 || r.ContentLength != checkpoint.Bundle.ByteSize || mediaType != checkpoint.Bundle.MediaType {
-		writeSessionHTTPError(w, http.StatusRequestEntityTooLarge, "invalid_request", "workspace checkpoint bundle length is invalid")
+	// Name the real fault: a controller that reads "too large" for either of these would shrink a
+	// bundle that was never the problem.
+	if mediaType != checkpoint.Bundle.MediaType {
+		writeSessionHTTPError(w, http.StatusUnsupportedMediaType, "invalid_request", "workspace checkpoint media type does not match its descriptor")
+		return
+	}
+	if r.ContentLength <= 0 || r.ContentLength != checkpoint.Bundle.ByteSize {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "workspace checkpoint bundle length is invalid")
 		return
 	}
 	sess, err := h.service.RestoreWorkspaceCheckpoint(r.Context(), key, RestoreWorkspaceCheckpointRequest{
@@ -1397,8 +1403,14 @@ func (h *sessionHTTPHandler) discard(w http.ResponseWriter, r *http.Request, ses
 		writeSessionServiceError(w, err)
 		return
 	}
-	if planOp.Method != "PlanDiscard" || planOp.State != session.OperationSucceeded {
-		writeSessionServiceError(w, session.ErrOperationUncertain)
+	// Neither is an uncertain outcome: nothing was attempted, and a retry of this request can
+	// never succeed, so the answer must not read as "wait and ask again".
+	if planOp.Method != "PlanDiscard" {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "plan_operation_id does not name a discard plan")
+		return
+	}
+	if planOp.State != session.OperationSucceeded {
+		writeSessionHTTPError(w, http.StatusConflict, string(session.CodeDiscardPlanStale), "discard plan did not complete; make a new plan")
 		return
 	}
 	var planned PlanDiscardResult

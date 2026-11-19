@@ -14,6 +14,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 func TestSessionHTTPRestoreChecksBinaryMutationPreflight(t *testing.T) {
@@ -65,7 +66,15 @@ func TestSessionHTTPRestoreChecksBinaryMutationPreflight(t *testing.T) {
 		change func(*http.Request)
 		status int
 	}
-	cases := []refusal{{"query", func(r *http.Request) { r.URL.RawQuery = "unexpected=1" }, 400}, {"media", func(r *http.Request) { r.Header.Set("Content-Type", "application/json") }, 415}, {"length", func(r *http.Request) { r.ContentLength++ }, 413}}
+	otherMedia := workerproto.LegacyWorkspaceCheckpointMediaType
+	if captured.Checkpoint.Bundle.MediaType == otherMedia {
+		otherMedia = workerproto.WorkspaceCheckpointBundleMediaType
+	}
+	cases := []refusal{{"query", func(r *http.Request) { r.URL.RawQuery = "unexpected=1" }, 400}, {"media", func(r *http.Request) { r.Header.Set("Content-Type", "application/json") }, 415},
+		// These two used to answer 413 "too large", which named a fault the request did not have.
+		{"media-differs-from-descriptor", func(r *http.Request) { r.Header.Set("Content-Type", otherMedia) }, 415},
+		{"length", func(r *http.Request) { r.ContentLength++ }, 400},
+		{"no-length", func(r *http.Request) { r.ContentLength = -1 }, 400}}
 	for _, header := range []string{"Idempotency-Key", "Content-Type", "X-Coop-Expected-Revision", "X-Coop-Workspace-Checkpoint"} {
 		cases = append(cases, refusal{"duplicate-" + header, func(r *http.Request) { r.Header.Add(header, r.Header.Get(header)) }, 400})
 	}
@@ -123,6 +132,28 @@ func TestSessionHTTPRestoreChecksBinaryMutationPreflight(t *testing.T) {
 	}
 	if head := sessionWorkspaceGit(t, restored.Workspace, "rev-parse", "HEAD"); head != captured.Checkpoint.CommittedRevision {
 		t.Fatalf("restored HEAD=%s want %s", head, captured.Checkpoint.CommittedRevision)
+	}
+
+	// The bundle download names what is wrong: a bundle cleanup removed is gone (404 with the
+	// reason, not a 500 the caller retries), and a store that cannot answer is a server fault
+	// (500, not a 404 the caller gives up on).
+	bundlePath := "/v1/operations/" + captured.OperationID + "/checkpoint-bundle"
+	if got := sessionHTTPTestRequest(t, handler, http.MethodGet, bundlePath, "", "", ""); got.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), bundle) {
+		t.Fatalf("bundle download = %d, %d bytes", got.Code, got.Body.Len())
+	}
+	stored := filepath.Join(service.stateRoot, "workspace-checkpoints", captured.OperationID+".checkpoint")
+	if err := os.Remove(stored); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionHTTPTestRequest(t, handler, http.MethodGet, bundlePath, "", "", ""); got.Code != http.StatusNotFound ||
+		!strings.Contains(got.Body.String(), `"code":"operation_not_found"`) || !strings.Contains(got.Body.String(), "no longer stored") {
+		t.Fatalf("removed bundle = %d %s; want 404 with the reason", got.Code, got.Body.String())
+	}
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if got := sessionHTTPTestRequest(t, handler, http.MethodGet, bundlePath, "", "", ""); got.Code != http.StatusInternalServerError {
+		t.Fatalf("bundle download with the store closed = %d %s; want 500", got.Code, got.Body.String())
 	}
 }
 
