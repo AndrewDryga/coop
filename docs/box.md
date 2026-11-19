@@ -646,8 +646,9 @@ would share a variable, such as `auth-db` and `auth.db`.
 
 The same URL needs open egress. A filtered box reaches a service only through its approved rule, at
 the service's name, so it receives `COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443`, with the same
-scheme. The variable names the first `expose` port its rule allows, or the labelled port when the
-rule allows that one. The services it starts run on a private network
+scheme. The variable names the first `expose` port its rule allows. With a `coop.service.port`
+label it names that port instead, and when the rule doesn't allow the labelled port the box gets no
+variable for the service. The services it starts run on a private network
 with no host port, so use open egress for a service your host browser must reach too.
 
 ### What a Compose file may do
