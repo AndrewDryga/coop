@@ -155,8 +155,13 @@ func (a *app) cmdCheckSecrets(args []string) (int, error) {
 	// box; it cannot contain what your own tools do with files an agent left behind, so this is
 	// the "read these before running anything here" list. Informational: it never fails the scan.
 	// Coop's own setup files, byte for byte what it ships, are counted rather than listed: right
-	// after coop init they were the whole list and buried the secret result.
-	surfaces, stock := hostSurfacesToReview(repo)
+	// after coop init they were the whole list and buried the secret result. --include-ignored adds
+	// the Git-ignored files the box can write, which git status never reports as changed.
+	var ignoredFiles []string
+	if includeIgnored {
+		ignoredFiles = listing.boxWritableIgnored()
+	}
+	surfaces, stock := hostSurfacesToReview(repo, ignoredFiles)
 	if len(surfaces) > 0 {
 		blankBefore(&said)
 		ui.Note("%s", ui.Bold("Review files that run commands"))
@@ -298,6 +303,36 @@ func unscannedIgnoredFiles(l *projectListing) (files, unlisted []string, err err
 		}
 	}
 	return files, unlisted, nil
+}
+
+// boxWritableIgnored lists the Git-ignored files a box can write: the full walk less what Git would
+// commit and less what the box never sees. Coop's own .agent/ working state is included, as the
+// box writes it too. None when git is unavailable, since nothing then says which files are ignored.
+func (l *projectListing) boxWritableIgnored() []string {
+	if !l.gitOK {
+		return nil
+	}
+	all, _, err := walkVisibleTree(l.repo)
+	if err != nil {
+		return nil
+	}
+	committable := make(map[string]bool, len(l.commit))
+	for _, rel := range l.commit {
+		committable[rel] = true
+	}
+	var out []string
+	for _, rel := range all {
+		if committable[rel] {
+			continue
+		}
+		// An undecidable file is listed: naming one the box could not write costs a line, while
+		// leaving out one it could write is the gap this list closes.
+		if hidden, err := l.shadowed(rel); err == nil && hidden {
+			continue
+		}
+		out = append(out, rel)
+	}
+	return out
 }
 
 // isApprovalMarker reports whether rel is the network approval marker Coop keeps at the project
@@ -609,13 +644,17 @@ func osCause(err error) string {
 }
 
 // hostSurfacesChanged classifies the working tree's changes since HEAD (staged, unstaged, and
-// untracked, as `git status` sees them) as host-execution surfaces. Empty outside a git work tree.
-func hostSurfacesChanged(repo string) []hostsurface.Finding {
+// untracked, as `git status` sees them) as host-execution surfaces, plus the ignored paths given,
+// as new files. Empty outside a git work tree.
+func hostSurfacesChanged(repo string, ignored []string) []hostsurface.Finding {
 	out, err := gitOutputBytes(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
 	if err != nil {
 		return nil
 	}
-	var changes []gitdiff.Change
+	changes := make([]gitdiff.Change, 0, len(ignored))
+	for _, path := range ignored {
+		changes = append(changes, gitdiff.Change{Status: "A", Path: path})
+	}
 	for _, entry := range strings.Split(string(out), "\x00") {
 		if len(entry) < 4 {
 			continue
@@ -651,8 +690,8 @@ func committedProjectInputs(repo string) hostsurface.Configured {
 
 // hostSurfacesToReview is hostSurfacesChanged without the files that hold exactly what Coop's own
 // scaffold ships there (scaffold.Stock), and how many of those it left out.
-func hostSurfacesToReview(repo string) (review []hostsurface.Finding, stock int) {
-	for _, finding := range hostSurfacesChanged(repo) {
+func hostSurfacesToReview(repo string, ignored []string) (review []hostsurface.Finding, stock int) {
+	for _, finding := range hostSurfacesChanged(repo, ignored) {
 		if scaffold.Stock(repo, finding.Path) {
 			stock++
 			continue

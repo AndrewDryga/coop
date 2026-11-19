@@ -234,8 +234,9 @@ Use `coop check-secrets` to look for credentials inside files. It reports each f
   a clean result. If it can't open a folder, the default scan still passes but names the folder
   in a warning, since files Git does not track there were not checked; `--include-ignored` fails.
 - It also lists changed files that can affect what runs on your machine, such as commit hooks,
-  editor or agent settings, Compose files and the Makefile. Review them before running anything.
-  This separate report never changes the exit code.
+  editor or agent settings, Compose files and the Makefile. With `--include-ignored` it also lists
+  such files that Git ignores, like `.claude/settings.local.json`. Review them before running
+  anything. This separate report never changes the exit code.
 
 To make this check ignore a finding you've reviewed, add the printed entry to `.coopsecretsignore`
 at the project root and explain why. The entry identifies that exact finding without storing the
