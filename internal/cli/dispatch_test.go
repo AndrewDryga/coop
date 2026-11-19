@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func TestNearestCommand(t *testing.T) {
@@ -78,5 +80,36 @@ func TestUnknownCommandErr(t *testing.T) {
 	// A help request keeps its intent: the correction is itself a help command.
 	if s := unknownCommandErr([]string{"doctro"}, true).Error(); !strings.Contains(s, "Did you mean: coop help doctor") {
 		t.Errorf("a help request should be corrected to a help command:\n%s", s)
+	}
+}
+
+// A word that starts with "-" where a command or a fork's name belongs is an option, so it is
+// refused as an unknown option with exit 2. A real unknown command and an invalid fork name keep
+// their own refusals.
+func TestAnOptionInACommandOrForkNamePositionIsAnUnknownOption(t *testing.T) {
+	a := &app{cfg: &config.Config{RepoOverride: t.TempDir(), ConfigDir: t.TempDir()}}
+	for _, tc := range []struct {
+		run  func() (int, error)
+		want string
+	}{
+		{func() (int, error) { return a.dispatch([]string{"--bogus"}) },
+			"Unknown option \"--bogus\" for \"coop\" — See available options: coop help"},
+		{func() (int, error) { return a.dispatch([]string{"--bogus=secret"}) },
+			"Unknown option \"--bogus\" for \"coop\""},
+		{func() (int, error) { return a.dispatch([]string{"--verison"}) }, "Did you mean: coop --version"},
+		{func() (int, error) { return a.cmdFork([]string{"--bogus"}) },
+			"Unknown option \"--bogus\" for \"coop fork\" — See available options: coop help fork"},
+		{func() (int, error) { return a.cmdFork([]string{"-x", "acp"}) },
+			"Unknown option \"-x\" for \"coop fork\""},
+		{func() (int, error) { return a.dispatch([]string{"bogus"}) }, `Unknown command "coop bogus"`},
+		{func() (int, error) { return a.cmdFork([]string{"a..b", "claude"}) }, `Invalid fork name "a..b" for "coop fork"`},
+	} {
+		code, err := tc.run()
+		if code != 2 || err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+			t.Errorf("got (%d, %v), want exit 2 with %q", code, err, tc.want)
+		}
+	}
+	if got := ui.HelpCommand("coop"); got != "coop help" {
+		t.Errorf("HelpCommand(coop) = %q, want the top-level page", got)
 	}
 }

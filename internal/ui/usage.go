@@ -110,9 +110,12 @@ func (e *UsageError) Render(p Palette) string {
 func PrintUsageError(e *UsageError) { emit(e.Render(For(os.Stderr))) }
 
 // HelpCommand is the focused help route for a command path — "coop models" → "coop help models",
-// "coop tasks add" → "coop help tasks add". Every family derives its Help: row from its own
-// command instead of carrying a second registry of help routes.
+// "coop tasks add" → "coop help tasks add", and bare "coop" → "coop help". Every family derives its
+// Help: row from its own command instead of carrying a second registry of help routes.
 func HelpCommand(command string) string {
+	if command == "coop" {
+		return "coop help"
+	}
 	return "coop help " + strings.TrimPrefix(command, "coop ")
 }
 

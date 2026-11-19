@@ -187,6 +187,10 @@ func (a *app) cmdFork(args []string) (int, error) {
 	case "stop":
 		return fc.ForkStop(args[1:])
 	default:
+		// An option where the fork's name belongs is an unknown option, not an invalid name.
+		if strings.HasPrefix(args[0], "-") {
+			return 2, ui.UnknownOptionAmong(args[0], "coop fork", nil)
+		}
 		// `coop fork <name> acp [<target>]` — front the fork as an ACP agent (for Zed).
 		if len(args) >= 2 && args[1] == "acp" {
 			return a.forkACP(args[0], args[2:])

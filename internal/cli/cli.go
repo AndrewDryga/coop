@@ -508,6 +508,11 @@ func (a *app) dispatch(argv []string) (int, error) {
 	case "__complete": // hidden: dynamic completion candidates for the shell scripts
 		return a.cmdComplete(rest)
 	default:
+		// An option where the command belongs is refused as an option: "Unknown command" would
+		// send the reader looking for a command they never typed.
+		if strings.HasPrefix(sub, "-") {
+			return 2, ui.UnknownOptionAmong(sub, "coop", []string{"--help", "--version"})
+		}
 		if isTargetHead(sub) { // coop claude|claude:opus|… — run the agent target
 			return a.launchAgent(sub, rest)
 		}
