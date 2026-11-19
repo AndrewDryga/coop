@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 15.0.0
 
 - **Fixes from a manual test round of every major feature (2026-11-19).** Three testers ran the
   real CLI against real Docker and real agents; these are the defects they found.

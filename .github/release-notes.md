@@ -2,18 +2,16 @@
      release skill rewrites this file in each finalize commit, and the release workflow publishes
      its section as is (tools/releasenotes). CHANGELOG.md keeps every change. -->
 
-## 14.0.0
+## 15.0.0
 
-Coop 14.0.0 is the result of a review of the whole project: several hundred fixes across boxes, the loop, tasks, forks, filtered networking and the remote session service, plus a set of stricter defaults.
+Coop 15.0.0 closes three ways a fork merge could land something its review never saw, lets a reviewed fork that conflicts with your branch be merged, and carries the fixes from a manual test of every major feature on real Docker and real agents.
 
-- Security: a session's output schema can no longer make a worker read local files, the Codex credential broker no longer forwards the client's analytics uploads with your token, and with eBPF protection a box can no longer rename a file onto a secret name such as `.env`.
-- Text attachments no longer show up as untracked files in a writable session (a 13.2.1 regression).
-- Stricter behavior you may notice: `coop build` refuses while `COOP_IMAGE` is set; `project.yaml` can only lower the process cap; an agent's `coop tasks claim` over a person's claim needs `--force`; Grok and Gemini launches refuse an MCP header that names an unset variable; Gemini no longer reads the pre-v11 profile settings file; a few commands changed exit codes. MIGRATING.md lists each one with what to do.
-- `coop update` verifies the release signature with cosign when it is installed, and the website and installer deploy only after CI passes.
-- The loop, forks and editor sessions fix many wrong messages, stuck states and slow paths: fork merge checks read Git in a few runs instead of thousands, signing no longer checks files out, and a fork made from a preset reopens with it, in the editor too.
-- The session API answers failed prepares and checkpoint refusals with real error codes, pages through every session, and records why an agent stopped.
+- Upgrade warning for session workers: the session store moves to schema 27 on first start and an older build then refuses it, so a worker cannot be rolled back. Copy the stopped state folder first; MIGRATING.md has the steps.
+- Fork merges land only what was reviewed: a fork with a merge commit or a shallow repository is refused, and when your branch already has one of the fork's commits Coop checks that the rebase lands exactly the reviewed change.
+- A reviewed fork that conflicts with your branch is no longer a dead end: `coop fork <name> --loop` has its agent rebase and resolve, the result is reviewed again, and `coop fork merge` lands it.
+- Services: a box's command starts only after its service ports accept connections (about one start in three used to be refused), `coop down` works when the Compose file is broken or gone, and a failed service is named with its output. `COOP_SERVICE_<NAME>_URL` now names a service's first port; a `coop.service.port` label picks another.
+- Session service: a publish interrupted by a worker stop resumes after restart, cancelling a turn ends it cancelled, a clean stop leaves a running turn interrupted, and several errors now name the real problem. Controllers that match on error answers should read the changelog.
+- Filtered Codex runs no longer end with a blocked-traffic warning for `oaiusercontent.com`, and `coop codex -- plugin list` works in a box.
+- `coop usage` counts history in a provider home that is a link, and many messages across the command line now say what went wrong and what to run next.
 
-Coop is now built with Go 1.27.4. The next launch rebuilds the helper images; filtered projects may ask you to run `coop net setup` once, and tools that save a new secret file by temp-file-then-rename inside a box must write it in a hidden folder.
-
-[Full changelog](https://github.com/AndrewDryga/coop/compare/v13.2.1...v14.0.0)
-
+[Full changelog](https://github.com/AndrewDryga/coop/compare/v14.0.0...v15.0.0)

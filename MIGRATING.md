@@ -3,7 +3,7 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
-## Unreleased: session store schema 27 has no way back
+## v15.0.0: session store schema 27 has no way back
 
 The worker's session store moves from schema 26 to 27 the first time this build opens it. Schema
 27 only adds two indexes and drops a duplicate one; no session data changes. Once converted, a
@@ -15,6 +15,24 @@ rolled back to it.
 2. Copy the stopped state folder aside. That copy and the old build are your only way back.
 3. Start the new build. On a store with many events, building the indexes makes the first start
    take longer.
+
+## v15.0.0: changed session API answers, service variables and fork merges
+
+- **Session API.** Controllers that match on error answers need a look; CHANGELOG.md lists each
+  one under 15.0.0. In short: a replayed refused publish returns its saved error instead of `202`;
+  a bad workspace restore answers `400` or `415` instead of `413`; a bad discard answers
+  `400 invalid_request` or `409 discard_plan_stale` instead of `409 operation_uncertain`; a turn
+  on a spent budget answers `409 budget_exhausted`; a worker that cannot read its store answers
+  `500`; and a controller's 403 on a source grant answers `409 invalid_session_state` instead of
+  a retryable 503. A job whose network rules name a provider is refused when it is created: drop
+  the provider rule.
+- **Service variables.** `COOP_SERVICE_<NAME>_URL` names a service's first `expose` port, not the
+  last. If your app relied on the last one, add the `coop.service.port` label to that service in
+  `.agent/compose.yml`. A Compose file where two services map to the same variable name is now
+  refused: rename one.
+- **Fork merges.** A fork whose commits include a merge commit, or whose repository is shallow,
+  is refused at review and at merge. Make its commits a straight line with the `git rebase` the
+  refusal prints, then run the fork's loop so the result is reviewed.
 
 ## v14.0.0: stricter defaults, changed exit codes and session API answers
 
