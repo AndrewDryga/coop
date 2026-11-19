@@ -197,6 +197,15 @@ func TestHistoricalCheckNamesTheRunAndStops(t *testing.T) {
 	if !strings.Contains(b.String(), "the withheld remote address:443 was blocked") {
 		t.Errorf("withheld remote address view:\n%s", b.String())
 	}
+	// An IPv6 address and its port read in brackets, so the port is never taken for part of it.
+	b.Reset()
+	writeNetHistoricalCheck(&b, ui.Palette{}, networkstate.PolicyExplanation{RunID: netTestRun, Peer: "2606:4700::1", Protocol: "tcp", Port: 22, Reason: "unapproved_name", Message: "x"})
+	if !strings.Contains(b.String(), "[2606:4700::1]:22 over TCP was blocked") {
+		t.Errorf("IPv6 view:\n%s", b.String())
+	}
+	if got := netCurrentCheck(box.NetworkAccess{Mode: egress.None}, "2606:4700::1", 22, nil).Verdict; !strings.HasPrefix(got, "[2606:4700::1]:22 is blocked") {
+		t.Errorf("current IPv6 check = %q", got)
+	}
 }
 
 func TestNetQueryHostUsesNetworkAccessWording(t *testing.T) {

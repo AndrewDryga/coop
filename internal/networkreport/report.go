@@ -175,7 +175,7 @@ type DestinationGroup struct {
 func (g DestinationGroup) Label() string {
 	label := g.Name
 	if g.Port != "" {
-		label += ":" + g.Port
+		label = HostPort(label, g.Port)
 	}
 	label += " · " + TransportLabel(g.Transport)
 	if g.Service != "" {
@@ -359,7 +359,7 @@ func RuleText(rule egress.Rule) string {
 		for _, port := range rule.Ports {
 			ports = append(ports, strconv.Itoa(port))
 		}
-		target += ":" + strings.Join(ports, ",")
+		target = HostPort(target, strings.Join(ports, ","))
 	}
 	if rule.Protocol != "" {
 		target += " · " + TransportLabel(rule.Protocol)
@@ -619,7 +619,7 @@ func RefusalGroups(denials []networkview.Denial) []RefusalGroup {
 func RefusalLabel(denial networkview.Denial) string {
 	destination := Destination(denial.Name, denial.Peer, denial.DestinationID)
 	if denial.Name != "" && denial.Port != nil {
-		destination += ":" + strconv.Itoa(*denial.Port)
+		destination = HostPort(destination, strconv.Itoa(*denial.Port))
 	}
 	label := destination + " · " + refusalKind(denial.Kind)
 	if denial.Service != "" {
@@ -1298,6 +1298,15 @@ func ByteCount(value *networkview.Count) string {
 		return "UNKNOWN"
 	}
 	return ui.Bytes(uint64(*value))
+}
+
+// HostPort joins a host and its port for display. An IPv6 address goes in brackets, the standard
+// form: 2606:4700::1:22 would read as a longer address.
+func HostPort(host, port string) string {
+	if addr, err := netip.ParseAddr(host); err == nil && addr.Is6() {
+		return "[" + host + "]:" + port
+	}
+	return host + ":" + port
 }
 
 // Destination names a destination the way the evidence knows it: the name,

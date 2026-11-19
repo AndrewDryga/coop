@@ -6,7 +6,29 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkview"
 )
+
+// An IPv6 address joined to its port reads in brackets wherever a report shows one, so
+// 2606:4700::1 port 22 never reads as the longer address 2606:4700::1:22. IPv4 and names stay bare.
+func TestAnIPv6AddressWithAPortReadsInBrackets(t *testing.T) {
+	port := 22
+	for _, tc := range []struct{ got, want string }{
+		{HostPort("2606:4700::1", "22"), "[2606:4700::1]:22"},
+		{HostPort("1.1.1.1", "80"), "1.1.1.1:80"},
+		{HostPort("example.com", "443"), "example.com:443"},
+		{destinationKey(networkview.Connection{Peer: "[2606:4700::1]:22", Transport: "tcp"}).Label(), "[2606:4700::1]:22 · TCP"},
+		{RuleText(egress.Rule{To: egress.Destination{CIDR: "2606:4700::1/128"}, Protocol: "tcp", Ports: []int{22, 2222}}), "[2606:4700::1]:22,2222 · TCP"},
+		{RuleText(egress.Rule{To: egress.Destination{IP: "2606:4700::1"}, Protocol: "tcp", Ports: []int{22}}), "[2606:4700::1]:22 · TCP"},
+		{RefusalLabel(networkview.Denial{Kind: "tls_denied", Name: "2606:4700::1", Port: &port, Reason: "unapproved_name"}), "[2606:4700::1]:22 · TLS"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("got %q, want %q", tc.got, tc.want)
+		}
+	}
+}
 
 // reasonWrite captures the code from a source line that writes a reason into a record a report can
 // print, including a Failure, which safeReason turns into a denial's reason.

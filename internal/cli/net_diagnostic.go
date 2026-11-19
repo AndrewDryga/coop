@@ -380,7 +380,7 @@ type netCheckAnswer struct {
 }
 
 func netCurrentCheck(access box.NetworkAccess, host string, port int, bundles map[string]egress.Bundle) netCheckAnswer {
-	target := host + ":" + strconv.Itoa(port)
+	target := networkreport.HostPort(host, strconv.Itoa(port))
 	if access.Pending != nil {
 		// Answering against a policy that cannot launch would be a fiction.
 		if access.Refused != nil {
@@ -464,7 +464,7 @@ func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.Poli
 	transport := ""
 	switch {
 	case result.Port != 0:
-		destination += ":" + strconv.Itoa(result.Port)
+		destination = networkreport.HostPort(destination, strconv.Itoa(result.Port))
 		if result.Protocol != "tls" {
 			transport = " over " + strings.ToUpper(result.Protocol)
 		}
@@ -640,7 +640,7 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	complete := !page.Incomplete && page.Unreadable == 0 && !lossy
 	asked := opts.query
 	if opts.port != 0 {
-		asked += ":" + strconv.Itoa(opts.port)
+		asked = networkreport.HostPort(asked, strconv.Itoa(opts.port))
 	}
 	return 1, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetNoBlock(b, p, asked, scope, complete) })
 }
@@ -711,7 +711,7 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 	first := explanation.Causes[0].Explanation.Event
 	title := explanation.Host
 	if port := netTitlePort(explanation.Causes); port != 0 && first.Name != "" {
-		title += ":" + strconv.Itoa(port)
+		title = networkreport.HostPort(title, strconv.Itoa(port))
 	}
 	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title+" "+netBlockedVerb(first.Reason))))
 	detail := "Run " + networkreport.ShortID(explanation.RunID) + " · " + networkreport.WhenAt(now, first.At)
