@@ -155,6 +155,14 @@ func TestSessionHTTPRestoreChecksBinaryMutationPreflight(t *testing.T) {
 	if got := sessionHTTPTestRequest(t, handler, http.MethodGet, bundlePath, "", "", ""); got.Code != http.StatusInternalServerError {
 		t.Fatalf("bundle download with the store closed = %d %s; want 500", got.Code, got.Body.String())
 	}
+	// The same closed store used to make a submit report a workspace restore that did not exist.
+	_, err = service.SubmitTurn(ctx, "submit-store-closed", session.SubmitTurnRequest{SessionID: restored.ID, ExpectedRevision: restored.Revision, Prompt: "x"})
+	if err == nil || session.CodeOf(err) == session.CodeInvalidSessionState || strings.Contains(err.Error(), "restore is in progress") {
+		t.Fatalf("submit with the store closed = %v; want the store's error", err)
+	}
+	if code, status, _ := sessionHTTPError(err); status != http.StatusInternalServerError || code != "internal_error" {
+		t.Fatalf("submit with the store closed answers %d %s; want 500", status, code)
+	}
 }
 
 // A completed production task spent every retry on a credential refusal hidden

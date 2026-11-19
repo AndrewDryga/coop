@@ -2308,7 +2308,10 @@ func (s *Service) ListSessions(ctx context.Context, after string, limit int) ([]
 // runtime lock belongs to whoever runs, reviews, or cleans up the workspace — a submit made while a
 // turn is executing must queue behind it, never wait on the line for it to finish.
 func (s *Service) SubmitTurn(ctx context.Context, key string, req session.SubmitTurnRequest) (session.Turn, error) {
-	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, req.SessionID, ""); err != nil || pending {
+	if pending, err := s.store.HasPendingWorkspaceRestore(ctx, req.SessionID, ""); err != nil {
+		// A store that could not answer is not a restore in progress.
+		return session.Turn{}, fmt.Errorf("check for a pending workspace restore: %w", err)
+	} else if pending {
 		return session.Turn{}, &session.Error{Code: session.CodeInvalidSessionState,
 			Detail: "a workspace restore is in progress on this session; retry once it completes"}
 	}

@@ -12,7 +12,7 @@
   two services with `expose` ports map to the same variable, such as `auth-db` and `auth.db`. The
   box used to get one service's URL under both names.
 
-- **Changed session API answers: five errors now name the real problem.** Controllers that match
+- **Changed session API answers: six errors now name the real problem.** Controllers that match
   on the old answers need a look.
   - Retrying a publish that the worker had refused returns the saved error again. It used to answer
     `202` with a failed operation, which the worker connector reported as success.
@@ -25,6 +25,8 @@
     worker that can't read its store answers `500` instead of `404`.
   - Submitting a turn to a session that has used its whole budget answers `409 budget_exhausted`.
     It used to answer `409 invalid_session_state`, the same as a discarded session.
+  - A turn submit that fails because the worker can't read its store answers `500`. It used to
+    answer `409 invalid_session_state` and report a workspace restore that did not exist.
 
 - **`coop usage` counts history in a provider home that is a link.** If your `~/.claude`,
   `~/.codex`, `~/.gemini` or `~/.grok` is a link, as dotfiles setups make it, its history was
