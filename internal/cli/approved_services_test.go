@@ -33,6 +33,7 @@ type composeShim struct {
 	downSays   string
 	volExit    int
 	running    []string // the container IDs a running-container label query returns
+	log        string   // when set, every invocation's arguments are appended here, one line each
 }
 
 func (s composeShim) build(t *testing.T) runtime.Runtime {
@@ -60,7 +61,11 @@ func (s composeShim) build(t *testing.T) runtime.Runtime {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "docker")
 	var script strings.Builder
-	script.WriteString("#!/bin/sh\ncase \"$*\" in\n")
+	script.WriteString("#!/bin/sh\n")
+	if s.log != "" {
+		script.WriteString("printf '%s\\n' \"$*\" >> " + strconv.Quote(s.log) + "\n")
+	}
+	script.WriteString("case \"$*\" in\n")
 	script.WriteString("  info) exit 0 ;;\n")
 	script.WriteString("  \"ps -q\"*)\n")
 	for _, id := range s.running {
@@ -405,8 +410,8 @@ func TestApprovedServiceStop(t *testing.T) {
 		assertApprovedOutput(t, "29c-compose-path-missing", out)
 	})
 
-	// A project that never added services has nothing to stop, and saying so is a success. With
-	// services still running from a file that is gone, the file is the only way to stop them.
+	// A project that never added services has nothing to stop, and saying so is a success. Services
+	// left from a file that is gone are stopped by their label (TestDownWithoutAValidComposeFile).
 	t.Run("29l-no-services", func(t *testing.T) {
 		for _, args := range [][]string{nil, {"--delete-volumes", "--yes"}} {
 			a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}, rt: composeShim{}.build(t), rtSet: true}
@@ -417,17 +422,6 @@ func TestApprovedServiceStop(t *testing.T) {
 				t.Fatalf("coop down %v with no services = (%d, %v):\n%s", args, code, err, out)
 			}
 			assertApprovedOutput(t, "29l-no-services", out)
-		}
-		for name, shim := range map[string]composeShim{
-			"a running service": {running: []string{"0f1e2d3c4b5a"}},
-			"a stored volume":   {volumes: []string{"atlas_pgdata"}},
-		} {
-			a := &app{cfg: &config.Config{RepoOverride: t.TempDir()}, rt: shim.build(t), rtSet: true}
-			var code int
-			out := captureTerminal(t, func() { code, _ = a.cmdDown([]string{"--delete-volumes", "--yes"}) })
-			if code != 1 || !strings.Contains(out, "Restore the Compose file, then run coop down again.") {
-				t.Errorf("%s left without its Compose file: exit %d, want the restore refusal:\n%s", name, code, out)
-			}
 		}
 	})
 

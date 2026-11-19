@@ -484,37 +484,30 @@ func (a *app) cmdDown(args []string) (int, error) {
 	file := box.ComposeFileAt(repo, p.ComposeRel())
 	if file == "" {
 		// A project that never added services has no default Compose file, and stopping nothing
-		// succeeds. A box.compose path that is missing, or services still running from a file that
-		// is gone, need the file back: only it can stop them.
-		if p.Box.Compose == "" && !a.servicesLeft(repo, deleteVolumes) {
+		// succeeds. Services still running from a file that is gone stop by their project label.
+		// A box.compose path that is missing with nothing left is a broken setting.
+		left := a.servicesLeft(repo, deleteVolumes)
+		switch {
+		case !left && p.Box.Compose == "":
 			ui.Note("No services to stop: %s does not exist.", p.ComposeRel())
 			return 0, nil
+		case !left:
+			return 1, reported("Could not stop services",
+				fmt.Sprintf("%s does not exist.", p.ComposeRel()),
+				"Restore the Compose file, then run coop down again.")
 		}
-		return 1, reported("Could not stop services",
-			fmt.Sprintf("%s does not exist.", p.ComposeRel()),
-			"Restore the Compose file, then run coop down again.")
+		ui.Warn("%s does not exist.", p.ComposeRel())
+		return a.downByLabel(repo, deleteVolumes, yes)
 	}
 	rel, _ := filepath.Rel(repo, file)
-	var targets []box.ServiceVolume
-	if deleteVolumes {
-		// Every target is resolved and shown BEFORE anything is removed: the person confirming a
-		// permanent deletion is confirming this list, so an unanswerable runtime stops the command
-		// rather than deleting against a guess.
-		targets, err = box.ServiceVolumes(a.rt, repo, os.Stderr)
-		if err != nil {
-			return 1, reported("Could not determine which service volumes would be deleted",
-				fmt.Sprintf("%s did not return the project's volume information.", runtimeTitle(a.rt.Name)),
-				fmt.Sprintf("Check %s, then run coop down --delete-volumes again.", runtimeTitle(a.rt.Name)))
-		}
-		if code, err := confirmVolumeDeletion(targets, yes); err != nil {
-			return code, err
-		}
+	targets, code, err := a.volumeTargets(repo, deleteVolumes, yes)
+	if err != nil {
+		return code, err
 	}
 	ui.Note("Stopping services from %s", rel)
 	ui.Note("")
 	out, errOut := &seenWriter{w: os.Stdout}, &seenWriter{w: os.Stderr}
-	deleting := deleteVolumes && len(targets) > 0
-	if deleting {
+	if deleteVolumes && len(targets) > 0 {
 		err = box.DownServicesFileVolumes(a.rt, repo, file, targets, out, errOut, box.ConfigExposureRoots(a.cfg)...)
 	} else {
 		err = box.DownServicesFile(a.rt, repo, file, false, out, errOut, box.ConfigExposureRoots(a.cfg)...)
@@ -522,10 +515,62 @@ func (a *app) cmdDown(args []string) (int, error) {
 	if out.seen || errOut.seen {
 		ui.Note("")
 	}
-	var refused *box.ComposeRefused
+	// Validation protects starting services, not stopping them: a file an agent broke still
+	// leaves the project's containers to stop, by the label coop gave them, running nothing from it.
+	if refused := (*box.ComposeRefused)(nil); errors.As(err, &refused) {
+		ui.Warn("Could not use %s: %s", rel, sentence(ui.SafeInline(firstLine(refused.Err))))
+		return a.stopByLabel(repo, deleteVolumes, targets)
+	}
+	return a.downResult(err, deleteVolumes, targets)
+}
+
+// volumeTargets resolves and shows every volume --delete-volumes would remove BEFORE anything is
+// removed: the person confirming a permanent deletion is confirming this list, so an unanswerable
+// runtime stops the command rather than deleting against a guess. A non-nil error means stop.
+func (a *app) volumeTargets(repo string, deleteVolumes, yes bool) ([]box.ServiceVolume, int, error) {
+	if !deleteVolumes {
+		return nil, 0, nil
+	}
+	targets, err := box.ServiceVolumes(a.rt, repo, os.Stderr)
+	if err != nil {
+		return nil, 1, reported("Could not determine which service volumes would be deleted",
+			fmt.Sprintf("%s did not return the project's volume information.", runtimeTitle(a.rt.Name)),
+			fmt.Sprintf("Check %s, then run coop down --delete-volumes again.", runtimeTitle(a.rt.Name)))
+	}
+	if code, err := confirmVolumeDeletion(targets, yes); err != nil {
+		return nil, code, err
+	}
+	return targets, 0, nil
+}
+
+// downByLabel stops a development stack whose Compose file is gone, after the same volume review.
+func (a *app) downByLabel(repo string, deleteVolumes, yes bool) (int, error) {
+	targets, code, err := a.volumeTargets(repo, deleteVolumes, yes)
+	if err != nil {
+		return code, err
+	}
+	return a.stopByLabel(repo, deleteVolumes, targets)
+}
+
+// stopByLabel removes the development stack by the Compose project label coop derives from the
+// workspace path, never by the Compose file, then exactly the reviewed volumes.
+func (a *app) stopByLabel(repo string, deleteVolumes bool, targets []box.ServiceVolume) (int, error) {
+	ui.Note("Stopping this project's service containers by their Compose project label")
+	ui.Note("")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, errOut := &seenWriter{w: os.Stdout}, &seenWriter{w: os.Stderr}
+	err := box.StopDevelopmentServices(ctx, a.rt, repo, targets, out, errOut)
+	if out.seen || errOut.seen {
+		ui.Note("")
+	}
+	return a.downResult(err, deleteVolumes, targets)
+}
+
+// downResult reports how a stop ended, the same way whichever path did it.
+func (a *app) downResult(err error, deleteVolumes bool, targets []box.ServiceVolume) (int, error) {
+	deleting := deleteVolumes && len(targets) > 0
 	switch {
-	case err != nil && errors.As(err, &refused):
-		return 1, composeRefusal("Could not stop services from "+rel, rel, refused.Err, "coop down")
 	case err != nil && deleting:
 		return 1, reported("Could not finish stopping services and deleting their data",
 			sentence(firstLine(err)),

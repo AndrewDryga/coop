@@ -2,8 +2,8 @@
 name: services-teardown-needs-the-workspace
 description: sibling-service teardown is driven by the workspace's own compose file, so stopping services after deleting the workspace is a silent no-op
 subsystem: box/services
-sources: [internal/box/run.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/box/services.go, internal/box/repo.go, internal/box/controller_runtime.go, internal/forkctl/rm.go, internal/forkctl/merge.go, internal/cli/fork_cmd.go, internal/forkspace/create.go]
-updated: 2026-11-17
+sources: [internal/box/run.go, internal/sessionsvc/workspace.go, internal/sessionsvc/service.go, internal/box/services.go, internal/box/repo.go, internal/box/controller_runtime.go, internal/forkctl/rm.go, internal/forkctl/merge.go, internal/cli/fork_cmd.go, internal/forkspace/create.go, internal/cli/services_cmd.go]
+updated: 2026-11-19
 ---
 Sibling services are brought up per box (`box.Run` → `startServicesFileContext`) and are deliberately
 **not** brought down when a box exits: the stack is idempotent and reused across iterations, so a
@@ -54,6 +54,13 @@ Two related seams behave correctly already and are worth copying rather than dup
 
 `runtime.Runtime` is a struct, not an interface: guard with `rt.Name != ""`, never `rt != nil`.
 
+`coop down` itself prefers the file but no longer depends on it: when the file is gone with
+containers or volumes still labelled for the project, or when `DownServicesFile` returns
+`ComposeRefused` (validation, an exposed temp dir), it removes the development stack with
+`StopDevelopmentServices` — by the derived `com.docker.compose.project` label alone, the set
+`compose down -p` removes — then exactly the reviewed `--delete-volumes` targets. No Compose command
+runs on that path. A configured `box.compose` path that is missing with nothing left stays an error.
+
 Ordinary `coop down` also removes empty Compose-owned networks by exact project label after
 successful Compose teardown. The original file does not declare the generated filtered-service
 network, so Compose alone leaves it behind and repeated workspaces consume subnet allocations.
@@ -62,6 +69,7 @@ inspection and non-forced removal honor that same endpoint/daemon. In-use networ
 data volumes remain; inspection/removal failures stay errors rather than false stop success.
 
 ## Changelog
+- 2026-11-19 — `coop down` stops the development stack by its project label when the Compose file is missing or refused; it used to ask for the file back while the containers kept running.
 - 2026-11-17 — corrected the destroy paths: `DestroyFork` serves `fork rm` and `fork --fresh` and
   keeps the fork when teardown fails without `--force`; merge's `destroyLandedFork` runs
   `stopForkServices` and calls `forkspace.Destroy` itself. The code block follows `DownServices`'

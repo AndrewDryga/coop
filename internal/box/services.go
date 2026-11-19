@@ -494,6 +494,28 @@ func DownServicesFileVolumes(rt runtime.Runtime, workspace, file string, volumes
 	if err := DownServicesFile(rt, workspace, file, false, stdout, stderr, exposedRoots...); err != nil {
 		return err
 	}
+	return removeServiceVolumes(rt, volumes, stdout, stderr)
+}
+
+// StopDevelopmentServices removes the workspace's development stack by the Compose project label
+// coop derives from the workspace path, the same set `compose down -p` removes, and then exactly
+// the volumes the caller already reviewed. coop down uses it when the Compose file is gone or
+// fails validation: an agent can break or delete that file, and stopping must not depend on it,
+// so nothing from the file is read or run here.
+func StopDevelopmentServices(ctx context.Context, rt runtime.Runtime, workspace string, volumes []ServiceVolume, stdout, stderr io.Writer) error {
+	project := ComposeProject(workspace)
+	if _, err := rt.RemoveByLabels(ctx, map[string]string{composeProjectLabel: project}); err != nil {
+		return fmt.Errorf("remove the project's service containers: %w", err)
+	}
+	_, networkErr := RemoveProjectNetworks(ctx, rt, project)
+	_, filesystemErr := RecoverFilesystemAdmissions(ctx, rt, workspace)
+	if err := errors.Join(networkErr, filesystemErr); err != nil {
+		return err
+	}
+	return removeServiceVolumes(rt, volumes, stdout, stderr)
+}
+
+func removeServiceVolumes(rt runtime.Runtime, volumes []ServiceVolume, stdout, stderr io.Writer) error {
 	if len(volumes) == 0 {
 		return nil
 	}
@@ -566,8 +588,8 @@ func ServiceVolumes(rt runtime.Runtime, workspace string, stderr io.Writer) ([]S
 }
 
 // DevelopmentServicesRunning reports whether a container of the workspace's development stack is
-// running, found by its Compose project label rather than its file. Only that file can stop the
-// stack, so coop down says there is nothing to stop only when this is false.
+// running, found by its Compose project label rather than its file, so coop down can tell a
+// project that never started services from one whose Compose file went missing.
 func DevelopmentServicesRunning(ctx context.Context, rt runtime.Runtime, workspace string) (bool, error) {
 	ids, err := rt.RunningContainerIDsByLabel(ctx, composeProjectLabel, ComposeProjectFor(workspace, ""))
 	return len(ids) > 0, err

@@ -508,7 +508,9 @@ from the host is never deleted.
 
 The next `coop up` or box launch applies changes to the Compose file, including stopping services
 you removed, and `coop down` also stops those services. Each workspace gets a Compose project name
-derived from its path, so repositories with the same folder name stay separate.
+derived from its path, so repositories with the same folder name stay separate. If the Compose file
+was deleted or no longer passes co:op's checks, `coop down` says so and removes the project's
+containers by that name instead. It runs nothing from the file.
 
 Agents can change data in services they can reach, so use disposable development databases.
 

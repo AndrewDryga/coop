@@ -1660,7 +1660,8 @@ Guide:         https://coop.dryga.com/box.html#project-services`,
 Usage: coop down [--delete-volumes] [--yes]
 
   Stops and removes this project's Compose containers and networks.
-  Uses .agent/compose.yml, or the configured Compose path.
+  Uses .agent/compose.yml, or the configured Compose path. When that file
+  is missing or fails validation, stops the containers by their project label.
 
 OPTIONS
   --delete-volumes  also permanently delete service volumes and their data
