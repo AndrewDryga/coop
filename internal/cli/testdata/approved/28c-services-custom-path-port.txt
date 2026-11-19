@@ -4,4 +4,4 @@ Starting services from infra/dev-compose.yml
 [Compose output]
 
 ✓ Services ready: db, web
-    http://localhost:43517
+    http://localhost:43517 → web port 8080

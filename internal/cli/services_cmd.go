@@ -126,9 +126,10 @@ func (a *app) cmdUp(args []string) (int, error) {
 	}
 	ui.OK("Services ready: %s", strings.Join(started.Names, ", "))
 	// Only an actually published port earns a URL: a db or cache the box reaches by name has no
-	// address a browser could use, and inventing one would send the reader nowhere.
+	// address a browser could use, and inventing one would send the reader nowhere. Each URL names
+	// its service and container port: two services of one scheme would otherwise print look-alikes.
 	for _, port := range started.Ports {
-		ui.Note("    %s://localhost:%d", port.Scheme, port.HostPort)
+		ui.Note("    %s://localhost:%d → %s port %d", port.Scheme, port.HostPort, ui.SafeInline(port.Service), port.ContainerPort)
 	}
 	return 0, nil
 }
