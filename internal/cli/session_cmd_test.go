@@ -193,8 +193,8 @@ func TestSessionQuiescenceMissingStoreFailsWithoutCreatingState(t *testing.T) {
 	// The block names the missing file, never the system call that failed on it.
 	want := "\n✗ Could not read session work\n\n" +
 		"      There is no session.sqlite in " + root + ".\n" +
-		"      This command reads the running session service's database, WAL and index files.\n\n" +
-		"  Check the --state path, and that the session service is running.\n"
+		"      This command reads the session database, with a running service's WAL and index files.\n\n" +
+		"  Check the --state path.\n"
 	if got := usageBlock(t, err); got != want {
 		t.Errorf("missing store block:\n%s\nwant\n%s", got, want)
 	}

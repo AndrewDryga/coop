@@ -64,6 +64,43 @@ func TestQuiescenceReadsEveryTurnFromLiveWALWithoutWriting(t *testing.T) {
 	}
 }
 
+// SQLite removes the WAL and its index when the service closes the store cleanly. Quiescence then
+// failed with "There is no session.sqlite-wal", though queued turns survive a restart and "is work
+// left in this stopped worker?" is a fair question.
+func TestQuiescenceReadsACleanlyStoppedStore(t *testing.T) {
+	ctx := context.Background()
+	for _, queued := range []bool{false, true} {
+		root := t.TempDir()
+		store := openTestStore(t, root)
+		sess, err := store.CreateSession(ctx, "stopped", CreateSessionRequest{JobDocument: testJobDocument, JobDigest: testJobDigest, Target: "codex:model"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if queued {
+			if _, err := store.SubmitTurn(ctx, "stopped-turn", SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "test"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		for _, suffix := range []string{"-wal", "-shm"} {
+			if _, err := os.Lstat(filepath.Join(root, databaseName+suffix)); !os.IsNotExist(err) {
+				t.Fatalf("a clean close left %s: %v", suffix, err)
+			}
+		}
+		got, err := readQuiescenceProcess(root)
+		if err != nil || got.Idle == queued || (queued && got.ActiveTurns != 1) {
+			t.Fatalf("stopped store with queued=%v: %+v %v", queued, got, err)
+		}
+		for _, suffix := range []string{"-wal", "-shm"} {
+			if _, err := os.Lstat(filepath.Join(root, databaseName+suffix)); !os.IsNotExist(err) {
+				t.Fatalf("inspecting a stopped store created %s: %v", suffix, err)
+			}
+		}
+	}
+}
+
 func TestQuiescenceUnavailableNeverMeansIdle(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "missing")
 	if _, err := ReadQuiescence(context.Background(), root); err == nil {
@@ -204,7 +241,9 @@ func TestQuiescenceRejectsNonregularState(t *testing.T) {
 	}
 }
 
-func TestQuiescenceRequiresLiveSidecarsInsteadOfCreatingThem(t *testing.T) {
+// A stopped store is read as it is: no sidecar is created and no byte changes. A store that has a
+// WAL but lost its index is neither live nor cleanly stopped, and is refused.
+func TestQuiescenceReadsAStoppedStoreWithoutCreatingSidecars(t *testing.T) {
 	root := t.TempDir()
 	store := openTestStore(t, root)
 	if err := store.Close(); err != nil {
@@ -214,8 +253,8 @@ func TestQuiescenceRequiresLiveSidecarsInsteadOfCreatingThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readQuiescenceProcess(root); err == nil {
-		t.Fatal("stopped store reported idle without live WAL evidence")
+	if got, err := readQuiescenceProcess(root); err != nil || !got.Idle {
+		t.Fatalf("stopped empty store = %+v %v, want idle", got, err)
 	}
 	after, err := os.ReadFile(filepath.Join(root, databaseName))
 	if err != nil || !bytes.Equal(before, after) {
@@ -225,5 +264,11 @@ func TestQuiescenceRequiresLiveSidecarsInsteadOfCreatingThem(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, databaseName+suffix)); !os.IsNotExist(err) {
 			t.Fatal("inspection created sidecar", suffix, err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(root, databaseName+"-wal"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readQuiescenceProcess(root); err == nil {
+		t.Fatal("a WAL without its index reported idle")
 	}
 }

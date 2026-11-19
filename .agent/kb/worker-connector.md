@@ -29,7 +29,8 @@ The traps the code does not make obvious:
   drains new submissions, waits for transport commands, and runs `coop sessions quiescence`
   from the candidate image with only the session state volume mounted read-only. The inspector
   reads a consistent live-WAL snapshot across every turn, operation and session marker; it never
-  migrates the old store. Stored uncertain creation and discard receipts cannot resume and remain
+  migrates the old store. A cleanly stopped store has no WAL or index, and is read immutably as it
+  is; a WAL without its index is refused. Stored uncertain creation and discard receipts cannot resume and remain
   retained; reserved/running cleanup and other uncertain operations block the restart. Zero counts concern durable work, not in-memory runtime
   cleanup: shutdown still joins the daemon normally. A separate-process test verifies that the
   inspector leaves database and WAL/index bytes unchanged while the writer stays open.
@@ -209,6 +210,7 @@ The traps the code does not make obvious:
 - 2026-11-17 — `Run` backs a poll the controller never answered off to 30 s and restores the interval on its first answer; a repeated identical poll error is reported once, then at a doubling interval up to 5 min, with a "worker poll recovered" line when it clears (connector.go `repeatReporter`, task 2026-11-17-warn-once-about-a-lasting-worker-poll-error-and).
 - 2026-11-17 — a permanently refused response upload settles the command instead of retrying forever; the spool goes on acknowledgement (task 2026-11-17-settle-a-command-whose-saved-response-the-contro).
 - 2026-11-19 — settled create origins move to `create-origins/settled/`, which polls never list; guards read both folders via `loadCreateOrigin`; the journal moves old flat records once on open (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll, owner decision 2026-11-18).
+- 2026-11-19 — `coop sessions quiescence` reads a cleanly stopped store (no -wal/-shm) with immutable=1 instead of failing (task 2026-11-19-let-coop-sessions-quiescence-read-a-cleanly-stop).
 - 2026-11-18 — uncertain create lookups back off quietly; a poll no longer reopens settled create origins it already read. Their retirement stays open: deleting a watermark needs an owner decision (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll).
 - 2026-11-17 — the hello's storage and capabilities come from `LiveReports` (`storage.go`): storage is the last report, refreshed in the background one at a time, so a slow `/v1/storage` no longer stalls the single poll goroutine; capabilities are read once the daemon answers, then kept for the connection. The event scan cursor is written only when a scan stops early (audit WC-7/WC-8; settled-origin retirement and the uncertain-origin backoff are still open).
 - 2026-11-17 — the api_request tunnel filters `GET /v1/sessions/{id}/events` through the narration projection and cuts `GET /v1/storage` to its `storage` object (audit WC-2, owner choice A).

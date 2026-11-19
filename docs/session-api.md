@@ -172,8 +172,9 @@ procedure. Don't delete the identity or journal as a routine reconnect fix.
 Before you restart or replace a worker, stop new submissions at the controller, then run
 `coop sessions quiescence` to see whether queued or running work remains:
 
-- It reads every committed turn and operation, including the running service's write-ahead log,
-  so it needs that service's existing database, WAL and index files.
+- It reads every committed turn and operation, including the running service's write-ahead log
+  and its index. A cleanly stopped service leaves neither, and the command reads its database as
+  it is, so it also tells you whether a stopped worker still has queued turns.
 - It never migrates session data. When you inspect the data from a new container image, mount the
   data read-only. That also stops SQLite from creating sidecar files if the service stops during the
   inspection.

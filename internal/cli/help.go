@@ -540,8 +540,9 @@ Usage:
 
   Before restarting a worker, drain new submissions at the controller, then
   run this to see whether queued or running work remains. It reads the
-  running service's data, including its write-ahead log, and never migrates
-  it. Zero counts still need a graceful service shutdown to finish cleanup.
+  running service's data, including its write-ahead log, or a stopped
+  service's data as it is, and never migrates it. Zero counts still need a
+  graceful service shutdown to finish cleanup.
 
 OPTIONS
   --state <path>  read this session-data directory

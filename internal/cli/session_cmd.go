@@ -211,16 +211,16 @@ func runSessionQuiescence(state string, jsonOutput bool) (int, error) {
 	return 0, nil
 }
 
-// quiescenceFailure explains a store quiescence could not read. It reads the running service's own
-// files and creates none, so a missing one is named rather than shown as the system call that failed.
+// quiescenceFailure explains a store quiescence could not read. It reads the store's own files and
+// creates none, so a missing one is named rather than shown as the system call that failed.
 func quiescenceFailure(state string, err error) error {
 	const headline = "Could not read session work"
 	var missing *os.PathError
 	if errors.As(err, &missing) && errors.Is(err, os.ErrNotExist) {
 		return ui.CommandFailed(headline,
 			"There is no "+filepath.Base(missing.Path)+" in "+ui.SafeInline(state)+".\n"+
-				"This command reads the running session service's database, WAL and index files.",
-			[2]string{"", "Check the --state path, and that the session service is running."})
+				"This command reads the session database, with a running service's WAL and index files.",
+			[2]string{"", "Check the --state path."})
 	}
 	return ui.CommandFailed(headline, sentence(sessionsvc.BoundedDetail(err.Error())))
 }

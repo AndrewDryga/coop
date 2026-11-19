@@ -23,10 +23,18 @@ type Quiescence struct {
 // lock, migration or checkpoint. readonly_shm keeps a separate process's WAL index private;
 // immutable=1 would silently ignore work accepted since the last checkpoint. A read-only
 // filesystem mount also prevents sidecar creation if the daemon stops during this read.
+// A cleanly stopped store has no -wal or -shm at all, and immutable=1 reads it completely
+// without creating them, as ReadUsageSnapshot does.
 func ReadQuiescence(ctx context.Context, root string) (Quiescence, error) {
 	var out Quiescence
 	path := filepath.Join(root, databaseName)
-	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+	query := url.Values{"mode": {"ro"}, "readonly_shm": {"1"}, "_pragma": {"busy_timeout(1000)"}}
+	sidecars := []string{"", "-wal", "-shm", "-journal"}
+	if stoppedCleanly(path) {
+		query = url.Values{"mode": {"ro"}, "immutable": {"1"}, "_pragma": {"busy_timeout(1000)"}}
+		sidecars = []string{""}
+	}
+	for _, suffix := range sidecars {
 		info, err := os.Lstat(path + suffix)
 		if suffix == "-journal" && errors.Is(err, os.ErrNotExist) {
 			continue
@@ -41,7 +49,7 @@ func ReadQuiescence(ctx context.Context, root string) (Quiescence, error) {
 			return out, errors.New("session database has an unfinished rollback journal")
 		}
 	}
-	db, err := sql.Open("sqlite", sqliteFileURI(path, url.Values{"mode": {"ro"}, "readonly_shm": {"1"}, "_pragma": {"busy_timeout(1000)"}}))
+	db, err := sql.Open("sqlite", sqliteFileURI(path, query))
 	if err != nil {
 		return out, fmt.Errorf("open session database: %w", err)
 	}
