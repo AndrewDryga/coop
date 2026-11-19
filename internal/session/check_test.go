@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -208,6 +209,21 @@ func TestCheckStoreFailsWithoutWriting(t *testing.T) {
 				t.Fatalf("a running service must be reported as ErrStoreInUse, got %v", err)
 			}
 		})
+	}
+}
+
+// SQLite words this refusal "file is not a database (26)"; next to schema versions that reach 27,
+// the bare 26 reads like the file's version.
+func TestCheckStoreNamesAFileThatIsNotADatabase(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	createStore(t, root)
+	junk := bytes.Repeat([]byte("not sqlite "), 1024)
+	if err := os.WriteFile(filepath.Join(root, databaseName), junk, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	check, err := CheckStore(root)
+	if err == nil || err.Error() != "the session database file is not a SQLite database" {
+		t.Fatalf("check = %+v, %v", check, err)
 	}
 }
 

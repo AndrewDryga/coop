@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 var (
@@ -155,6 +158,10 @@ func readSchemaVersion(path string) (int, error) {
 	defer db.Close()
 	var version, tables int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		// SQLite's own words end in its error number, "(26)", which reads like a schema version.
+		if sqliteErr := (*sqlite.Error)(nil); errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_NOTADB {
+			return 0, errors.New("the session database file is not a SQLite database")
+		}
 		return 0, fmt.Errorf("read session schema version: %w", err)
 	}
 	if version != 0 {
