@@ -4701,6 +4701,17 @@ func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T)
 // A clean stop (SIGTERM) must leave a running turn the way a crash does: the next start records it
 // interrupted. It used to be failed on the spot as if someone had cancelled it.
 func TestSessionServiceStopLeavesRunningTurnInterruptedNotCancelled(t *testing.T) {
+	t.Run("Stop", func(t *testing.T) {
+		testSessionServiceStopLeavesRunningTurnInterrupted(t, func(func()) {})
+	})
+	// `coop sessions connect` cancels the context it started the service with on SIGTERM and calls
+	// Stop only afterwards. The real binary recorded the turn as a person's cancel on this path.
+	t.Run("the caller's context ends first", func(t *testing.T) {
+		testSessionServiceStopLeavesRunningTurnInterrupted(t, func(cancelParent func()) { cancelParent() })
+	})
+}
+
+func testSessionServiceStopLeavesRunningTurnInterrupted(t *testing.T, beforeStop func(cancelParent func())) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
 	var fakeStore *session.Store
@@ -4724,7 +4735,9 @@ func TestSessionServiceStopLeavesRunningTurnInterruptedNotCancelled(t *testing.T
 		return runner
 	})
 	defer service.Stop()
-	if err := service.Start(context.Background()); err != nil {
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	if err := service.Start(parent); err != nil {
 		t.Fatal(err)
 	}
 	sess, err := service.CreateRemoteSession(context.Background(), "create-stop", service.request(t, "stop"))
@@ -4736,6 +4749,7 @@ func TestSessionServiceStopLeavesRunningTurnInterruptedNotCancelled(t *testing.T
 		t.Fatal(err)
 	}
 	<-started
+	beforeStop(cancelParent)
 	if err := service.Stop(); err != nil {
 		t.Fatal(err)
 	}

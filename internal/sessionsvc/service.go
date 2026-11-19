@@ -852,8 +852,13 @@ func (s *Service) Start(parent context.Context) error {
 		}
 	}
 	s.historicalMu.Unlock()
-	ctx, cancelCause := context.WithCancelCause(parent)
+	// The caller's context ending is the service stopping too: `coop sessions connect` cancels it on
+	// SIGTERM before it ever calls Stop. Derived plainly, that cancellation reached every turn as a
+	// bare context.Canceled and was recorded as a person's cancel, so name the cause on that path as
+	// well, and let nothing but this cancel end the service's context.
+	ctx, cancelCause := context.WithCancelCause(context.WithoutCancel(parent))
 	cancel := func() { cancelCause(errSessionServiceStopping) }
+	context.AfterFunc(parent, cancel)
 	s.mu.Lock()
 	if s.started {
 		s.starting = false
