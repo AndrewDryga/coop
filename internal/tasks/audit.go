@@ -1903,6 +1903,7 @@ type rawReachableAuditCommit struct {
 	sha                string
 	taskValues         []string
 	taskBindingInvalid bool
+	parents            int // as the raw object names them, so no graft or shallow file hides a merge
 }
 
 func rawReachableAuditCommits(repo, head string) (commits []rawReachableAuditCommit, err error) {
@@ -1997,7 +1998,7 @@ func rawReachableAuditCommitsLimit(
 		taskValues, taskBindingInvalid := auditTaskTrailersFromRaw(raw)
 		seen[current] = true
 		commits = append(commits, rawReachableAuditCommit{
-			sha: current, taskValues: taskValues, taskBindingInvalid: taskBindingInvalid,
+			sha: current, taskValues: taskValues, taskBindingInvalid: taskBindingInvalid, parents: len(parents),
 		})
 		for i := len(parents) - 1; i >= 0; i-- {
 			edges++

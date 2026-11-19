@@ -354,6 +354,23 @@ func prepareForkTaskCandidate(t *testing.T, name string) (string, string, string
 // agent leaves in each projected task folder before the host accepts the projection.
 func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommit bool, fill func(t *testing.T, dir string), ids ...string) (string, string, string, forkspace.Identity, *Control) {
 	t.Helper()
+	var commit func(t *testing.T, ws, id string)
+	if makeCommit {
+		commit = func(t *testing.T, ws, id string) {
+			if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("landed\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git(t, ws, "add", "feature.txt")
+			git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: "+id)
+		}
+	}
+	return prepareForkTaskCandidateHistory(t, name, isolated, commit, fill, ids...)
+}
+
+// prepareForkTaskCandidateHistory is prepareForkTaskCandidateMode with the fork's commits made by
+// commit, once, for the first task, before the round is reviewed; nil makes none.
+func prepareForkTaskCandidateHistory(t *testing.T, name string, isolated bool, commit func(t *testing.T, ws, id string), fill func(t *testing.T, dir string), ids ...string) (string, string, string, forkspace.Identity, *Control) {
+	t.Helper()
 	if len(ids) == 0 {
 		ids = []string{"canonical-task"}
 	}
@@ -408,12 +425,8 @@ func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommi
 			t.Fatal(err)
 		}
 		id := assignment.Task.Item.ID
-		if makeCommit && i == 0 { // one commit lands the whole candidate
-			if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("landed\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			git(t, ws, "add", "feature.txt")
-			git(t, ws, "commit", "-qm", "implement canonical task\n\nCoop-Task: "+id)
+		if commit != nil && i == 0 { // one commit lands the whole candidate
+			commit(t, ws, id)
 		}
 		projected, ok := mustCurrentTask(t, assignment.Owner.Projection, id)
 		if !ok {

@@ -91,14 +91,34 @@ func openForkCandidateRebase(repo string, manifest forkCandidateManifest) (*fork
 func buildsOnReviewedRound(repo string, manifest forkCandidateManifest, reviewedHead, head string) (bool, error) {
 	workspace := forkspace.Workspace(repo, manifest.Fork.Name)
 	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", reviewedHead, head); err == nil {
-		return true, nil
+		// New commits on top are reviewed as their diff; a merge among them would be flattened at
+		// merge, so it starts no round.
+		return straightLine(workspace, reviewedHead, head)
 	}
 	rebase, err := openForkCandidateRebase(repo, manifest)
 	if err != nil || rebase == nil || head == rebase.Onto {
 		return false, err
 	}
-	_, err = forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", rebase.Onto, head)
-	return err == nil, nil
+	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", rebase.Onto, head); err != nil {
+		return false, nil
+	}
+	// A rebase leaves a straight line on the parent; one that kept a merge is not finished.
+	return straightLine(workspace, rebase.Onto, head)
+}
+
+// ErrForkMergeCommits is the fence's refusal of a round whose new commits include a merge commit:
+// it builds on what it must, so "no longer descends" would be false.
+var ErrForkMergeCommits = errors.New("the fork's new commits include a merge commit, and Coop reviews and merges only a straight line of commits; rebase them into one (git rebase), then run the fork's loop again")
+
+func straightLine(workspace, base, head string) (bool, error) {
+	merges, err := MergeCommitsOutside(workspace, base, head)
+	if err != nil {
+		return false, err
+	}
+	if len(merges) > 0 {
+		return false, ErrForkMergeCommits
+	}
+	return true, nil
 }
 
 // activeRebaseManifest is the manifest a rebase request may be written against: candidate is the

@@ -399,6 +399,14 @@ still need. If it left none because the rebase dropped them, co:op says which ch
 go back to the reviewed commit it names and run the loop again. You can also change your branch
 until the reviewed commits apply and merge again, or discard the fork's work.
 
+co:op reviews and merges only a straight line of commits. A merge lands a fork's commits one by one
+on top of your branch, so a merge commit among them could bring back a change that the merge's own
+diff, the one the review read, does not show. A fork's loop therefore refuses to start a review of
+commits that include a merge commit and names the `git rebase` that straightens them; `coop fork
+merge` and `coop fork ls` say the same, and while a conflict waits for its rebase the loop says it
+before any agent runs. A reviewed round that has one anyway is not merged: for an ordinary fork,
+`coop fork merge` sends it to the same rebase and review as a conflict.
+
 This path is for ordinary forks. An `--isolated` fork never shares history with your branch, so
 co:op cannot rebase it there; when its commits conflict, change your branch until they apply, or
 discard its work with `coop fork rm <name> --force` and let a new fork redo it.

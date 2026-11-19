@@ -438,6 +438,17 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		if err := tasks.ValidateForkCandidateLocked(repo, taskCandidate, candidate.sourceHead, candidate.sourceTree); err != nil {
 			return mergeOutcome{}, err
 		}
+		// A round reviewed before Coop refused merge commits at review. An isolated source shares no
+		// history with the parent, so no rebase pass can straighten it.
+		merges, err := tasks.MergeCommitsOutside(forkspace.Workspace(repo, name), candidate.upstream, candidate.sourceHead)
+		if err != nil {
+			return mergeOutcome{}, fmt.Errorf("%s: check its reviewed commits for merge commits: %w", name, err)
+		}
+		if len(merges) > 0 {
+			return mergeOutcome{}, ui.CommandFailed("Fork "+name+"'s reviewed commits include a merge commit",
+				mergeCommitsCause(merges)+" Nothing was merged.",
+				[2]string{"Discard its work and return its tasks to the queue:", "coop fork rm " + name + " --force"})
+		}
 		original = &taskCandidate
 	}
 	if err := c.gateIsolatedCandidate(repo, img, candidate, false); err != nil {

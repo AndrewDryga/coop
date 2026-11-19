@@ -283,6 +283,24 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		if !forkspace.ValidObjectID(intent.RebasedHead) || !forkspace.ValidObjectID(intent.RebasedTree) {
 			return intent, false, errors.New("rebased fork has no exact HEAD/tree")
 		}
+		// The parent has nothing the reviewed commits lack, so the rebase had nothing to add: it must
+		// land the reviewed tree. A different one is content no review saw, such as a change a merge
+		// resolution dropped that the flattening rebase replayed.
+		if _, err := forkspace.GitOutErr(ws, "merge-base", "--is-ancestor", intent.ParentBefore, intent.Candidate.Head); err == nil &&
+			intent.RebasedTree != intent.Candidate.Tree {
+			intent.Phase = landRestoring
+			if err := writeLandIntent(repo, intent); err != nil {
+				return intent, false, err
+			}
+			if err := restoreCandidateWorkspace(repo, ws, name, intent.Candidate); err != nil {
+				return intent, false, err
+			}
+			if err := removeLandIntent(repo, intent); err != nil {
+				return intent, false, err
+			}
+			return intent, false, fmt.Errorf("%s: its rebase onto %s changed the reviewed tree %s to %s although %s had nothing new, so it would land content no review saw; nothing merged and the reviewed commit is back. Discard its work and return its tasks to the queue: coop fork rm %s --force",
+				name, gitBranch(repo), intent.Candidate.Tree[:12], intent.RebasedTree[:12], gitBranch(repo), name)
+		}
 		if err := writeLandIntent(repo, intent); err != nil {
 			return intent, false, err
 		}

@@ -20,6 +20,7 @@ const (
 	rebaseThenCrash                       // finishes the rebase, then its box dies
 	rebaseAndResolve                      // finishes the rebase and exits 0
 	rebaseDropsAll                        // ends on the parent commit itself, as when it already has the work
+	rebaseKeepsMerge                      // finishes the rebase, then merges a side branch on top
 )
 
 // sharedFilePasses stands in for a fork's loop passes over one shared file. A work pass checks off
@@ -97,6 +98,9 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 		if p.afterRebase != nil {
 			p.afterRebase(spec.Repo)
 		}
+		if attempt == rebaseKeepsMerge {
+			hideBehindAMerge(t, spec.Repo)
+		}
 		if attempt == rebaseThenCrash {
 			return 1, nil
 		}
@@ -143,6 +147,24 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+// hideBehindAMerge commits e.txt on a side branch of the fork's branch and merges it with a
+// resolution that drops it: the merge's diff shows nothing, a flattening rebase replays e.txt.
+func hideBehindAMerge(t *testing.T, ws string) {
+	t.Helper()
+	branch := forkspace.GitOut(ws, "symbolic-ref", "--short", "HEAD")
+	git(t, ws, "checkout", "-q", "-b", "side")
+	if err := os.WriteFile(filepath.Join(ws, "e.txt"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "e.txt")
+	git(t, ws, "commit", "-qm", "side: add e.txt")
+	git(t, ws, "checkout", "-q", branch)
+	git(t, ws, "merge", "-q", "--no-ff", "--no-commit", "side")
+	git(t, ws, "rm", "-q", "-f", "e.txt")
+	git(t, ws, "commit", "-qm", "Merge side, dropping e.txt")
+	git(t, ws, "branch", "-q", "-D", "side")
 }
 
 func gitCommand(dir string, args ...string) *exec.Cmd {
@@ -489,5 +511,91 @@ func TestForkRebasedRoundThatFailsReviewIsReworkedAndReviewedAgain(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(f.repo, "repair.txt")); err != nil {
 		t.Fatalf("the reviewed repair did not land: %v", err)
+	}
+}
+
+// mergeCommitRefusal checks the one refusal of a fork whose commits include a merge commit: it says
+// so and names the git rebase onto base that straightens them.
+func mergeCommitRefusal(t *testing.T, step string, err error, ws, base string) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), "commits include a merge commit") ||
+		!strings.Contains(err.Error(), filepath.Base(ws)+" rebase "+base+" && coop fork") ||
+		strings.Contains(err.Error(), "not rebased yet") || strings.Contains(err.Error(), "no longer descends") {
+		t.Errorf("%s = %v; want the merge-commit refusal naming the rebase onto %s", step, err, base)
+	}
+}
+
+// After a conflict, a branch holding a merge commit is refused before any agent runs, with the
+// reason and the git rebase that straightens it; a pass that leaves a merge gets the same answer,
+// once, and the next loop runs no agent for it. "Not rebased yet, try again" repeated forever.
+func TestForkRebaseRefusesMergeCommitsWithoutAnAgentRun(t *testing.T) {
+	f := setUpConflictingForks(t)
+	hideBehindAMerge(t, f.ws)
+	code, out, err := f.loop(t)
+	if code == 0 || len(f.passes.rebases) != 0 {
+		t.Fatalf("loop over a merge commit = (%d, %v) after %d rebase passes; want a refusal and no agent\n%s", code, err, len(f.passes.rebases), out)
+	}
+	mergeCommitRefusal(t, "loop over a merge commit", err, f.ws, f.parent)
+	if code, out, err := mergeForkForTest(t, f.a, "beta"); code == 0 {
+		t.Fatalf("merge over a merge commit = (%d, %v)\n%s", code, err, out)
+	} else {
+		mergeCommitRefusal(t, "merge over a merge commit", err, f.ws, f.parent)
+	}
+
+	git(t, f.ws, "reset", "-q", "--hard", "HEAD^1") // back to the reviewed commit
+	f.passes.attempts = []rebaseAttempt{rebaseKeepsMerge}
+	code, out, err = f.loop(t)
+	if code == 0 || len(f.passes.rebases) != 1 {
+		t.Fatalf("loop whose pass kept a merge = (%d, %v) after %d passes\n%s", code, err, len(f.passes.rebases), out)
+	}
+	mergeCommitRefusal(t, "loop whose pass kept a merge", err, f.ws, f.parent)
+	if code, _, err := f.loop(t); code == 0 || len(f.passes.rebases) != 1 {
+		t.Fatalf("rerun after a pass kept a merge = (%d, %v) after %d passes; want no second agent run", code, err, len(f.passes.rebases))
+	} else {
+		mergeCommitRefusal(t, "rerun after a pass kept a merge", err, f.ws, f.parent)
+	}
+	if len(f.passes.reviews) != 2 {
+		t.Fatalf("a merge commit reached review (%d reviews)", len(f.passes.reviews))
+	}
+}
+
+// A merge commit on top of a reviewed fork: merge, the loop and ls all give the true reason and the
+// rebase that straightens it. The loop said "fork HEAD no longer descends from its reviewed
+// candidate", which was false, and merge pointed to that loop.
+func TestForkMergeCommitOnAReviewedForkGetsOneTrueReason(t *testing.T) {
+	repo := initRepo(t)
+	ignoreTheQueue(t, repo)
+	commitOnMain(t, repo, "shared.txt", "base\n")
+	id := "2026-11-19-fork-merge-on-top"
+	seedForkDecisionTask(t, repo, id)
+	a := forkNetworkPreflightApp(t, repo)
+	passes := &sharedFilePasses{t: t}
+	a.forkLoopRun = passes.run
+	ws, identity := setUpForkForDecision(t, repo, "solo")
+	if code, out, err := runForkLoopStoppingAfterReview(t, a, repo, ws, identity); code != 0 || err != nil {
+		t.Fatalf("fork loop = (%d, %v)\n%s", code, err, out)
+	}
+	reviewed := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	hideBehindAMerge(t, ws)
+	if code, out, err := mergeForkForTest(t, a, "solo"); code == 0 {
+		t.Fatalf("merge = (%d, %v)\n%s", code, err, out)
+	} else {
+		mergeCommitRefusal(t, "merge", err, ws, reviewed)
+	}
+	code, out, err := runForkLoopStoppingAfterReview(t, a, repo, ws, identity)
+	if code == 0 {
+		t.Fatalf("loop = (%d, %v)\n%s", code, err, out)
+	}
+	mergeCommitRefusal(t, "loop", err, ws, reviewed)
+	listing := captureStdout(t, func() {
+		if code, err := a.forkctl().ForkLs(nil); code != 0 || err != nil {
+			t.Fatalf("fork ls = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(listing, "commits include a merge commit") {
+		t.Errorf("fork ls does not give the reason:\n%s", listing)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "e.txt")); !os.IsNotExist(err) {
+		t.Fatalf("content the review never saw reached the parent: %v", err)
 	}
 }

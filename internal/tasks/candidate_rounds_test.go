@@ -344,6 +344,15 @@ func TestForkCandidateRebaseRequestAdmitsOnlyARebaseOntoItsParent(t *testing.T) 
 	if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, unrelated); err == nil {
 		t.Fatal("an unrelated history was taken as the rebased fork")
 	}
+	// A merge above onto is no rebase: one that brings the reviewed commits in by merging them keeps
+	// the merge a later merge would flatten.
+	git(t, f.workspace, "checkout", "-q", "--detach", onto)
+	git(t, f.workspace, "merge", "-q", "--no-ff", "-m", "merge the reviewed round in", head)
+	merged := forkspace.GitOut(f.workspace, "rev-parse", "HEAD")
+	git(t, f.workspace, "checkout", "-q", "main")
+	if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, merged); !errors.Is(err, ErrForkMergeCommits) {
+		t.Fatalf("a merge onto the parent = %v; want the merge-commit refusal, not a false ancestry one", err)
+	}
 
 	if transition, err := SupersedeStaleForkCandidate(f.repo, f.identity, rebased); err != nil || !transition.Started {
 		t.Fatalf("supersede with the rebased HEAD = %+v, %v", transition, err)

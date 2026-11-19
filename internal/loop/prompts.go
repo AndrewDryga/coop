@@ -218,7 +218,7 @@ func forkRebasePrompt(rebase RebaseSpec) string {
 		"1. If a rebase is already in progress from an earlier attempt, run `git rebase --abort` first.\n"+
 		"2. With %[1]s checked out, run `git rebase %[3]s`. That commit is where %[2]s was when this pass started, and Coop already fetched it into this repository.\n"+
 		"3. For each conflict, edit the files so the result keeps both %[2]s's change and this fork's change, then `git add` them and run `git rebase --continue`, until the rebase finishes.\n"+
-		"4. Keep every commit message as it is, including its Coop-Task trailer. Do not squash, drop, reorder or reword commits.\n"+
+		"4. Keep every commit message as it is, including its Coop-Task trailer. Do not squash, drop, reorder or reword commits. Rebase, never merge: Coop refuses a merge commit, so do not use `git merge` or `--rebase-merges`, and leave none. If flattening brings back a change that a merge had dropped, keep it: the review sees it.\n"+
 		"5. The tasks' recorded verification predates this rebase, so verify the rebased tree again: run %[4]s, and `git diff --check %[3]s HEAD`. If one fails because of the rebase, fix it in one extra commit on top whose message says it fixes the rebase onto %[2]s, then run it again.\n"+
 		"Make no other change: do not edit task folders, do not create, switch or delete branches, and do not push. End with %[1]s checked out, the rebase finished and nothing uncommitted. Coop then reviews the rebased work again before it can merge, and gives the reviewer your checks.\n"+
 		"Your final reply must end with one line per check you ran on the final rebased HEAD, exactly in this form: `%[5]s<exact command> — <result, such as exit 0>`.",

@@ -21,6 +21,7 @@ const (
 	driftConflicts // a merge conflicted; the branch is still the reviewed commit
 	driftRebasing  // a rebase onto the parent is started or stopped, not finished
 	driftEmpty     // a finished rebase left none of the fork's commits
+	driftMerges    // its new commits, or its rebase, include a merge commit
 	driftRebased
 	driftDiverged
 )
@@ -39,6 +40,9 @@ func forkCandidateDrift(ws, name string, candidate tasks.ForkCandidate, head str
 		return driftNone
 	}
 	if _, err := forkspace.GitOutErr(ws, "merge-base", "--is-ancestor", candidate.Head, head); err == nil {
+		if merges, err := tasks.MergeCommitsOutside(ws, candidate.Head, head); err == nil && len(merges) > 0 {
+			return driftMerges
+		}
 		return driftAhead
 	}
 	if rebase == nil {
@@ -51,6 +55,11 @@ func forkCandidateDrift(ws, name string, candidate tasks.ForkCandidate, head str
 		return driftRebased
 	case RebaseEmpty:
 		return driftEmpty
+	case RebaseMerges:
+		return driftMerges
+	}
+	if merges, err := tasks.MergeCommitsOutside(ws, rebase.Onto, head); err == nil && len(merges) > 0 {
+		return driftMerges // the loop would refuse it before any agent pass, for this reason
 	}
 	return driftRebasing
 }
@@ -181,6 +190,13 @@ func candidateDriftError(ws, name string, candidate tasks.ForkCandidate, head st
 			[2]string{"Then merge it:", "coop fork merge " + name}, discard)
 	case driftEmpty:
 		return emptyRebaseError(ws, name, candidate, rebase.Onto, merging)
+	case driftMerges:
+		base := candidate.Head
+		if rebase != nil {
+			base = rebase.Onto
+		}
+		merges, _ := tasks.MergeCommitsOutside(ws, base, head)
+		return MergeCommitsError(ws, name, base, merges, tail)
 	case driftConflicts, driftRebasing:
 		return ui.CommandFailed("Fork "+name+"'s rebase onto "+parentBranchWords(rebase.Branch)+" is not finished",
 			"Its reviewed commits conflict with "+parentBranchWords(rebase.Branch)+", and its loop rebases them, resolves the conflict and reviews the result before it can merge."+tail,
@@ -246,6 +262,9 @@ const (
 	RebaseFinished
 	// RebaseEmpty: the rebase finished but left no commit of the fork's: the parent already has them.
 	RebaseEmpty
+	// RebaseMerges: the branch builds on the parent commit but keeps a merge commit, which Coop
+	// neither reviews nor merges; another agent pass would only keep it again.
+	RebaseMerges
 )
 
 // CheckRebase reports how far the fork's rebase onto the parent commit onto got, whoever ran it.
@@ -260,6 +279,13 @@ func CheckRebase(ws, name, onto string) RebaseResult {
 	}
 	if _, err := forkspace.GitOutErr(ws, "merge-base", "--is-ancestor", onto, head); err != nil {
 		return RebaseUnfinished
+	}
+	// A rebase leaves a straight line of commits on onto. A merge left above it, such as one of the
+	// parent into the fork, is what the rebase pass removes, so the pass runs again.
+	if merges, err := tasks.MergeCommitsOutside(ws, onto, head); err != nil {
+		return RebaseUnfinished
+	} else if len(merges) > 0 {
+		return RebaseMerges
 	}
 	return RebaseFinished
 }

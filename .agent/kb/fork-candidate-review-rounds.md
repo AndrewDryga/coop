@@ -2,7 +2,7 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go]
+sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go]
 updated: 2026-11-19
 ---
 
@@ -82,6 +82,23 @@ the fork's commits does not disturb it. A failed round keeps its number for its 
 which the review heading names (`ForkCandidateReview.AfterRework`). Isolated forks have no such
 path: their source never shares history with the parent (isolated_candidate.go).
 
+No round may hold a merge commit. A review reads the candidate's diff, but `git rebase` lands its
+commits one by one, flattening a merge and replaying every commit beneath it, so a change a merge
+resolution dropped lands unseen. `tasks.MergeCommitsOutside` finds merges from raw objects (a
+box-written shallow file makes it fail, never report none). The fork loop refuses to freeze a round
+over one (`forkctl.RefuseCandidateMergeCommits`: an ordinary fork's commits the parent's HEAD lacks,
+fetched into the fork; an isolated fork's above its unpublished base); the fence refuses one above
+the reviewed round or above `onto` (`tasks.ErrForkMergeCommits`, never a false "no longer
+descends"), and `CheckRebase` reports such a rebase as `RebaseMerges`, which ends the loop where a
+request's `onto` was already in a merged candidate's history and every rebase "finished" at once.
+Every refusal is `forkctl.MergeCommitsError` with the `git rebase` onto the reviewed head (or onto
+`onto` while a request is open): from the loop before supersession, from the rebase pass before any
+agent runs and after one that kept a merge (another agent run would only keep it again), and from
+merge and ls (`driftMerges`). The rebase prompt says rebase, never merge. A round reviewed before this check is refused at merge: an ordinary fork gets a rebase
+request, as a conflict does (`refuseReviewedMergeCommits`); an isolated one can only be discarded.
+And when the parent had nothing the candidate lacked, the land refuses a rebased tree that is not
+the reviewed one (land.go), the last guard if anything else reaches the land.
+
 A reviewed fork whose HEAD moved off its active candidate is not landable, so `coop fork ls` shows it
 as `changed` ("changed after review") rather than `ready`, and one with an open rebase request whose
 rebase is not finished as `conflict` ("conflicts with your branch"), counting its changes from where
@@ -93,6 +110,11 @@ descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork
 ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
 
 ## Changelog
+- 2026-11-19 — a candidate holding a merge commit could land a change its review never saw (the
+  merge's flattening rebase replayed a commit the merge resolution had dropped), and a rebase request
+  whose `onto` was already in such a candidate's history looped; merge commits are now refused at
+  freeze, in the fence and at merge, and the land checks the tree when the parent did not move (task
+  2026-11-19-refuse-a-fork-candidate-whose-commits-include-a).
 - 2026-11-19 — a reviewed fork whose commits conflicted with the branch at merge could only be
   redone or the branch changed; the owner chose "rebase and review again": the conflict records a
   rebase request, the fork's loop rebases and resolves, and the result is a new fully reviewed round

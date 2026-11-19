@@ -1643,6 +1643,13 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 					return 1, err
 				}
 			}
+			// New commits that include a merge commit start no review: say why and how to straighten
+			// them, as merge and ls do, rather than the fence's bare refusal.
+			if head != candidate.Head {
+				if err := forkctl.RefuseCandidateMergeCommits(repo, identity, head); err != nil {
+					return 1, err
+				}
+			}
 			// After a red merge gate the fix lands as new commits on top of the reviewed candidate;
 			// retire that candidate so the work below can be reviewed and republished at the new HEAD.
 			if transition, err := tasks.SupersedeStaleForkCandidate(repo, identity, head); err != nil {
@@ -1720,6 +1727,10 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 			}
 			head = forkspace.GitOut(ws, "rev-parse", "HEAD")
 			tree = forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
+			// Checked before the round is frozen, so no review of a merge commit's diff can pass.
+			if err := forkctl.RefuseCandidateMergeCommits(repo, identity, head); err != nil {
+				return 1, err
+			}
 			review, exists, reviewErr := tasks.BeginForkCandidateReview(repo, identity, head, tree)
 			if reviewErr != nil {
 				return 1, reviewErr
@@ -1893,6 +1904,15 @@ func (a *app) rebaseForkCandidate(repo, ws, name string, candidate tasks.ForkCan
 	if err := forkspace.GitRun(ws, "fetch", "--quiet", repo, ref); err != nil {
 		return 1, fmt.Errorf("fork %s: fetching the parent into the fork: %w", name, err)
 	}
+	// A merge commit the branch holds is refused whatever the agent does with it, so no agent runs
+	// for it: an agent that keeps the merge only ends in the same refusal.
+	merges, err := tasks.MergeCommitsOutside(ws, rebase.Onto, forkspace.GitOut(ws, "rev-parse", "HEAD"))
+	if err != nil {
+		return 1, fmt.Errorf("fork %s: check its commits for merge commits: %w", name, err)
+	}
+	if len(merges) > 0 {
+		return 1, forkctl.MergeCommitsError(ws, name, rebase.Onto, merges, " No agent ran, and nothing was reviewed or merged.")
+	}
 	for _, assignment := range candidate.Assignments {
 		queueRel, err := tasks.ProjectionQueueRel(ws, assignment.Index.Projection)
 		if err != nil {
@@ -1942,6 +1962,9 @@ func checkForkRebase(ws, name string, candidate tasks.ForkCandidate, rebase task
 			[2]string{"Try again:", continueCmd}, discard)
 	case forkctl.RebaseEmpty:
 		return forkctl.EmptyRebaseError(ws, name, candidate, rebase.Onto)
+	case forkctl.RebaseMerges:
+		merges, _ := tasks.MergeCommitsOutside(ws, rebase.Onto, forkspace.GitOut(ws, "rev-parse", "HEAD"))
+		return forkctl.MergeCommitsError(ws, name, rebase.Onto, merges, " The rebase kept it, so nothing was reviewed or merged.")
 	}
 	problems, err := tasks.RebaseBindingProblems(ws, rebase.Onto, candidate.Head, forkspace.GitOut(ws, "rev-parse", "HEAD"))
 	if err != nil {

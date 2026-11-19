@@ -917,6 +917,9 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 				}
 				return mergeOutcome{}, fmt.Errorf("%s reviewed candidate is stale: %w", name, err)
 			}
+			if err := c.refuseReviewedMergeCommits(repo, name, candidate); err != nil {
+				return mergeOutcome{}, err
+			}
 			intent := landIntent{
 				Version: landIntentVersion, Candidate: candidate,
 				ParentBefore: forkspace.GitOut(repo, "rev-parse", "HEAD"), Phase: landPreparing, CreatedAt: time.Now().UTC(),

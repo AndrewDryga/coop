@@ -267,7 +267,7 @@ func TestForkRebasePassRunsOneBoxOverADoneQueue(t *testing.T) {
 	if code != 0 || err != nil || len(prompts) != 2 {
 		t.Fatalf("rebase pass = (%d, %v) after %d boxes, want a second account's box and success", code, err, len(prompts))
 	}
-	for _, want := range []string{"git rebase " + onto, "beta", "main", "Coop-Task trailer", "reviews the rebased work again", "`make check`", "git diff --check " + onto + " HEAD"} {
+	for _, want := range []string{"git rebase " + onto, "beta", "main", "Coop-Task trailer", "reviews the rebased work again", "`make check`", "git diff --check " + onto + " HEAD", "Rebase, never merge"} {
 		if !strings.Contains(prompts[1], want) {
 			t.Errorf("rebase prompt does not say %q:\n%s", want, prompts[1])
 		}

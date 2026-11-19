@@ -329,6 +329,8 @@ func (s forkStatus) driftLine() string {
 		return "Conflicts with " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
 	case driftRebasing:
 		return "Rebase onto " + parentBranchWords(s.RebaseBranch) + " not finished; rebase and review: coop fork " + s.Name + " --loop"
+	case driftMerges:
+		return "Changed: its commits include a merge commit; coop fork merge " + s.Name + " names the git rebase that straightens them"
 	case driftEmpty:
 		if s.EmptyDropped {
 			return "Rebase dropped its reviewed work; go back to the reviewed commit (coop fork merge " + s.Name + " names it), then rebase again: coop fork " + s.Name + " --loop"
