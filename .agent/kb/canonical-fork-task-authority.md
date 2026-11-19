@@ -2,8 +2,8 @@
 name: canonical-fork-task-authority
 description: the project owns one Markdown task; a fork owns only an exact-generation execution projection and reviewed candidate
 subsystem: tasks
-sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/watch.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/forkctl/merge.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
-updated: 2026-11-16
+sources: [internal/tasks/identity.go, internal/tasks/landed_fork.go, internal/tasks/owner.go, internal/tasks/assignment.go, internal/tasks/assignment_registry.go, internal/tasks/projection.go, internal/tasks/candidate.go, internal/tasks/snapshot.go, internal/tasks/channel.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/watch.go, internal/tasks/discard.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkctl/land.go, internal/forkctl/merge.go, internal/cli/fork_cmd.go, internal/loop/prompts.go]
+updated: 2026-11-19
 ---
 
 The canonical queue is the task database. Fork work never creates a second authority: the host
@@ -98,7 +98,11 @@ outside the project (`forkResumeNote`).
 Merge writes a replayable land intent before the parent fast-forward. Recovery can therefore finish
 canonical task completion, receipts, proposal import, assignment removal, and workspace teardown
 exactly once after a crash. Stop merely pauses assignments. Removal/fresh/session discard either
-refuse unresolved ownership or write and replay an exact-generation discard. Trailers are human
+refuse unresolved ownership or write and replay an exact-generation discard. The discard unticks
+every subtask the canonical task.md has ticked, after a log.md note that names them
+(`untickDiscardedWork`, internal/tasks/discard.go): acceptance copied the fork's ticks there for work
+that goes with the fork, and a returned task with its checklist done let `coop tasks done` close it
+with nothing committed. Trailers are human
 labels and consistency checks only.
 
 `ReadProjectSnapshot` is the shared read model: it joins canonical queues (including external
@@ -113,6 +117,9 @@ before renaming it over its record, and a record its box removed after the direc
 `WorkspaceReservations` treats its own temp files and released reservations the same way.
 
 ## Changelog
+- 2026-11-19 — a fork discard (`rm --force`, `--fresh`, session discard) returned its task with the
+  fork's ticked subtasks, so `coop tasks done` closed it with no commit; the discard now unticks them
+  and notes which in log.md (task 2026-11-19-return-a-task-honestly-when-its-fork-is-removed).
 - 2026-11-16 — the execution scan (`executionsInRegistry`) reported a role update's temp file and a
   record ended mid-scan as problems, so fork, service and ACP commands that overlapped a turn failed
   with "sandbox activity registry is unreadable", and a role update killed before its rename kept

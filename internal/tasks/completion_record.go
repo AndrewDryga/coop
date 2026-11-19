@@ -74,7 +74,7 @@ var (
 		"Unblock lets the next worker close this task", "Unblock accepted the commits after ",
 		"completion rejected because ", "implementation completion rejected because ",
 		"completion restored: ", "final review could not resume: ", "candidate review: fail",
-		"blocked: it waits for ",
+		"blocked: it waits for ", discardedWith,
 	}
 	// coopLogNotesAbout carry a task id between or before their fixed words.
 	coopLogNotesAbout = [][2]string{

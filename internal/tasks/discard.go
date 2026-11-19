@@ -11,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 type ForkTaskStateSummary struct {
@@ -370,6 +372,60 @@ func unionForkAssignmentIndexes(journaled, current []ForkAssignmentIndex) []Fork
 	return merged
 }
 
+// discardedWith opens the log.md note untickDiscardedWork writes (coopLogNotes).
+const discardedWith = "Discarded with fork "
+
+// untickDiscardedWork unticks every ticked subtask of a task whose fork is being discarded. The
+// fork's accepted copy ticked them for work that goes with the fork, and a task back in the queue
+// with its checklist done would let `coop tasks done` close it with nothing committed. The note
+// goes in log.md first, so a discard replayed after a crash between the two repeats the note
+// rather than lose it; a second pass finds nothing ticked.
+func untickDiscardedWork(taskDir, fork string) error {
+	root, err := OpenTaskMetadataRoot(taskDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	data, err := ReadTaskMetadataFile(root, "task.md")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read task.md: %w", err)
+	}
+	content := string(data)
+	_, body := SplitFrontmatter(content)
+	lines := strings.Split(body, "\n")
+	var unticked []string
+	inFence := false
+	for i, line := range lines {
+		if fenceMarker(line) {
+			inFence = !inFence
+			continue
+		}
+		m := subtaskRe.FindStringSubmatch(line)
+		if inFence || m == nil || !strings.EqualFold(m[1], "x") {
+			continue
+		}
+		marker := len(m[0]) - 3 // the marker sits before the closing "] "
+		lines[i] = line[:marker] + " " + line[marker+1:]
+		unticked = append(unticked, sanitizeCell(strings.TrimSpace(line[len(m[0]):])))
+	}
+	if len(unticked) == 0 {
+		return nil
+	}
+	note := fmt.Sprintf("%s%s: its work for this task went with it, so Coop unticked %s: %s. Tick again any whose work is already on your branch.",
+		discardedWith, fork, ui.Count(len(unticked), "subtask"), strings.Join(unticked, "; "))
+	if err := appendTaskLogNoteIn(root, note); err != nil {
+		return err
+	}
+	out := content[:len(content)-len(body)] + strings.Join(lines, "\n")
+	if err := AtomicWriteTaskFile(root, "task.md", []byte(out)); err != nil {
+		return fmt.Errorf("write task.md: %w", err)
+	}
+	return nil
+}
+
 func discardForkAssignment(repo string, identity forkspace.Identity, index ForkAssignmentIndex) (retErr error) {
 	root, id := index.CanonicalRoot, index.Task.Ref.ID
 	authority, err := lockLeaseAuthority(root, id, true, syscall.LOCK_EX)
@@ -404,6 +460,9 @@ func discardForkAssignment(repo string, identity forkspace.Identity, index ForkA
 		}
 		if item.State == StateDone {
 			return errors.New("cannot discard a canonical task already moved to done; replay its land journal")
+		}
+		if err := untickDiscardedWork(item.Dir, identity.Name); err != nil {
+			return err
 		}
 		if item.State != StateBlocked {
 			if item.State != StateTodo {

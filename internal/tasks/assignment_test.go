@@ -868,6 +868,56 @@ func TestForkDiscardReplayNormalizesTaskAlreadyReturnedToTodo(t *testing.T) {
 	}
 }
 
+// A discarded fork takes its work with it, so the task it returns to the queue must not read as
+// finished: the subtasks its accepted copy ticked are unticked, with a log note naming them, and
+// `coop tasks done` refuses it again.
+func TestForkDiscardUnticksTheDiscardedWork(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "tasks")
+	taskForLease(t, root, StateTodo, "discarded-work")
+	repo := filepath.Join(t.TempDir(), "project")
+	workspace, identity := testAssignmentFork(t, repo, "discarded-worker")
+	assignment, err := AssignForkTask([]string{root}, ForkAssignmentRequest{
+		AuthorityRepo: repo, Fork: identity, WorkspaceRoot: workspace,
+		BaselineHead: strings.Repeat("2", 40), LeaseOwner: testLeaseOwner(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	canonical, _ := mustCurrentTask(t, root, "discarded-work")
+	// What acceptance copies back from a fork that finished its work. The fenced line is an example,
+	// not a subtask, and stays as written.
+	task := "---\nid: discarded-work\n---\n# Task\n\n## Subtasks\n- [x] Create mu.txt\n  * [X] nested check\n- [ ] still open\n\n```\n- [x] example\n```\n"
+	writeTaskFile(t, filepath.Join(canonical.Dir, "task.md"), task)
+	if err := DiscardForkTaskStateLocked(repo, identity); err != nil {
+		t.Fatal(err)
+	}
+	item, ok := mustCurrentTask(t, root, "discarded-work")
+	if !ok || item.State != StateTodo {
+		t.Fatalf("discarded task = %+v, ok=%v; want todo", item, ok)
+	}
+	data, err := os.ReadFile(filepath.Join(item.Dir, "task.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "---\nid: discarded-work\n---\n# Task\n\n## Subtasks\n- [ ] Create mu.txt\n  * [ ] nested check\n- [ ] still open\n\n```\n- [x] example\n```\n"
+	if string(data) != want {
+		t.Errorf("task.md after discard =\n%s\nwant\n%s", data, want)
+	}
+	if err := RequireCompletedChecklist(item); err == nil {
+		t.Error("the returned task's checklist reads as complete")
+	}
+	log, err := os.ReadFile(filepath.Join(item.Dir, "log.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if note := "- Discarded with fork discarded-worker: its work for this task went with it, so Coop unticked 2 subtasks: Create mu.txt; nested check."; !strings.Contains(string(log), note) {
+		t.Errorf("log.md does not say what the discard unticked:\n%s", log)
+	}
+}
+
 func TestUnblockedForkAssignmentRestoresBlockedProjectionForSameGeneration(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "tasks")
 	taskForLease(t, root, StateTodo, "decision")
