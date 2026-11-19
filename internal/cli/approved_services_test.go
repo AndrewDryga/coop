@@ -34,6 +34,7 @@ type composeShim struct {
 	volExit    int
 	running    []string // the container IDs a running-container label query returns
 	log        string   // when set, every invocation's arguments are appended here, one line each
+	arms       string   // extra shell case arms, matched before the ones above
 }
 
 func (s composeShim) build(t *testing.T) runtime.Runtime {
@@ -66,6 +67,7 @@ func (s composeShim) build(t *testing.T) runtime.Runtime {
 		script.WriteString("printf '%s\\n' \"$*\" >> " + strconv.Quote(s.log) + "\n")
 	}
 	script.WriteString("case \"$*\" in\n")
+	script.WriteString(s.arms)
 	script.WriteString("  info) exit 0 ;;\n")
 	script.WriteString("  \"ps -q\"*)\n")
 	for _, id := range s.running {
@@ -234,6 +236,24 @@ func TestApprovedServiceStart(t *testing.T) {
 			t.Errorf("an unhealthy start exited %d, want 1", code)
 		}
 		assertApprovedOutput(t, "28o-service-not-healthy", out)
+	})
+
+	// A service that exited is named as the Compose file names it, never by the container Coop ran
+	// it in, with the end of its output: a protected service's container goes with the failed start.
+	t.Run("28s-service-exited", func(t *testing.T) {
+		repo := serviceProject(t)
+		id := strings.Repeat("c", 64)
+		arms := "  *\"ps -q -a --no-trunc --filter label=com.docker.compose.project=" + composeProjectName(t, repo) + "\") echo " + id + " ;;\n" +
+			"  *'inspect --format {\"Service\"'*) echo '{\"Service\":\"web-admin\",\"Status\":\"exited\",\"ExitCode\":127,\"Health\":\"\"}' ;;\n" +
+			"  *\"logs --tail 20 " + id + "\") printf 'starting web-admin\\n/bin/sh: httpd: not found\\n' ;;\n"
+		shim := composeShim{services: []string{"db", "web-admin"}, upExit: 1, upSays: "container coop-fs-bb702410ac836b9c580bfef87704d7e6-service exited (127)", arms: arms}
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: shim.build(t), rtSet: true}
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+		if code != 1 {
+			t.Errorf("a start whose service exited ended %d, want 1", code)
+		}
+		assertApprovedOutput(t, "28s-service-exited", out)
 	})
 
 	// Compose 5.5 prints every network and volume event twice when it writes to a pipe, which is

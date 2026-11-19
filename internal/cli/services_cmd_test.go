@@ -9,6 +9,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/runtime"
 )
 
 // The refusal names the folder Coop would not use, and tells the person to change TMPDIR only when
@@ -119,6 +120,19 @@ func TestDownWithoutAValidComposeFile(t *testing.T) {
 				t.Errorf("volume deleted = %v, want %v:\n%s", deleted, len(tc.args) > 0, calls)
 			}
 		})
+	}
+}
+
+// A failed service's output is its own text: it cannot drive the terminal or forge a line.
+func TestFailedServicesReasonKeepsServiceOutputInert(t *testing.T) {
+	got := failedServicesReason([]runtime.FailedService{
+		{Service: "web", ExitCode: 1, Output: []byte("ok\r\n\x1b[2Jcleared\n")},
+		{Service: "db", Unhealthy: true},
+	})
+	want := "Service \"web\" exited with status 1. Its last output:\n  ok\n  \\u001B[2Jcleared\n" +
+		"Service \"db\" failed its healthcheck. It printed nothing.\n"
+	if got != want {
+		t.Errorf("reason = %q, want %q", got, want)
 	}
 }
 

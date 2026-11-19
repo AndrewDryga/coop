@@ -11,12 +11,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -104,6 +106,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 		ui.Note("")
 	}
 	var refused *box.ComposeRefused
+	var notStarted *box.ServicesNotStarted
 	switch {
 	case err == nil:
 	case errors.Is(err, box.ErrNoComposeServices):
@@ -112,6 +115,10 @@ func (a *app) cmdUp(args []string) (int, error) {
 			"Add services with coop init --services.")
 	case errors.As(err, &refused):
 		return 1, composeRefusal("Could not start services from "+rel, rel, refused.Err, "coop up")
+	case errors.As(err, &notStarted) && len(notStarted.Failed) > 0:
+		return 1, reported("Could not start services", failedServicesReason(notStarted.Failed),
+			fmt.Sprintf("Fix the service in %s, then run coop up again.", rel),
+			"Some services may already be running.")
 	default:
 		return 1, reported("Could not start services", sentence(firstLine(err)),
 			"Check the service output, fix the cause, then run coop up again.",
@@ -124,6 +131,33 @@ func (a *app) cmdUp(args []string) (int, error) {
 		ui.Note("    %s://localhost:%d", port.Scheme, port.HostPort)
 	}
 	return 0, nil
+}
+
+// failedServicesReason names each failed service as the Compose file does, never by the container
+// Coop ran it in, and shows the end of its output: a protected service's container is removed with
+// the failed start, so this is the only place that output survives. The output is the service's
+// own text, so every line is made safe for the terminal.
+func failedServicesReason(failed []runtime.FailedService) string {
+	var b strings.Builder
+	for _, f := range failed {
+		name := strconv.Quote(ui.SafeInline(f.Service))
+		switch {
+		case f.Unhealthy:
+			fmt.Fprintf(&b, "Service %s failed its healthcheck.", name)
+		default:
+			fmt.Fprintf(&b, "Service %s exited with status %d.", name, f.ExitCode)
+		}
+		output := strings.TrimRight(strings.ReplaceAll(string(f.Output), "\r", ""), "\n")
+		if strings.TrimSpace(output) == "" {
+			b.WriteString(" It printed nothing.\n")
+			continue
+		}
+		b.WriteString(" Its last output:\n")
+		for _, line := range strings.Split(output, "\n") {
+			b.WriteString("  " + ui.SafeInline(line) + "\n")
+		}
+	}
+	return b.String()
 }
 
 func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Scanner, atTerminal, save bool) (int, error) {

@@ -546,8 +546,16 @@ func (e *LaunchRefused) Unwrap() error { return e.Err }
 
 // ServicesNotStarted is a launch whose project services did not start: compose up failed, often
 // on a health check a loaded host misses. Like a daemon that did not answer, the next attempt may
-// start them, so it is not a LaunchRefused and a caller that retries attempts retries it.
-type ServicesNotStarted struct{ Err error }
+// start them, so it is not a LaunchRefused and a caller that retries attempts retries it. Failed
+// names the services that exited or turned unhealthy, with their last output, when coop could read
+// them before cleanup.
+type ServicesNotStarted struct {
+	Err    error
+	Failed []runtime.FailedService
+}
+
+// failedServiceTail is how many of a failed service's last output lines coop up shows.
+const failedServiceTail = 20
 
 func (e *ServicesNotStarted) Error() string { return e.Err.Error() }
 func (e *ServicesNotStarted) Unwrap() error { return e.Err }

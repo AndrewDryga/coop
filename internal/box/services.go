@@ -169,9 +169,14 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		upErr = fmt.Errorf("compose up exited with status %d", upCode)
 	}
 	if err := upErr; err != nil {
+		// Read what failed now: the deferred abort removes a protected service's container, and
+		// with it the only copy of its output.
+		failedCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		failed, _ := rt.FailedServices(failedCtx, ComposeProjectFor(workspace, owner), failedServiceTail)
+		cancel()
 		observed, observeErr := observedServicePorts(ctx, rt, workspace, file, owner, network, ports)
 		started.ports = observed
-		return started, &ServicesNotStarted{Err: errors.Join(err, observeErr)}
+		return started, &ServicesNotStarted{Err: errors.Join(err, observeErr), Failed: failed}
 	}
 	if err := filesystem.retain(); err != nil {
 		return started, err

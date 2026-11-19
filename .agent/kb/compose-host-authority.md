@@ -3,7 +3,7 @@ name: compose-host-authority
 description: sibling Compose execution uses a validated private snapshot and explicit values rather than ambient host imports
 subsystem: box/services
 sources: [internal/box/fork_service_files.go, internal/box/service_bind_sources.go, internal/cli/fork_cmd.go, internal/box/composecheck.go, internal/box/services.go, internal/box/serviceports.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/runtime/mounts.go, internal/runtime/compose.go, internal/runtime/runtime.go, internal/box/run.go, internal/box/serviceshadow.go, internal/box/serviceapproval.go, internal/box/service_launch_wait.go, internal/box/serviceimages.go, internal/box/serviceanchor.go, internal/box/sweep.go, internal/forkspace/execution.go, internal/box/spellings.go, internal/cli/services_cmd.go]
-updated: 2026-11-05
+updated: 2026-11-19
 ---
 
 Sibling service definitions are agent-writable but execute on the host daemon. `readValidatedCompose`
@@ -27,7 +27,11 @@ container: running and unpaused, healthy when an effective healthcheck exists, a
 expected `127.0.0.1` binding on the network the box will join. The skipped-start config query is
 also bounded, cancellable and strict; malformed or unavailable config cannot become an empty-success
 claim. Unknown, duplicate, unhealthy or mismatched observations stay absent; the original startup
-error remains the diagnostic. Teardown and independent port inspection also validate a snapshot.
+error remains the diagnostic. Before the deferred filesystem abort removes a protected service's
+`coop-fs-<hex>-service` container, a failed start reads `runtime.FailedServices` (exited nonzero or
+unhealthy, by Compose service label, with its log tail) into `ServicesNotStarted.Failed`, so
+`coop up` names the Compose service and shows its output, made terminal-safe. Teardown and
+independent port inspection also validate a snapshot.
 
 Compose invokes a frozen local Docker endpoint with a private client config that copies only
 registry authentication settings; validated `DOCKER_AUTH_CONFIG` remains available to the trusted
@@ -160,6 +164,7 @@ By id alone, one fork's start removed a sibling's just-prepared network (measure
 Compose 5.5, 2026-11-05; `TestRuntimeComposeTwoWorkspacesStartTheirServicesTogether`).
 
 ## Changelog
+- 2026-11-19 — a failed start keeps the failed services' names and last output (`FailedServices`) before cleanup removes protected containers.
 - 2026-11-06 — a container removed mid-inventory failed every start with "container mount inventory
   is incomplete" on a busy host (task 2026-11-06-keep-busy-host-docker-inventories-from-failing-r);
   `BindMountsByLabels` now proves it gone by listing again, in both its inspect paths. Verified with

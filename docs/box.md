@@ -499,7 +499,8 @@ stacks' mounts.
 
 When services are ready, `coop up` prints a message such as `✓ Services ready: db, redis`, using the
 actual service names in Compose order, followed by any URLs it published. If it can't read the
-service list from Compose, it starts nothing.
+service list from Compose, it starts nothing. If a service exits or fails its healthcheck, `coop up`
+names it as your Compose file does and shows the last lines it printed.
 
 `coop down --delete-volumes` lists each of this project's volumes and its contents, then asks before
 permanently deleting anything. The default answer is No, and `-y`/`--yes` confirms without a prompt.
