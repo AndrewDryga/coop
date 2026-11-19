@@ -110,6 +110,7 @@ type Control struct {
 	proposalOutbox string
 	runID          string // names the run's telemetry files under .agent/runs
 	peerLedger     bool   // Run created .agent/runs/<runID>.peers.jsonl, so consult boxes get COOP_RUN_ID
+	finalMessage   string // the last attempt's final agent message, from the provider's message events
 	streamSeq      int    // streaming box attempt sequence within runID
 	streamOff      bool   // an open failure disables best-effort tracing for the rest of the run
 	reuseServices  bool   // the current work box may inspect the unchanged run-owned stack without another Compose up
@@ -218,6 +219,10 @@ type RunSpec struct {
 	// projections and returns only after a strict all-subject receipt. It never imports generic
 	// pending-review authority or reopens a task; the caller durably authorizes the candidate ID.
 	CandidateReview *CandidateReviewSpec
+	// Rebase runs one write-capable pass whose agent rebases the fork's reviewed candidate onto the
+	// parent commit its merge conflicted with and resolves the conflict. It holds no task; the caller
+	// checks the result and sends it to a new candidate review.
+	Rebase *RebaseSpec
 
 	// Network is this launch's --egress/--allow-domain/--egress-rules. It is
 	// HOST-side input, resolved once at the start of the run: every iteration,
@@ -234,4 +239,24 @@ type CandidateReviewSpec struct {
 	Round         uint64
 	PreviousRound uint64
 	TaskIDs       []string
+	// RebasedOnto is the parent commit this round's work was rebased onto after the previous round's
+	// merge conflicted, "" when it was not.
+	RebasedOnto string
+	// RebaseVerification is the checks the rebase pass reported running on exactly this tree, ""
+	// when there is none for it.
+	RebaseVerification string
+	// AfterRework says this round's review already failed once and its findings were reworked, so
+	// this is the same round reviewed again.
+	AfterRework bool
+}
+
+// RebaseSpec names the rebase a fork's conflicting merge asked for: the fork's branch, the parent
+// branch and its exact commit to rebase onto, and the project's gate command, "" for none. Report,
+// when set, receives the checks the pass's agent reported running, one per line, once it succeeds.
+type RebaseSpec struct {
+	Branch       string
+	Onto         string
+	ParentBranch string
+	Gate         string
+	Report       func(checks string)
 }

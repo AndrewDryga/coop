@@ -2,7 +2,7 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go]
+sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go]
 updated: 2026-11-19
 ---
 
@@ -46,16 +46,62 @@ A land journal in `preparing` restores the candidate before it rebases, which is
 mid-rebase but would also throw away anything a person committed in the fork. So a rebase git refuses
 (a conflict, or signing) and Coop aborts back onto the exact candidate commit, tree and branch,
 clean, retires the journal as a red gate does (`candidateWorkspaceIntact`, internal/forkctl/land.go);
-any other failure keeps it for replay. A hand-rebased copy is not the candidate: it needs a new review,
-and the ancestry fence refuses one that does not descend from the published round.
+any other failure keeps it for replay. Unmerged paths left by the refused rebase tell a conflict from
+any other refusal (`rebaseFailedError.conflicts`); only a signing rebase's refusal says signing, and
+a conflict's git hints never reach the terminal (`gitSignQuiet`). A conflict also records a rebase
+request (`<name>.<generation>.candidate-rebase.json` beside the manifest, version 1: the active
+candidate ID, the exact parent commit `onto` and the branch the merge used; host-written only,
+internal/tasks/candidate_rebase.go), and the refusal names `coop fork <name> --loop`; a later
+conflicting merge replaces it. The loop, seeing the request and a rebase not finished
+(`forkctl.CheckRebase`: own branch, clean, no rebase state, builds on `onto` with commits of its
+own), first moves `onto` to where that branch is now (`RefreshForkCandidateRebase`, under the
+lifecycle lock), fetches it into the fork and runs one task-less write pass (`loop.RunSpec.Rebase`,
+`forkRebasePrompt`, with the work iteration's rotation and retries, `runRebasePass`). The host then
+refuses an empty rebase (HEAD is `onto`; `droppedReviewedWork` tells "the branch already has the
+work", which needs a person to close the tasks, from "the rebase dropped it", which a rebase from
+the reviewed commit redoes; loop, merge and ls all say it through `emptyRebaseError`/`driftEmpty`)
+and any change of Coop-Task bindings over `onto..HEAD` against `onto..candidate`
+(`RebaseBindingProblems`, counted from raw objects with the audits' trailer parser, since `git log`
+follows a box-written shallow file), and keeps the lines of the agent's final message that start
+with `REBASE CHECK —` (the decoders' `finalMessage`, never tool output or stderr; lines naming the
+report markers dropped) with the request, bound to the rebased tree
+(`RecordForkCandidateRebaseVerification`): the tasks' handoffs predate the resolution, so without
+them the reviewer failed every rebased round as stale. The review prompt quotes each line inside
+untrusted markers and says the agent claims them and Coop did not verify them. Then the usual
+supersession and review. The ancestry fence (`buildsOnReviewedRound`) accepts a HEAD that descends
+from the reviewed round or, while the request names the current round, from `onto` but is not `onto`
+itself; nothing else changes what may land, since the rebased HEAD is a new pending round that needs
+a full candidate review, whose prompt says to review the whole diff from `onto`
+(`CandidateReviewSpec.RebasedOnto`) and carries the pass's checks only for the tree they were run
+on. The request is open only while the round it names is the manifest's current round in a live
+phase, so it survives the supersede/review/rework phases and a crash anywhere resumes (a finished
+rebase skips the pass but not the host's checks), while publishing the next round, a land or a
+discard closes it without touching the file. It sits outside the manifest so the manifest's format,
+and the builds that read it, stay as they were. It keys on `onto`, a parent commit, so re-signing
+the fork's commits does not disturb it. A failed round keeps its number for its rework's review,
+which the review heading names (`ForkCandidateReview.AfterRework`). Isolated forks have no such
+path: their source never shares history with the parent (isolated_candidate.go).
 
 A reviewed fork whose HEAD moved off its active candidate is not landable, so `coop fork ls` shows it
-as `changed` ("changed after review") rather than `ready`. `forkCandidateDrift` tells the two cases
-apart: new commits on top go back to review with the fork's loop; a HEAD that no longer descends is
-refused by merge and, up front, by a loop start (`RefuseDivergedFork`), both naming the only ways on
-today: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
+as `changed` ("changed after review") rather than `ready`, and one with an open rebase request whose
+rebase is not finished as `conflict` ("conflicts with your branch"), counting its changes from where
+it meets the branch, as merge does. `forkCandidateDrift` tells the cases apart: new commits on top,
+and a finished rebase onto an open request's `onto` (`driftRebased`), go back to review with the
+fork's loop; with a request open, any other HEAD (`driftConflicts`, `driftRebasing`, even a rebase
+stopped half way) is the loop's to finish, never a hand reset; without one, a HEAD that no longer
+descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork`), both naming the
+ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
 
 ## Changelog
+- 2026-11-19 — a reviewed fork whose commits conflicted with the branch at merge could only be
+  redone or the branch changed; the owner chose "rebase and review again": the conflict records a
+  rebase request, the fork's loop rebases and resolves, and the result is a new fully reviewed round
+  (task 2026-11-19-decide-how-a-reviewed-fork-gets-merged-after-its). Two reviews and a live run
+  with real Codex then found: `ls` said "ready to merge" after the conflict, a stopped rebase got
+  the hand-reset advice, an empty rebase looped, the pass had no failover and no host binding check,
+  it rebased onto the commit of the conflict rather than the branch's head, every rebased round
+  failed review as "gate: stale", git's hints and an early "Rebasing onto" printed around refusals,
+  and two reviews of one round read the same; all fixed in the same change.
 - 2026-11-19 — a fork whose branch moved after review showed "ready to merge", merge said only that
   the candidate was stale, and `--loop -d` printed "Started" then died in its log; all three now say
   it changed and name the ways on (task 2026-11-19-say-how-to-get-out-when-a-fork-s-branch-no-longe).

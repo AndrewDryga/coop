@@ -796,7 +796,15 @@ func TestTaskCandidateMergeConflictLeavesNoLandJournal(t *testing.T) {
 		t.Fatalf("conflicting merge = (%v, %v)", landed, err)
 	}
 	if strings.Contains(err.Error(), "git rebase") {
-		t.Errorf("a reviewed candidate's conflict names a rebase whose result no merge accepts: %v", err)
+		t.Errorf("a reviewed candidate's conflict names a rebase by hand instead of the fork's loop: %v", err)
+	}
+	for _, want := range []string{"feature.txt", "reviewed again", "coop fork " + identity.Name + " --loop"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the conflict refusal does not say %q: %v", want, err)
+		}
+	}
+	if onto, ok, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || !ok || onto.Onto != parent {
+		t.Fatalf("rebase request after the conflict = %q, %v, %v; want the parent's %s", onto, ok, err, parent)
 	}
 	if pending, err := ForkHasPendingLand(repo, identity); err != nil || pending {
 		t.Fatalf("land journal after a clean conflict: pending=%v err=%v", pending, err)
@@ -814,8 +822,8 @@ func TestTaskCandidateMergeConflictLeavesNoLandJournal(t *testing.T) {
 		t.Fatalf("canonical task after a conflict = %s", item.State)
 	}
 
-	// The person rewrites the fork's commit onto the parent. The merge refuses that unreviewed commit
-	// and leaves it where it is.
+	// The person rewrites the fork's commit onto the parent. The merge refuses that unreviewed commit,
+	// names the review it needs, and leaves it where it is.
 	git(t, ws, "fetch", "-q", repo, "HEAD")
 	git(t, ws, "reset", "-q", "--hard", "FETCH_HEAD")
 	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("resolved\n"), 0o644); err != nil {
@@ -823,11 +831,129 @@ func TestTaskCandidateMergeConflictLeavesNoLandJournal(t *testing.T) {
 	}
 	git(t, ws, "commit", "-qam", "implement canonical task\n\nCoop-Task: canonical-task")
 	resolved := forkspace.GitOut(ws, "rev-parse", "HEAD")
-	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil {
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil ||
+		!strings.Contains(err.Error(), "rebased but not reviewed again yet") || !strings.Contains(err.Error(), "coop fork "+identity.Name+" --loop") {
 		t.Fatalf("merge of an unreviewed rewrite = (%v, %v)", landed, err)
 	}
 	if got := forkspace.GitOut(ws, "rev-parse", "HEAD"); got != resolved {
 		t.Fatalf("merge reset the fork's branch to %s; the person's %s is gone", got, resolved)
+	}
+}
+
+// After a conflicting merge, a fork is not "ready to merge", and at no step of its rebase does Coop
+// tell anyone to reset it by hand: the listing says it conflicts and names its loop, a rebase stopped
+// on the conflict or left detached at the parent is one the loop finishes, and a finished one waits
+// for its review. A loop start leaves all of these to the loop.
+func TestTaskCandidateConflictNamesTheLoopAtEveryStep(t *testing.T) {
+	repo, ws, _, identity, c := prepareForkTaskCandidate(t, "task-conflict-steps")
+	name := identity.Name
+	status := func() forkStatus {
+		t.Helper()
+		return c.gatherForkStatus(repo, name, tasks.ReadProjectSnapshot(repo, nil))
+	}
+	loop := "coop fork " + name + " --loop"
+	if err := os.WriteFile(filepath.Join(repo, "feature.txt"), []byte("parent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "feature.txt")
+	git(t, repo, "commit", "-qm", "parent edits feature")
+	if landed, err := mergeOneForTest(t, c, repo, "", name, false); landed || err == nil {
+		t.Fatalf("conflicting merge = (%v, %v)", landed, err)
+	}
+	if s := status(); s.stateCell() != "conflict" || stateWords(s.stateCell(), "") != "conflicts with your branch" ||
+		s.driftLine() != "Conflicts with main; rebase and review: "+loop || s.tasksLine() != "1 reviewed" {
+		t.Fatalf("fork after a conflicting merge: state %q, %q, tasks %q", s.stateCell(), s.driftLine(), s.tasksLine())
+	}
+
+	unfinished := func(step string) {
+		t.Helper()
+		// Counted as merge counts the fork's branch, never the conflict markers in the work tree.
+		if s := status(); s.stateCell() != "conflict" || s.driftLine() != "Rebase onto main not finished; rebase and review: "+loop ||
+			s.Ins != 1 || s.Del != 0 {
+			t.Errorf("%s: state %q, %q, +%d −%d", step, s.stateCell(), s.driftLine(), s.Ins, s.Del)
+		}
+		var landed bool
+		var err error
+		stderr := captureStderr(t, func() { landed, err = mergeOneForTest(t, c, repo, "", name, false) })
+		var block *ui.UsageError
+		if landed || !errors.As(err, &block) || block.Headline != "Fork "+name+"'s rebase onto main is not finished" ||
+			!slices.Contains(block.Rows, [2]string{"Rebase and review:", loop}) || strings.Contains(err.Error(), "reset --hard") {
+			t.Errorf("%s: merge = (%v, %v)", step, landed, err)
+		}
+		if strings.Contains(stderr, "Rebasing onto") {
+			t.Errorf("%s: a merge that never rebases said it was rebasing:\n%s", step, stderr)
+		}
+		if err := RefuseDivergedFork(repo, identity); err != nil {
+			t.Errorf("%s: a loop start refused the fork its loop rebases: %v", step, err)
+		}
+	}
+	// The agent's rebase stopped on the conflict.
+	git(t, ws, "fetch", "-q", repo, "HEAD")
+	onto := forkspace.GitOut(ws, "rev-parse", "FETCH_HEAD")
+	stop := exec.Command("git", "-C", ws, "rebase", onto)
+	stop.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if out, err := stop.CombinedOutput(); err == nil {
+		t.Fatalf("the fork's rebase did not stop on the conflict:\n%s", out)
+	}
+	unfinished("stopped on the conflict")
+	// Aborted, and left detached at the parent commit.
+	git(t, ws, "rebase", "--abort")
+	git(t, ws, "checkout", "-q", "--detach", onto)
+	unfinished("detached at the parent")
+
+	// Finished: the branch builds on the parent with the fork's commit on top.
+	git(t, ws, "checkout", "-q", name)
+	git(t, ws, "reset", "-q", "--hard", onto)
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("resolved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "commit", "-qam", "implement canonical task\n\nCoop-Task: canonical-task")
+	// Its changes count from main, where merge counts them: the fork's line replaces main's.
+	if s := status(); s.stateCell() != "changed" || s.driftLine() != "Changed: rebased onto main since its review; review it: "+loop ||
+		s.Ins != 1 || s.Del != 1 {
+		t.Fatalf("rebased fork: state %q, %q, +%d −%d", s.stateCell(), s.driftLine(), s.Ins, s.Del)
+	}
+}
+
+// A signed merge whose rebase conflicts prints the conflict refusal alone: git's own hints name
+// `git rebase --continue` for a rebase Coop already undid.
+func TestSignedMergeConflictKeepsGitHintsOut(t *testing.T) {
+	repo, _, _, identity, c := prepareForkTaskCandidate(t, "task-conflict-signed")
+	signer := filepath.Join(t.TempDir(), "fake-gpg")
+	script := "#!/bin/sh\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 0\\n' >&2\n" +
+		"printf -- '-----BEGIN PGP SIGNATURE-----\\nfake\\n-----END PGP SIGNATURE-----\\n'\n"
+	if err := os.WriteFile(signer, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "feature.txt"), []byte("parent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "feature.txt")
+	git(t, repo, "commit", "-qm", "parent edits feature")
+	git(t, repo, "config", "--global", "commit.gpgsign", "true")
+	git(t, repo, "config", "--global", "gpg.program", signer)
+	var landed bool
+	var err error
+	stderr := captureStderr(t, func() { landed, err = mergeOneForTest(t, c, repo, "", identity.Name, false) })
+	if landed || err == nil || !strings.Contains(err.Error(), "feature.txt") || !strings.Contains(err.Error(), "coop fork "+identity.Name+" --loop") {
+		t.Fatalf("signed conflicting merge = (%v, %v)", landed, err)
+	}
+	if strings.Contains(stderr, "hint:") || strings.Contains(stderr, "rebase --continue") {
+		t.Errorf("git's conflict hints reached the terminal:\n%s", stderr)
+	}
+}
+
+// A rebase git refuses with no conflict says signing only when the merge was signing; otherwise it
+// gives git's own words.
+func TestRebaseRefusalNamesSigningOnlyWhenSigning(t *testing.T) {
+	cause := errors.New("git rebase: exit status 1: fatal: something else went wrong")
+	plain := rebaseRefusedError("demo", &rebaseFailedError{name: "demo", branch: "main", cause: cause})
+	if strings.Contains(strings.ToLower(plain.Error()), "sign") || !strings.Contains(plain.Error(), "something else went wrong") {
+		t.Errorf("unsigned refusal = %v", plain)
+	}
+	signed := rebaseRefusedError("demo", &rebaseFailedError{name: "demo", branch: "main", signing: true, cause: cause})
+	if !strings.Contains(signed.Error(), "signed") || !strings.Contains(signed.Error(), "coop fork merge demo") {
+		t.Errorf("signing refusal = %v", signed)
 	}
 }
 

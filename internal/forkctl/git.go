@@ -19,21 +19,22 @@ func gitInteractive(dir string, args ...string) error {
 	return cmd.Run()
 }
 
-// gitSign runs a hardened git command (like a rebase with signing), wiring Stdin so a TTY pinentry
-// still works, but capturing CombinedOutput to silence benign chatter. The captured output is
-// replayed to Stderr only on failure, or if GIT_TRACE is set.
-func gitSign(dir string, args ...string) error {
+// gitSignQuiet runs a hardened git command (like a rebase with signing), wiring Stdin so a TTY
+// pinentry still works, but capturing CombinedOutput to silence benign chatter. The output is
+// replayed to Stderr on success only if GIT_TRACE is set; a failure's output goes to the caller,
+// which may have better words for it: a rebase's conflict hints name git commands for a rebase Coop
+// already undid.
+func gitSignQuiet(dir string, args ...string) ([]byte, error) {
 	cmd, err := forkspace.GitCommand(context.Background(), dir, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cmd.Stdin = os.Stdin
 	out, err := cmd.CombinedOutput()
-	trace := strings.TrimSpace(os.Getenv("GIT_TRACE"))
-	if err != nil || (trace != "" && trace != "0" && !strings.EqualFold(trace, "false")) {
+	if trace := strings.TrimSpace(os.Getenv("GIT_TRACE")); err == nil && trace != "" && trace != "0" && !strings.EqualFold(trace, "false") {
 		_, _ = os.Stderr.Write(out)
 	}
-	return err
+	return out, err
 }
 
 // gitGlobalOut reads from the host user's GLOBAL git config (`git config --global …`) — the

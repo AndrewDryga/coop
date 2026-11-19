@@ -355,9 +355,11 @@ func (c *Control) runIterationWithMode(ctx context.Context, repo, img, agent, fo
 		wg.Wait() // no goroutine repaints the region after this, so the teardown below is clean
 	}
 	streamOutcome := streamNotUsed
+	c.finalMessage = ""
 	if dec != nil {
 		dec.flush()                // before tail.String(): final events must reach the rate-limit tail
 		res = dec.lastIterResult() // result cost/turns/tokens (nil if none landed), for telemetry
+		c.finalMessage = dec.finalMessage()
 		streamOutcome = dec.streamOutcome()
 		if claude, ok := dec.(*streamDecoder); ok {
 			claude.promoteTerminalLimitDiagnostic(code, streamOutcome)

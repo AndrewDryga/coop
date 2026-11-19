@@ -3,6 +3,7 @@ package tasks
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -280,6 +281,200 @@ func TestForkCandidateReviewReplacementMustDescendFromReviewedRound(t *testing.T
 	status, exists, err := ReadForkCandidateRoundStatus(f.repo, f.identity)
 	if err != nil || !exists || status.Phase != forkCandidateReviewing || status.PendingID != review.Candidate.ID {
 		t.Fatalf("rejected replacement changed frozen review = %+v, %v, %v", status, exists, err)
+	}
+}
+
+// A reviewed round whose merge conflicted may be followed by a HEAD rebased onto the exact parent
+// commit the merge recorded, and only by one that adds commits of its own on top of it. The rebased
+// HEAD is a new pending round that needs its own review; publishing it closes the request.
+func TestForkCandidateRebaseRequestAdmitsOnlyARebaseOntoItsParent(t *testing.T) {
+	f := newCandidateRoundFixture(t, "alpha")
+	base := forkspace.GitOut(f.workspace, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(f.workspace, "fork.txt"), "fork\n")
+	git(t, f.workspace, "add", "fork.txt")
+	git(t, f.workspace, "commit", "-qm", "fork work\n\nCoop-Task: alpha")
+	head, tree := f.headTree()
+	candidate, published, err := reviewAndPublishForkCandidate(t, f.repo, f.identity, head, tree)
+	if err != nil || !published {
+		t.Fatalf("publish round one = %+v, %v, %v", candidate, published, err)
+	}
+	git(t, f.workspace, "checkout", "-q", "-b", "parent", base)
+	writeTaskFile(t, filepath.Join(f.workspace, "parent.txt"), "parent\n")
+	git(t, f.workspace, "add", "parent.txt")
+	git(t, f.workspace, "commit", "-qm", "parent work")
+	onto := forkspace.GitOut(f.workspace, "rev-parse", "HEAD")
+	git(t, f.workspace, "checkout", "-q", "main")
+	git(t, f.workspace, "rebase", "-q", onto)
+	rebased, rebasedTree := f.headTree()
+
+	if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, rebased); err == nil || !strings.Contains(err.Error(), "no longer descends") {
+		t.Fatalf("a rebase nobody asked for = %v; want the ancestry refusal", err)
+	}
+	request := func(candidate ForkCandidate, onto string) error {
+		unlock, err := forkspace.LockState(f.repo, f.identity.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unlock()
+		return RequestForkCandidateRebaseLocked(f.repo, candidate, onto, "parent")
+	}
+	other := candidate
+	other.ID = newAssignmentID()
+	if err := request(other, onto); err == nil {
+		t.Fatal("a rebase request for another candidate was recorded")
+	}
+	if err := request(candidate, "not-a-commit"); err == nil {
+		t.Fatal("a rebase request without an exact commit was recorded")
+	}
+	if err := request(candidate, onto); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := ReadForkCandidateRebase(f.repo, f.identity); err != nil || !ok || got.Onto != onto || got.Branch != "parent" {
+		t.Fatalf("rebase request = %q, %v, %v; want %s", got, ok, err, onto)
+	}
+	// The parent commit itself carries none of the fork's work, and an unrelated history builds on
+	// neither the reviewed round nor the parent.
+	if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, onto); err == nil {
+		t.Fatal("the parent commit itself was taken as the rebased fork")
+	}
+	git(t, f.workspace, "checkout", "-q", "--orphan", "unrelated")
+	git(t, f.workspace, "commit", "-q", "--allow-empty", "-m", "unrelated")
+	unrelated := forkspace.GitOut(f.workspace, "rev-parse", "HEAD")
+	git(t, f.workspace, "checkout", "-q", "main")
+	if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, unrelated); err == nil {
+		t.Fatal("an unrelated history was taken as the rebased fork")
+	}
+
+	if transition, err := SupersedeStaleForkCandidate(f.repo, f.identity, rebased); err != nil || !transition.Started {
+		t.Fatalf("supersede with the rebased HEAD = %+v, %v", transition, err)
+	}
+	if _, active, err := ReadForkCandidate(f.repo, f.identity); err != nil || active {
+		t.Fatalf("the conflicting round stayed landable: %v, %v", active, err)
+	}
+	review, exists, err := BeginForkCandidateReview(f.repo, f.identity, rebased, rebasedTree)
+	if err != nil || !exists || !review.Required || review.Round != 2 || review.Candidate.Head != rebased {
+		t.Fatalf("review of the rebased HEAD = %+v, %v, %v", review, exists, err)
+	}
+	if _, published, err := PublishForkCandidate(f.repo, f.identity, rebased, rebasedTree); err == nil || published {
+		t.Fatalf("an unreviewed rebase was published: %v, %v", published, err)
+	}
+	if got, ok, err := ReadForkCandidateRebase(f.repo, f.identity); err != nil || !ok || got.Onto != onto || got.Branch != "parent" {
+		t.Fatalf("rebase request during the review = %q, %v, %v; want it kept", got, ok, err)
+	}
+	authorizeCandidateReviewForTest(t, f.repo, f.identity, review.Candidate.ID)
+	if published, ok, err := PublishForkCandidate(f.repo, f.identity, rebased, rebasedTree); err != nil || !ok || published.ID != review.Candidate.ID {
+		t.Fatalf("publish the reviewed rebase = %+v, %v, %v", published, ok, err)
+	}
+	if _, ok, err := ReadForkCandidateRebase(f.repo, f.identity); err != nil || ok {
+		t.Fatalf("rebase request after publication = %v, %v; want it closed", ok, err)
+	}
+}
+
+// The loop's rebase pass moves an open request to where the branch is now, and only an open one for
+// the active round; a later conflicting merge replaces the request with its own parent commit.
+func TestForkCandidateRebaseRequestRefreshesAndIsReplaced(t *testing.T) {
+	f := newCandidateRoundFixture(t, "alpha")
+	head, tree := f.headTree()
+	candidate, published, err := reviewAndPublishForkCandidate(t, f.repo, f.identity, head, tree)
+	if err != nil || !published {
+		t.Fatalf("publish round one = %+v, %v, %v", candidate, published, err)
+	}
+	first, second := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	if err := RefreshForkCandidateRebase(f.repo, candidate, first, "main"); err == nil {
+		t.Fatal("a refresh opened a rebase request no merge asked for")
+	}
+	unlock, err := forkspace.LockState(f.repo, f.identity.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, ""); err == nil {
+		t.Fatal("a rebase request without its branch was recorded")
+	}
+	unlock()
+	if err := RefreshForkCandidateRebase(f.repo, candidate, second, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := ReadForkCandidateRebase(f.repo, f.identity); err != nil || !ok || got != (ForkCandidateRebase{Onto: second, Branch: "main"}) {
+		t.Fatalf("refreshed request = %+v, %v, %v", got, ok, err)
+	}
+	unlock, err = forkspace.LockState(f.repo, f.identity.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "release"); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if got, ok, err := ReadForkCandidateRebase(f.repo, f.identity); err != nil || !ok || got != (ForkCandidateRebase{Onto: first, Branch: "release"}) {
+		t.Fatalf("replaced request = %+v, %v, %v", got, ok, err)
+	}
+}
+
+// A rebase keeps every commit message, so each task keeps exactly the bound commits it had. The host
+// names any binding a rebase dropped, doubled, moved to another task or added.
+func TestRebaseBindingProblemsNamesEveryChangedBinding(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	ws := t.TempDir()
+	git(t, ws, "init", "-q", "-b", "main")
+	commit := func(file, message string) string {
+		t.Helper()
+		writeTaskFile(t, filepath.Join(ws, file), file+"\n")
+		git(t, ws, "add", file)
+		git(t, ws, "commit", "-qm", message)
+		return forkspace.GitOut(ws, "rev-parse", "HEAD")
+	}
+	base := commit("base.txt", "base")
+	commit("a.txt", "do a\n\nCoop-Task: a")
+	before := commit("b.txt", "do b\n\nCoop-Task: b")
+	git(t, ws, "checkout", "-q", "-b", "parent", base)
+	onto := commit("parent.txt", "parent")
+	rebased := func(messages ...string) string {
+		t.Helper()
+		git(t, ws, "checkout", "-q", "--detach", onto)
+		for i, message := range messages {
+			commit(fmt.Sprintf("r%d.txt", i), message)
+		}
+		return forkspace.GitOut(ws, "rev-parse", "HEAD")
+	}
+	for _, tc := range []struct {
+		name     string
+		messages []string
+		want     []string
+	}{
+		{"kept, with a fix on top", []string{"do a\n\nCoop-Task: a", "do b\n\nCoop-Task: b", "fix the rebase"}, nil},
+		{"dropped", []string{"do a\n\nCoop-Task: a"}, []string{"Coop-Task: b is on 0 commit(s) after the rebase and was on 1"}},
+		{"doubled", []string{"do a\n\nCoop-Task: a", "do b\n\nCoop-Task: b", "again\n\nCoop-Task: b"}, []string{"Coop-Task: b is on 2"}},
+		{"moved", []string{"do a\n\nCoop-Task: a", "do b\n\nCoop-Task: a"}, []string{"Coop-Task: a is on 2", "Coop-Task: b is on 0"}},
+		{"added", []string{"do a\n\nCoop-Task: a", "do b\n\nCoop-Task: b", "old\n\nCoop-Task: archived"}, []string{"Coop-Task: archived is on 1 commit(s) after the rebase and was on 0"}},
+	} {
+		problems, err := RebaseBindingProblems(ws, onto, before, rebased(tc.messages...))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		joined := strings.Join(problems, "\n")
+		if len(tc.want) == 0 && len(problems) != 0 {
+			t.Errorf("%s: problems %q, want none", tc.name, problems)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(joined, want) {
+				t.Errorf("%s: problems %q, want one saying %q", tc.name, problems, want)
+			}
+		}
+	}
+
+	// A commit binding an archived task sits below a commit the box marks shallow, so Git's own log
+	// of the range stops above it. The count still sees it, or refuses to count.
+	after := rebased("old\n\nCoop-Task: archived", "do a\n\nCoop-Task: a", "do b\n\nCoop-Task: b")
+	boundary := forkspace.GitOut(ws, "rev-parse", after+"~1")
+	writeTaskFile(t, filepath.Join(ws, ".git", "shallow"), boundary+"\n") // the real git dir, as a box writes it
+	defer os.Remove(filepath.Join(ws, ".git", "shallow"))
+	problems, err := RebaseBindingProblems(ws, onto, before, after)
+	if err == nil && !strings.Contains(strings.Join(problems, "\n"), "Coop-Task: archived") {
+		t.Errorf("a binding below a shallow boundary went uncounted: problems %q", problems)
 	}
 }
 

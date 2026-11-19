@@ -64,6 +64,7 @@ type iterationStreamDecoder interface {
 	io.Writer
 	flush()
 	lastIterResult() *iterResult
+	finalMessage() string
 	streamOutcome() providerStreamOutcome
 	setActivity(streamActivity)
 	setDisplayWidth(func() int)
@@ -167,7 +168,13 @@ type ndjsonDecoder struct {
 	palette       ui.Palette
 	plainCopy     io.Writer
 	maxEventBytes int
+	// final is the agent's last message, as the provider's own message events carry it, so a reader
+	// of the reply never mistakes tool output or stderr for the agent's words.
+	final string
 }
+
+// finalMessage is the agent's last message of the attempt, "" when it sent none.
+func (d *ndjsonDecoder) finalMessage() string { return d.final }
 
 const (
 	maxStreamEventBytes       = 1 << 20
@@ -306,6 +313,7 @@ func (d *ndjsonDecoder) setRender(p ui.Palette, plainCopy io.Writer) {
 
 func (d *ndjsonDecoder) emitAssistant(text string) {
 	text = strings.ReplaceAll(text, "\r\n", "\n")
+	d.final = text
 	for _, raw := range strings.Split(text, "\n") {
 		clean := cleanDiagnosticLine(raw)
 		if clean == "" {
@@ -645,6 +653,7 @@ func (d *streamDecoder) assistant(msg json.RawMessage) {
 				if !d.limitShown || !ladder.LimitNotice(t) {
 					d.emitAssistant(t) // mark the agent's own voice
 				}
+				d.final = t
 				d.toTail(t) // the tail (limit detection) always gets the plain text
 				d.lastText = t
 				if agents.ClaudeCreditLimitNotice(t) {
@@ -823,6 +832,9 @@ func (d *streamDecoder) result(ev *streamEvent) {
 	// again as the result, and the tail already holds it.
 	if t := strings.TrimSpace(ev.Result); t != "" && t != d.lastText {
 		d.toTail(t)
+	}
+	if t := strings.TrimSpace(ev.Result); t != "" {
+		d.final = t // the result is the reply itself
 	}
 }
 

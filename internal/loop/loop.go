@@ -229,7 +229,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// nothing else reads the config after it. Caveat: a verify: pass whose e2e
 	// depends on MCP tooling needs mcp left on — repo-local e2e via bash is unaffected.
 	var recoveredReviewCompletions []string
-	if spec.CandidateReview == nil {
+	// A fork's candidate review and its rebase pass hold no task, so they settle no queue state.
+	candidatePass := spec.CandidateReview != nil || spec.Rebase != nil
+	if !candidatePass {
 		if err := tasks.ReconcileInterruptedCompletions(hosts); err != nil {
 			return 1, fmt.Errorf("recover interrupted completion: %w", err)
 		}
@@ -242,7 +244,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	// the loop start drops that review and returns the task to the queue instead of refusing here.
 	// A fork's candidate review only reads, so it keeps the strict load.
 	loadCohort := tasks.RecoverPendingReviews
-	if spec.CandidateReview != nil {
+	if candidatePass {
 		loadCohort = tasks.LoadPendingReviews
 	}
 	pendingReview, err := loadCohort(repo, hosts)
@@ -294,6 +296,17 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			}
 		}
 	}
+	if spec.Rebase != nil {
+		if spec.CandidateReview != nil || len(spec.ReviewTasks) > 0 || resumingCohort {
+			return 1, errors.New("a fork's rebase pass cannot share review state")
+		}
+		if len(currentCustom) > 0 {
+			return 1, errors.New("a fork's rebase pass requires the built-in loop agent; remove work.command")
+		}
+		if spec.Rebase.Branch == "" || spec.Rebase.ParentBranch == "" || !forkspace.ValidObjectID(spec.Rebase.Onto) {
+			return 1, errors.New("invalid fork rebase specification")
+		}
+	}
 	if len(spec.ReviewTasks) > 0 && len(currentCustom) > 0 {
 		return 1, errors.New("--review-task requires the built-in loop review; remove work.command or omit the import")
 	}
@@ -323,7 +336,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 			return 1, err
 		}
 		if cf.Todo+cf.Doing == 0 && len(spec.ReviewTasks) == 0 && len(pendingReview.Subjects) == 0 &&
-			len(recoveredReviewCompletions) == 0 && spec.CandidateReview == nil {
+			len(recoveredReviewCompletions) == 0 && !candidatePass {
 			if preflightBuiltinRan {
 				printPreflight(hosts, builtinResult)
 			}
@@ -433,7 +446,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	runid := randid.Hex(8)
 	c.runID = runid
 	c.loopNote = nil
-	if spec.CandidateReview == nil { // a candidate review holds no task, so it leaves the last run's note
+	if !candidatePass { // a candidate pass holds no task, so it leaves the last run's note
 		c.loopNote = tasks.NoteLoopRun(hosts, runid)
 	}
 	preparedServices := ""
@@ -551,11 +564,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	if spec.CandidateReview != nil {
 		review := *spec.CandidateReview
 		ui.Note("")
-		if review.PreviousRound > 0 {
-			ui.Note("Review round %d supersedes round %d.", review.Round, review.PreviousRound)
-		} else {
-			ui.Note("Review round %d covers the complete fork candidate.", review.Round)
-		}
+		ui.Note("%s", candidateReviewHeading(review))
 		ui.Note("Reviewer · %s · %s", cleanDiagnosticLine(agents.DisplayTarget(activeRotations.signoff.Active().String())), ui.Count(len(review.TaskIDs), "task"))
 		prompt := forkCandidateReviewPrompt(repo, queues, review, lc.Signoff.Prompt)
 		observe := func(run reviewRunResult, start time.Time, headBefore string) {
@@ -582,6 +591,12 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		}
 		ui.OK("Candidate review round %d passed", review.Round)
 		return 0, nil
+	}
+	if spec.Rebase != nil {
+		return c.runRebasePass(iterCtx, *spec.Rebase, rebasePass{
+			repo: repo, img: img, forkName: forkName, runid: runid, continueCmd: continueCmd,
+			rot: rot, hosts: hosts, sink: sink, peers: peers, iterCmd: iterCmd, wake: wake, stopped: softStop.Load,
+		})
 	}
 
 	// Pre-flight: one best-effort housekeeping pass before working the queue. The built-in job —

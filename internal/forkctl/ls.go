@@ -89,7 +89,7 @@ func (c *Control) ForkLs(args []string) (int, error) {
 		if s.stateCell() == "launch-wait" {
 			listing("    %s", ui.SafeInline(s.launchWaitLine()))
 		}
-		if s.stateCell() == "changed" {
+		if s.stateCell() == "changed" || s.stateCell() == "conflict" {
 			listing("    %s", s.driftLine())
 		}
 		if s.Agent != "" && s.Agent != "?" {

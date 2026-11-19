@@ -625,3 +625,19 @@ func TestForkCandidateReviewPromptFillsLoopVariables(t *testing.T) {
 		t.Errorf("candidate prompt kept or misfilled its variables:\n%s", got)
 	}
 }
+
+// A round rebased after its merge conflicted is reviewed as new work from the parent commit, not as
+// the small change since the earlier round, which its history no longer contains.
+func TestForkCandidateReviewPromptReviewsARebaseInFull(t *testing.T) {
+	review := CandidateReviewSpec{CandidateID: "c2", Head: "abc123", Tree: "def456", Round: 2, PreviousRound: 1, TaskIDs: []string{"task-a"}}
+	if got := forkCandidateReviewPrompt("/repo", []string{".agent/tasks"}, review, ""); strings.Contains(got, "rebased onto") {
+		t.Errorf("an ordinary round reads as a rebase:\n%s", got)
+	}
+	review.RebasedOnto = "fed987"
+	got := forkCandidateReviewPrompt("/repo", []string{".agent/tasks"}, review, "")
+	for _, want := range []string{"rebased onto: fed987", "complete diff from that commit to HEAD as new work"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rebased round's prompt does not say %q:\n%s", want, got)
+		}
+	}
+}

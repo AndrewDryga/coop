@@ -352,6 +352,16 @@ func (c *Control) gateFor(repo string) ([]string, error) {
 	return c.cfg.Gate, nil
 }
 
+// MergeGateCommand is the command a merge of repo's forks revalidates with, as one shell line, ""
+// when none is configured.
+func (c *Control) MergeGateCommand(repo string) (string, error) {
+	gate, err := c.gateFor(repo)
+	if err != nil || len(gate) == 0 {
+		return "", err
+	}
+	return shellLine(gate), nil
+}
+
 // MergeGate resolves the box image when a merge gate is configured (so a merge can be revalidated
 // in the box), or returns "" when none is.
 func (c *Control) MergeGate(repo string) (string, error) {
@@ -870,12 +880,12 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 		return mergeOutcome{}, err
 	}
 	// Say which branch we're landing onto — merge rebases onto your *current* branch,
-	// so this is your chance to notice you're on the wrong one.
+	// so this is your chance to notice you're on the wrong one. Said only once a rebase does start,
+	// not above a refusal that never rebases.
 	target := forkspace.GitOut(repo, "rev-parse", "--abbrev-ref", "HEAD")
 	if target == "" || target == "HEAD" {
 		target = "the current commit (detached HEAD)"
 	}
-	ui.Note("Rebasing onto %s", target)
 	if hasGeneration {
 		candidate, hasCandidate, err := tasks.ReadForkCandidate(repo, identity)
 		if err != nil {
@@ -894,8 +904,16 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			}
 			head, tree := forkspace.GitOut(ws, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 			if err := tasks.ValidateForkCandidateLocked(repo, candidate, head, tree); err != nil {
-				if drift := forkCandidateDrift(ws, candidate, head); drift != driftNone {
-					return mergeOutcome{}, candidateDriftError(ws, name, candidate, head, drift, true)
+				rebase, requested, rebaseErr := tasks.ReadForkCandidateRebase(repo, identity)
+				if rebaseErr != nil {
+					return mergeOutcome{}, rebaseErr
+				}
+				var open *tasks.ForkCandidateRebase
+				if requested {
+					open = &rebase
+				}
+				if drift := forkCandidateDrift(ws, name, candidate, head, open); drift != driftNone {
+					return mergeOutcome{}, candidateDriftError(ws, name, candidate, head, drift, open, true)
 				}
 				return mergeOutcome{}, fmt.Errorf("%s reviewed candidate is stale: %w", name, err)
 			}
@@ -906,10 +924,12 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			if err := writeLandIntent(repo, intent); err != nil {
 				return mergeOutcome{}, err
 			}
+			ui.Note("Rebasing onto %s", target)
 			finished, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
 			return finishLand(landed, finished.RebasedHead, err)
 		}
 	}
+	ui.Note("Rebasing onto %s", target)
 	// Rebase the fork onto the parent's HEAD inside the fork's OWN clone — an isolated candidate.
 	// The parent tree is NOT touched here, so a red gate below has nothing to roll back.
 	if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
@@ -1011,14 +1031,21 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 		}
 	}
 	var rebaseErr error
-	if forkspace.WantsSigning() {
-		rebaseErr = gitSign(ws, append(forkspace.TrustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)
+	var signOutput []byte
+	signing := forkspace.WantsSigning()
+	if signing {
+		signOutput, rebaseErr = gitSignQuiet(ws, append(forkspace.TrustedSignArgs(), "rebase", "-f", "--gpg-sign", head, name)...)
 	} else {
-		rebaseErr = forkspace.GitRun(ws, "rebase", head, name)
+		_, rebaseErr = forkspace.GitOutErr(ws, "rebase", head, name) // its error carries git's own words
 	}
 	if rebaseErr != nil {
+		// Unmerged paths tell a conflict from any other refusal, such as signing, which leave none.
+		conflicts := strings.FieldsFunc(forkspace.GitOut(ws, "diff", "--name-only", "--diff-filter=U", "-z"), func(r rune) bool { return r == 0 })
+		if len(conflicts) == 0 {
+			_, _ = os.Stderr.Write(signOutput) // what the signer said; a conflict's git hints stay out
+		}
 		_ = forkspace.GitRun(ws, "rebase", "--abort")
-		return &rebaseFailedError{name: name, branch: gitBranch(repo), ws: ws, onto: head}
+		return &rebaseFailedError{name: name, branch: gitBranch(repo), ws: ws, onto: head, conflicts: conflicts, signing: signing, cause: rebaseErr}
 	}
 	// The fork stands on head now, so the parent's commits up to it are no changes of the fork's, even
 	// if the checks below fail and leave it rebased. Only a display (coop fork ls) reads the base, so
@@ -1029,7 +1056,14 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 
 // rebaseFailedError is a rebase onto the parent that git refused (a conflict, or signing) and that
 // was aborted. Its advice fits a fork without a reviewed candidate; a task land gives its own.
-type rebaseFailedError struct{ name, branch, ws, onto string }
+// conflicts names the paths git could not merge, none when something else stopped it; signing says
+// whether the rebase was signing its commits, and cause is git's own error.
+type rebaseFailedError struct {
+	name, branch, ws, onto string
+	conflicts              []string
+	signing                bool
+	cause                  error
+}
 
 func (e *rebaseFailedError) Error() string {
 	return fmt.Sprintf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (%s && git rebase %s %s), then re-run", e.name, e.branch, shellLine([]string{"cd", e.ws}), e.onto, e.name)

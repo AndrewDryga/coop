@@ -375,16 +375,43 @@ only the tasks recorded in that candidate. A journal lets co:op resume these ste
 interruption. A `Coop-Task` trailer helps with consistency checks and search, but it cannot complete
 a task on its own.
 
-If the candidate's commits conflict with your branch, nothing merges and the fork keeps them as
-reviewed, with no merge left to resume. A copy you rebase by hand would need a new review, so
-change your branch until the commits apply and merge again, or discard the fork's work with
-`coop fork rm <name> --force`, which returns its tasks to the queue.
+Forks that work in parallel often change the same files, so after you merge one, the next one's
+reviewed commits can conflict with your branch. Then nothing merges, and the refusal names the
+files and the next step:
+
+```sh
+coop fork <name> --loop     # its agent rebases the work onto your branch and resolves the conflict
+coop fork merge <name>      # once the rebased work passed its review
+```
+
+Until then `coop fork ls` shows the fork as "conflicts with your branch". The loop runs one pass
+whose agent rebases the fork's branch onto the commit your branch is at when the pass starts, keeps
+every commit message with its `Coop-Task` trailer, resolves the conflict, and runs your merge gate
+and `git diff --check` on the result. co:op then checks that every task still has exactly the
+commits it had. The rebased work goes through the same full candidate review as new work, because no
+earlier review saw it, and the reviewer gets the checks the pass ran. Only that reviewed commit can
+merge. If the loop stops before the review, run `coop fork <name> --loop` again: a finished rebase
+goes straight to review, and an unfinished one, even one stopped in the middle, is redone, so never
+reset the fork by hand. If the rebase leaves none of the fork's commits because your branch already
+has the work, there is nothing to review or merge, and the loop says so: discard the fork's work
+with `coop fork rm <name> --force`, which returns its tasks to the queue, and decide there what they
+still need. If it left none because the rebase dropped them, co:op says which changes are missing:
+go back to the reviewed commit it names and run the loop again. You can also change your branch
+until the reviewed commits apply and merge again, or discard the fork's work.
+
+This path is for ordinary forks. An `--isolated` fork never shares history with your branch, so
+co:op cannot rebase it there; when its commits conflict, change your branch until they apply, or
+discard its work with `coop fork rm <name> --force` and let a new fork redo it.
 
 A fork whose branch moved after its final review shows as "changed after review" in `coop fork ls`,
 and `coop fork merge` refuses it. New commits on top of the reviewed one need another review, which
-the fork's loop gives them. A branch that no longer builds on the reviewed commit, such as one you
-rebased by hand, can neither merge nor be reviewed again: reset the fork's branch to the reviewed
-commit that the refusal names, or discard the fork's work with `coop fork rm <name> --force`.
+the fork's loop gives them. Any other branch that no longer builds on the reviewed commit, such as
+one you rewrote by hand with no conflicting merge waiting, can neither merge nor be reviewed again:
+reset the fork's branch to the reviewed commit that the refusal names, or discard the fork's work
+with `coop fork rm <name> --force`.
+
+A loop that stops prints a `Continue:` line that repeats the exact run you started, its agent and
+options included. `coop fork <name> --loop` resumes it as well, with the fork's saved agent.
 
 If a fork can't reach a candidate, for example because its box keeps failing a check your project
 passes, you can bring its commit to your branch yourself, such as with `git cherry-pick`. Then run

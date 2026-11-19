@@ -23,6 +23,8 @@ type forkStatus struct {
 	Reserved                     bool
 	Ready                        bool
 	Drift                        candidateDrift // how the branch moved off its reviewed candidate, when Ready
+	RebaseBranch                 string         // the parent branch an open rebase request names
+	EmptyDropped                 bool           // an empty rebase lost reviewed work, rather than the branch having it
 	Landing                      bool
 	Ins, Del                     int
 	Dirty                        bool
@@ -112,10 +114,25 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		landing = landing || observed.PendingLand
 		cleanup = cleanup || observed.CleanupPending || executionCleanup > 0
 	}
-	drift := driftNone
+	drift, rebaseBranch, emptyDropped := driftNone, "", false
 	if ready && hasIdentity && !landing {
 		if candidate, ok, err := tasks.ReadForkCandidate(repo, identity); err == nil && ok {
-			drift = forkCandidateDrift(ws, candidate, forkspace.GitOut(ws, "rev-parse", "HEAD"))
+			var open *tasks.ForkCandidateRebase
+			// A display: an unreadable request only reads as none.
+			if rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err == nil && requested {
+				open, rebaseBranch = &rebase, rebase.Branch
+				// Count the fork's branch from where it meets the branch, as merge does: not from the
+				// fork's old base, which counts the branch's own changes once rebased, nor the work
+				// tree, which mid-rebase holds conflict markers merge never sees.
+				branchRef := "refs/heads/" + name
+				if base := forkspace.GitOut(ws, "merge-base", rebase.Onto, branchRef); base != "" {
+					ins, del = forkspace.ParseShortstat(forkspace.GitOut(ws, "diff", "--shortstat", base, branchRef))
+				}
+			}
+			drift = forkCandidateDrift(ws, name, candidate, forkspace.GitOut(ws, "rev-parse", "HEAD"), open)
+			if drift == driftEmpty {
+				emptyDropped = len(droppedReviewedWork(ws, candidate.Head, open.Onto)) > 0
+			}
 		}
 	}
 	cost, _ := c.host.forkCost(ws)
@@ -135,6 +152,8 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		Reserved:            reserved,
 		Ready:               ready,
 		Drift:               drift,
+		RebaseBranch:        rebaseBranch,
+		EmptyDropped:        emptyDropped,
 		Landing:             landing,
 		Ins:                 ins,
 		Del:                 del,
@@ -221,6 +240,9 @@ func (s forkStatus) stateCell() string {
 	if s.Landing {
 		return "landing"
 	}
+	if s.Ready && (s.Drift == driftConflicts || s.Drift == driftRebasing) {
+		return "conflict"
+	}
 	if s.Ready && s.Drift != driftNone {
 		return "changed"
 	}
@@ -259,6 +281,8 @@ func stateWords(state, system string) string {
 		return "ready to merge"
 	case "changed":
 		return "changed after review"
+	case "conflict":
+		return "conflicts with your branch"
 	case "failed":
 		return "stopped"
 	case "legacy":
@@ -296,8 +320,20 @@ func (s forkStatus) tasksLine() string {
 // driftLine says what moved a reviewed fork off its candidate and where to go next; coop fork merge
 // gives the exact commands.
 func (s forkStatus) driftLine() string {
-	if s.Drift == driftAhead {
+	switch s.Drift {
+	case driftAhead:
 		return "Changed: new commits since its review; review them: coop fork " + s.Name + " --loop"
+	case driftRebased:
+		return "Changed: rebased onto " + parentBranchWords(s.RebaseBranch) + " since its review; review it: coop fork " + s.Name + " --loop"
+	case driftConflicts:
+		return "Conflicts with " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
+	case driftRebasing:
+		return "Rebase onto " + parentBranchWords(s.RebaseBranch) + " not finished; rebase and review: coop fork " + s.Name + " --loop"
+	case driftEmpty:
+		if s.EmptyDropped {
+			return "Rebase dropped its reviewed work; go back to the reviewed commit (coop fork merge " + s.Name + " names it), then rebase again: coop fork " + s.Name + " --loop"
+		}
+		return "Rebase left no commits: " + parentBranchWords(s.RebaseBranch) + " already has this work; discard it: coop fork rm " + s.Name + " --force"
 	}
 	return "Changed: its branch no longer builds on the reviewed commit; coop fork merge " + s.Name + " says how to go on"
 }

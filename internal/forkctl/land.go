@@ -267,7 +267,15 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 			if err := removeLandIntent(repo, intent); err != nil {
 				return intent, false, errors.Join(err, failed)
 			}
-			return intent, false, fmt.Errorf("%s: its reviewed commits do not rebase onto %s (conflicts or signing); nothing merged. Rebased by hand they would need a new review, so fix the signing or change %s until they apply, then merge again, or discard the fork's work and return its tasks to the queue: coop fork rm %s --force", name, failed.branch, failed.branch, name)
+			if len(failed.conflicts) == 0 {
+				return intent, false, rebaseRefusedError(name, failed)
+			}
+			// A conflict is ordinary between parallel forks. The fork's loop rebases the work and
+			// reviews the result as a new round; until then this reviewed round stays what may land.
+			if err := tasks.RequestForkCandidateRebaseLocked(repo, intent.Candidate, failed.onto, failed.branch); err != nil {
+				return intent, false, errors.Join(err, failed)
+			}
+			return intent, false, candidateConflictError(name, failed)
 		}
 		intent.RebasedHead = forkspace.GitOut(ws, "rev-parse", "HEAD")
 		intent.RebasedTree = forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
