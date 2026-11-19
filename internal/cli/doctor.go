@@ -128,7 +128,7 @@ func (a *app) cmdDoctor(args []string) (int, error) {
 	defer func() { a.cfg = original }()
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return 1, reported("Could not check the Coop box",
-			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),
+			runtimeUnavailableReason(a.rt.Name),
 			fmt.Sprintf("Start %s, then run coop doctor again.", runtimeTitle(a.rt.Name)))
 	}
 	repo, withoutProject, err := doctorProject(a.cfg.RepoOverride)

@@ -36,7 +36,7 @@ func (a *app) cmdUp(args []string) (int, error) {
 	}
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return 1, reported("Could not start services",
-			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),
+			runtimeUnavailableReason(a.rt.Name),
 			fmt.Sprintf("Start %s, then run coop up again.", runtimeTitle(a.rt.Name)))
 	}
 	if !a.rt.SupportsCompose() {
@@ -507,7 +507,7 @@ func (a *app) cmdDown(args []string) (int, error) {
 	}
 	if err := a.rt.EnsureDaemon(); err != nil {
 		return 1, reported("Could not stop services",
-			fmt.Sprintf("%s is unavailable.", runtimeTitle(a.rt.Name)),
+			runtimeUnavailableReason(a.rt.Name),
 			fmt.Sprintf("Start %s, then run coop down again.", runtimeTitle(a.rt.Name)))
 	}
 	if !a.rt.SupportsCompose() {

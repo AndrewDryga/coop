@@ -15,6 +15,7 @@ import (
 	goruntime "runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -164,13 +165,32 @@ func (r Runtime) EnsureDaemonContext(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return errDaemonDown
+		return daemonDown()
 	}
 	return ctx.Err()
 }
 
-// errDaemonDown is what a daemon probe says of a Docker that is installed but not answering.
-var errDaemonDown = fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
+// daemonDown is what a daemon probe says of a Docker that is installed but not answering. A
+// DOCKER_HOST or DOCKER_CONTEXT that names the wrong daemon makes a running Docker look stopped,
+// so a set one is named as the likely cause rather than sending the reader to restart Docker.
+func daemonDown() error {
+	if selection := DaemonSelection(); selection != "" {
+		return fmt.Errorf("%w — %s may point at a Docker that is not running; fix or unset it, or start that Docker, and retry", ErrDaemonUnavailable, selection)
+	}
+	return fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
+}
+
+// DaemonSelection names the environment variables that point Docker away from its default daemon,
+// as NAME="value" joined by " and ", or "" when neither DOCKER_HOST nor DOCKER_CONTEXT is set.
+func DaemonSelection() string {
+	var set []string
+	for _, key := range []string{"DOCKER_HOST", "DOCKER_CONTEXT"} {
+		if value := os.Getenv(key); value != "" {
+			set = append(set, key+"="+strconv.Quote(value))
+		}
+	}
+	return strings.Join(set, " and ")
+}
 
 // DaemonID is the daemon probe that also says which daemon answered. The ID names the daemon
 // itself: every context or socket path that reaches one daemon gets the same ID, and a socket path
@@ -191,7 +211,7 @@ func (r Runtime) DaemonID(ctx context.Context) (string, error) {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		return "", errDaemonDown
+		return "", daemonDown()
 	}
 	if id := strings.TrimSpace(string(out)); dockerToken(id, 128) {
 		return id, ctx.Err()

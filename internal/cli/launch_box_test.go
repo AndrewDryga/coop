@@ -136,6 +136,7 @@ func TestCheckCoopBoxRebuildsAMismatchedManagedImage(t *testing.T) {
 // does not print it a second time.
 func TestCheckCoopBoxFailureIsNestedAndReportedOnce(t *testing.T) {
 	// Docker is not answering: the shim is called docker, and its `info` fails.
+	clearDockerSelection(t)
 	a, recorder := boxCheckApp(t, "docker", 0)
 	stampBoxDefinition(t, a.cfg, "coop v9.0.0-144-g091fdf9\ndef stale\n")
 	var err error

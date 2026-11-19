@@ -510,7 +510,7 @@ func (a *app) ensureACPImage() error {
 	// probe the daemon before blaming the image — otherwise a stopped Docker is reported as a
 	// build the editor should wait through.
 	if err := a.rt.EnsureDaemon(); err != nil {
-		return ui.CommandFailed("Could not prepare the Coop box", "Docker is unavailable.",
+		return ui.CommandFailed("Could not prepare the Coop box", runtimeUnavailableReason(a.rt.Name),
 			[2]string{"", "Start Docker, then reconnect your editor."})
 	}
 	ui.Heading("Checking the Coop box")

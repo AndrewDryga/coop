@@ -111,6 +111,28 @@ func TestEnsureDaemonContextReturnsCallerDeadline(t *testing.T) {
 	}
 }
 
+// A DOCKER_CONTEXT or DOCKER_HOST that names the wrong daemon makes a running Docker look stopped,
+// so a probe that fails with one set names it as the likely cause. Without one the advice is still
+// to start Docker.
+func TestEnsureDaemonNamesTheDockerSelectionWhenItFails(t *testing.T) {
+	docker := filepath.Join(t.TempDir(), "docker")
+	if err := os.WriteFile(docker, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ host, context, want string }{
+		{want: "Docker is unavailable — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry"},
+		{context: "nope", want: `Docker is unavailable — DOCKER_CONTEXT="nope" may point at a Docker that is not running; fix or unset it, or start that Docker, and retry`},
+		{host: "unix:///tmp/none.sock", want: `Docker is unavailable — DOCKER_HOST="unix:///tmp/none.sock" may point at a Docker that is not running; fix or unset it, or start that Docker, and retry`},
+	} {
+		t.Setenv("DOCKER_HOST", tc.host)
+		t.Setenv("DOCKER_CONTEXT", tc.context)
+		err := (Runtime{Name: docker}).EnsureDaemon()
+		if !errors.Is(err, ErrDaemonUnavailable) || err.Error() != tc.want {
+			t.Errorf("EnsureDaemon = %v, want %q", err, tc.want)
+		}
+	}
+}
+
 // DaemonID is the launch's daemon probe, so a stopped daemon still fails it with the same advice.
 // What it adds is the daemon's own ID, the proof the daily sweep needs; an answer that is no ID is
 // no proof, and then the plain probe says whether the daemon is up (a CLI may print a blank answer

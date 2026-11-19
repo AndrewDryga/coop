@@ -141,6 +141,7 @@ func TestApprovedBuild(t *testing.T) {
 
 	// No runtime means nothing was built and nothing was said about an image.
 	t.Run("31g-build-runtime-unavailable", func(t *testing.T) {
+		clearDockerSelection(t)
 		cfg := &config.Config{RepoOverride: t.TempDir(), BoxHome: t.TempDir(), BaseImage: "coop-box"}
 		cfg.SetEgress("open")
 		a := &app{cfg: cfg, rt: buildShim{}.build(t), rtSet: true}

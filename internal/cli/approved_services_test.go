@@ -214,6 +214,7 @@ func TestApprovedServiceStart(t *testing.T) {
 
 	// No runtime means nothing started, and the fix is to start the runtime.
 	t.Run("28g-runtime-unavailable", func(t *testing.T) {
+		clearDockerSelection(t)
 		repo := serviceProject(t)
 		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: downRuntime(t), rtSet: true}
 		var code int
@@ -222,6 +223,20 @@ func TestApprovedServiceStart(t *testing.T) {
 			t.Errorf("a start with no runtime exited %d, want 1", code)
 		}
 		assertApprovedOutput(t, "28g-runtime-unavailable", out)
+	})
+
+	// A set DOCKER_CONTEXT can make a running Docker look stopped, so the reason names it.
+	t.Run("28g2-runtime-unavailable-context", func(t *testing.T) {
+		clearDockerSelection(t)
+		t.Setenv("DOCKER_CONTEXT", "nope")
+		repo := serviceProject(t)
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: downRuntime(t), rtSet: true}
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+		if code != 1 {
+			t.Errorf("a start with no runtime exited %d, want 1", code)
+		}
+		assertApprovedOutput(t, "28g2-runtime-unavailable-context", out)
 	})
 
 	// A service that never became healthy is Compose's own answer, kept as the cause — and the
@@ -529,6 +544,14 @@ func downRuntime(t *testing.T) runtime.Runtime {
 		t.Fatal(err)
 	}
 	return runtime.Runtime{Name: path}
+}
+
+// clearDockerSelection unsets the variables that point Docker at another daemon, which a reason
+// for an unreachable Docker names: a developer's own must not reach a transcript.
+func clearDockerSelection(t *testing.T) {
+	t.Helper()
+	t.Setenv("DOCKER_HOST", "")
+	t.Setenv("DOCKER_CONTEXT", "")
 }
 
 // normalizePort replaces this checkout's stable per-workspace host port with the one the approved

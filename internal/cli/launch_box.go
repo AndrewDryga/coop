@@ -70,7 +70,7 @@ func (a *app) updateCoopBox(narration [2]string, build func() error) error {
 	ui.Note("  %s", narration[1])
 	again := "run '" + a.launchCommand() + "' again"
 	if err := a.rt.EnsureDaemon(); err != nil {
-		ui.Fail("Could not update the box", "Docker is unavailable.", "Start Docker, then "+again+".")
+		ui.Fail("Could not update the box", runtimeUnavailableReason(a.rt.Name), "Start Docker, then "+again+".")
 		return ui.Reported(err)
 	}
 	if err := build(); err != nil {

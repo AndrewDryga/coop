@@ -223,7 +223,7 @@ func buildFailure(headline string, err error, runtimeName, retry string) error {
 		return reported("Could not prepare the build files", pathReason("", "read", stage.Err),
 			"Fix the path or permissions, then run "+retry+" again.")
 	case runtimeUnavailable(err):
-		return reported(headline, fmt.Sprintf("%s is unavailable.", runtimeTitle(runtimeName)),
+		return reported(headline, runtimeUnavailableReason(runtimeName),
 			fmt.Sprintf("Start %s, then run %s again.", runtimeTitle(runtimeName), retry))
 	default:
 		return reported(headline, sentence(firstLine(err)),
@@ -501,7 +501,7 @@ func updateBoxFailure(err error, runtimeName string, selfFailed bool) error {
 	case errors.As(err, &stage):
 		actions = []string{"Fix the path or permissions, then run coop update --box-only."}
 	case runtimeUnavailable(err):
-		reason = fmt.Sprintf("%s is unavailable.", runtimeTitle(runtimeName))
+		reason = runtimeUnavailableReason(runtimeName)
 		actions = []string{fmt.Sprintf("Start %s, then run coop update --box-only.", runtimeTitle(runtimeName))}
 	}
 	if !selfFailed && releaseVersion(resolveVersion()) {

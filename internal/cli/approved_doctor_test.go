@@ -232,6 +232,7 @@ func TestApprovedDoctorReports(t *testing.T) {
 // project to check against.
 func TestApprovedDoctorRefusals(t *testing.T) {
 	t.Run("18l-doctor-no-runtime", func(t *testing.T) {
+		clearDockerSelection(t)
 		bin := t.TempDir()
 		if err := os.WriteFile(filepath.Join(bin, "docker"), []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
 			t.Fatal(err)

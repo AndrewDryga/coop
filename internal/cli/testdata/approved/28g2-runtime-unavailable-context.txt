@@ -1,0 +1,5 @@
+✗ Could not start services
+
+      Docker is unavailable. DOCKER_CONTEXT="nope" is set; check that it names a running Docker.
+
+  Start Docker, then run coop up again.

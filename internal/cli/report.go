@@ -114,6 +114,18 @@ func runtimeTitle(name string) string {
 // answering — the one failure whose remedy is "start it", not "fix your command".
 func runtimeUnavailable(err error) bool { return errors.Is(err, runtime.ErrDaemonUnavailable) }
 
+// runtimeUnavailableReason is the reason slot for a runtime that did not answer (only Docker's
+// daemon is probed, so only Docker reaches it). When DOCKER_HOST or
+// DOCKER_CONTEXT is set it names that as the likely cause: a wrong one makes a running Docker look
+// stopped, and "start Docker" alone would send the reader to the wrong fix.
+func runtimeUnavailableReason(name string) string {
+	reason := runtimeTitle(name) + " is unavailable."
+	if selection := runtime.DaemonSelection(); selection != "" {
+		reason += " " + selection + " is set; check that it names a running Docker."
+	}
+	return reason
+}
+
 // firstLine is the one sentence of a runtime/OS error worth putting in a reason slot: a bounded,
 // single line. A compose or Docker failure can arrive with a page of diagnostics attached — that
 // page is already on the terminal as the runtime's own output, and repeating its tail inside the
