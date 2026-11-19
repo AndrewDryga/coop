@@ -2891,3 +2891,52 @@ func TestOrdinaryForkMergeIgnoresUntrackedFilesItDoesNotLandOn(t *testing.T) {
 		}
 	})
 }
+
+// Answering no at the merge prompt changes nothing and exits 1, as every declined confirmation does;
+// yes still merges and exits 0.
+func TestForkMergeDeclinedExitsOne(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		isolated bool
+		answers  string
+		wantCode int
+		merged   bool
+	}{
+		{name: "declined", answers: "n\n", wantCode: 1},
+		{name: "accepted", answers: "y\nn\n", merged: true},
+		{name: "isolated declined", isolated: true, answers: "n\n", wantCode: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var repo, ws, name string
+			if tc.isolated {
+				var identity forkspace.Identity
+				repo, ws, _, identity, _ = prepareForkTaskCandidateMode(t, "iso", true, true, nil)
+				name = identity.Name
+			} else {
+				repo, name = initRepo(t), "a"
+				var err error
+				if ws, err = forkspace.Setup(repo, name); err != nil {
+					t.Fatal(err)
+				}
+				writeTaskFile(t, filepath.Join(ws, "feature.txt"), "fork\n")
+				git(t, ws, "add", "-A")
+				git(t, ws, "commit", "-qm", "fork work")
+			}
+			before := forkspace.GitOut(repo, "rev-parse", "HEAD")
+			c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+			defer ui.AnswerConfirmationsFrom(strings.NewReader(tc.answers))()
+			var code int
+			var err error
+			stderr := captureStderr(t, func() { code, err = c.ForkMerge([]string{name}) })
+			if code != tc.wantCode || err != nil {
+				t.Fatalf("ForkMerge after %q = (%d, %v), want (%d, nil)\n%s", tc.answers, code, err, tc.wantCode, stderr)
+			}
+			if merged := forkspace.GitOut(repo, "rev-parse", "HEAD") != before; merged != tc.merged {
+				t.Errorf("merged = %v, want %v\n%s", merged, tc.merged, stderr)
+			}
+			if !pathExists(ws) {
+				t.Errorf("the fork is gone\n%s", stderr)
+			}
+		})
+	}
+}

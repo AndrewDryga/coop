@@ -1257,7 +1257,7 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	if !approve("Merge these commits?", yes) {
 		ui.Note("")
 		ui.Note("Cancelled. No commits merged.")
-		return 0, nil
+		return 1, nil // a declined confirmation exits 1, as every other one does: nothing changed
 	}
 	result, err := c.mergeOne(repo, img, name, force)
 	defer result.approval.close()

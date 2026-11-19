@@ -13,6 +13,7 @@ import (
 )
 
 func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace.Identity, force, yes, skipEmpty bool) (int, error) {
+	declined := false
 	result, err := func() (mergeOutcome, error) {
 		unlock, err := lockForkForMerge(repo, name)
 		if err != nil {
@@ -48,6 +49,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 			ui.Note("  %s · exact reviewed candidate %s", ui.Count(n, "commit"), candidate.head)
 			if !approve("Publish these commits?", yes) {
 				ui.Note("Cancelled. Parent source, index and refs are unchanged.")
+				declined = true
 				return false
 			}
 			return true
@@ -64,6 +66,9 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 			return 2, err
 		}
 		return 1, err
+	}
+	if declined {
+		return 1, nil // nothing changed, as after any declined confirmation
 	}
 	if result.skipped {
 		if skipEmpty {
