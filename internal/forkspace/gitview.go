@@ -54,6 +54,9 @@ var gitViewHardening = []string{
 	"-c", "gc.auto=0",
 	"-c", "maintenance.auto=false",
 	"-c", "fetch.writeCommitGraph=false",
+	// The box can write objects/info/commit-graph, which git reads for parents and generation
+	// numbers instead of the commit objects: ancestry answers must come from the objects alone.
+	"-c", "core.commitGraph=false",
 	"-c", "fetch.prune=false",
 	"-c", "diff.ignoreSubmodules=all",
 	"-c", "status.submoduleSummary=false",

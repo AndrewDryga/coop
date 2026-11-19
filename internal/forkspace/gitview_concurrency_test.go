@@ -241,3 +241,12 @@ func TestGitViewConcurrentOptionalLinkRemoval(t *testing.T) {
 		}
 	}
 }
+
+// A box can write the fork's objects/info/commit-graph, which git reads for parents and generation
+// numbers in place of the commit objects. Every command through the view reads commits only.
+func TestGitViewIgnoresTheCommitGraph(t *testing.T) {
+	repo, _ := viewTestRepo(t)
+	if got := GitOut(repo, "config", "--get", "core.commitGraph"); got != "false" {
+		t.Fatalf("core.commitGraph through the view = %q, want false", got)
+	}
+}

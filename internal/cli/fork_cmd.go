@@ -1962,6 +1962,8 @@ func checkForkRebase(ws, name string, candidate tasks.ForkCandidate, rebase task
 			[2]string{"Try again:", continueCmd}, discard)
 	case forkctl.RebaseEmpty:
 		return forkctl.EmptyRebaseError(ws, name, candidate, rebase.Onto)
+	case forkctl.RebaseShallow:
+		return forkctl.RefuseShallowFork(ws, name)
 	case forkctl.RebaseMerges:
 		merges, _ := tasks.MergeCommitsOutside(ws, rebase.Onto, forkspace.GitOut(ws, "rev-parse", "HEAD"))
 		return forkctl.MergeCommitsError(ws, name, rebase.Onto, merges, " The rebase kept it, so nothing was reviewed or merged.")

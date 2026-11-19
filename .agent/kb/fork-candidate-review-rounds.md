@@ -2,7 +2,7 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go]
+sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go]
 updated: 2026-11-19
 ---
 
@@ -96,8 +96,20 @@ Every refusal is `forkctl.MergeCommitsError` with the `git rebase` onto the revi
 agent runs and after one that kept a merge (another agent run would only keep it again), and from
 merge and ls (`driftMerges`). The rebase prompt says rebase, never merge. A round reviewed before this check is refused at merge: an ordinary fork gets a rebase
 request, as a conflict does (`refuseReviewedMergeCommits`); an isolated one can only be discarded.
-And when the parent had nothing the candidate lacked, the land refuses a rebased tree that is not
-the reviewed one (land.go), the last guard if anything else reaches the land.
+The land then checks it lands exactly the reviewed change (`landedAsReviewed`, land_check.go).
+"The parent did not move" is decided from raw objects (`tasks.InRawHistory`); then the rebased tree
+must be the reviewed tree. When it moved, the rebased change from the parent must make the same line
+edits (`lineEdits`: `git diff -U0`, no line numbers or blob names) as the reviewed change from where
+the candidate's straight line of commits starts (`tasks.ForkCommitsBase`, raw); a mismatch retires
+the journal and records a rebase request, so the loop rebases and the result is reviewed. A plain
+rebase skips a commit whose patch the parent has, and `--reapply-cherry-picks` still drops it as
+"already upstream", so reviewed A (remove Z), B (add Z), C on a parent with A's patch landed Z
+unseen; only the change comparison catches that. `git merge-tree --write-tree --merge-base` (git
+2.40) would give the same guarantee but this Mac's git is 2.39 and merge-tree's own merge-base reads
+the view. An honest moved-parent land whose change differs (the parent has part of it) costs a
+rebase and a review, never a refusal. A shallow fork is refused before the merge fetches it, in the
+land replay and by `CheckRebase` (`RebaseShallow`), and the trusted view sets `core.commitGraph=false`
+so a box-written commit-graph cannot answer for the commit objects.
 
 A reviewed fork whose HEAD moved off its active candidate is not landable, so `coop fork ls` shows it
 as `changed` ("changed after review") rather than `ready`, and one with an open rebase request whose
@@ -110,6 +122,10 @@ descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork
 ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
 
 ## Changelog
+- 2026-11-19 — a shallow fork could make the land replay a reviewed commit as a root and skip the
+  tree check, and a rebase that skipped an already-applied commit could land a change no review saw;
+  the land refuses a shallow fork and compares the landed change with the reviewed one (task
+  2026-11-19-land-exactly-the-reviewed-content-when-a-fork-is).
 - 2026-11-19 — a candidate holding a merge commit could land a change its review never saw (the
   merge's flattening rebase replayed a commit the merge resolution had dropped), and a rebase request
   whose `onto` was already in such a candidate's history looped; merge commits are now refused at

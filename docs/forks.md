@@ -407,6 +407,12 @@ merge` and `coop fork ls` say the same, and while a conflict waits for its rebas
 before any agent runs. A reviewed round that has one anyway is not merged: for an ordinary fork,
 `coop fork merge` sends it to the same rebase and review as a conflict.
 
+A merge also checks that it lands exactly what was reviewed. When your branch has moved, the
+rebased commits must make the same line changes as the reviewed ones; a rebase skips a commit your
+branch already has, which can change what the rest do, and then the fork goes to the same rebase and
+review as after a conflict. A fork whose repository is shallow is refused until its `.git/shallow`
+file is removed, since git would then misread its history.
+
 This path is for ordinary forks. An `--isolated` fork never shares history with your branch, so
 co:op cannot rebase it there; when its commits conflict, change your branch until they apply, or
 discard its work with `coop fork rm <name> --force` and let a new fork redo it.

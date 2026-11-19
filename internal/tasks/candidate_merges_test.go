@@ -37,7 +37,7 @@ func TestMergeCommitsOutsideSeesThroughAShallowFile(t *testing.T) {
 	merge := forkspace.GitOut(ws, "rev-parse", "HEAD")
 	commit("after.txt")
 	head := forkspace.GitOut(ws, "rev-parse", "HEAD")
-	gitDir := forkspace.GitOut(ws, "rev-parse", "--absolute-git-dir")
+	gitDir := filepath.Join(ws, ".git") // the real git dir a box writes, not Coop's view of it
 	if merges, err := MergeCommitsOutside(ws, boundary, head); err != nil || !slices.Equal(merges, []string{merge}) {
 		t.Fatalf("merges = %v, %v; want only the fork's %s", merges, err, merge)
 	}

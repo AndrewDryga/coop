@@ -256,6 +256,11 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 				return intent, false, err
 			}
 		}
+		// A box-written shallow file makes git treat a commit as a root: the rebase would replay it as
+		// if new, and the checks below would read a cut history.
+		if err := RefuseShallowFork(ws, name); err != nil {
+			return intent, false, err
+		}
 		if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
 			var failed *rebaseFailedError
 			if !errors.As(err, &failed) || !candidateWorkspaceIntact(ws, name, intent.Candidate) {
@@ -283,11 +288,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 		if !forkspace.ValidObjectID(intent.RebasedHead) || !forkspace.ValidObjectID(intent.RebasedTree) {
 			return intent, false, errors.New("rebased fork has no exact HEAD/tree")
 		}
-		// The parent has nothing the reviewed commits lack, so the rebase had nothing to add: it must
-		// land the reviewed tree. A different one is content no review saw, such as a change a merge
-		// resolution dropped that the flattening rebase replayed.
-		if _, err := forkspace.GitOutErr(ws, "merge-base", "--is-ancestor", intent.ParentBefore, intent.Candidate.Head); err == nil &&
-			intent.RebasedTree != intent.Candidate.Tree {
+		if refusal := landedAsReviewed(ws, name, gitBranch(repo), intent); refusal != nil {
 			intent.Phase = landRestoring
 			if err := writeLandIntent(repo, intent); err != nil {
 				return intent, false, err
@@ -298,8 +299,15 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 			if err := removeLandIntent(repo, intent); err != nil {
 				return intent, false, err
 			}
-			return intent, false, fmt.Errorf("%s: its rebase onto %s changed the reviewed tree %s to %s although %s had nothing new, so it would land content no review saw; nothing merged and the reviewed commit is back. Discard its work and return its tasks to the queue: coop fork rm %s --force",
-				name, gitBranch(repo), intent.Candidate.Tree[:12], intent.RebasedTree[:12], gitBranch(repo), name)
+			if refusal.again {
+				// What the rebase lands is not the branch plus the reviewed change, so the change itself
+				// must be reviewed against the branch: a rebase onto it and a full review, as after a
+				// conflict.
+				if err := tasks.RequestForkCandidateRebaseLocked(repo, intent.Candidate, intent.ParentBefore, gitBranch(repo)); err != nil {
+					return intent, false, errors.Join(err, refusal.err)
+				}
+			}
+			return intent, false, refusal.err
 		}
 		if err := writeLandIntent(repo, intent); err != nil {
 			return intent, false, err

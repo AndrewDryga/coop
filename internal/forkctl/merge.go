@@ -822,6 +822,9 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			pin.Close()
 		}
 	}()
+	if err := RefuseShallowFork(ws, name); err != nil {
+		return mergeOutcome{}, err
+	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return mergeOutcome{}, fmt.Errorf("%s: git fetch: %w", name, err)
 	}

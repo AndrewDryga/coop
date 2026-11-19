@@ -265,10 +265,15 @@ const (
 	// RebaseMerges: the branch builds on the parent commit but keeps a merge commit, which Coop
 	// neither reviews nor merges; another agent pass would only keep it again.
 	RebaseMerges
+	// RebaseShallow: the fork's repository is shallow, so nothing it says can be checked.
+	RebaseShallow
 )
 
 // CheckRebase reports how far the fork's rebase onto the parent commit onto got, whoever ran it.
 func CheckRebase(ws, name, onto string) RebaseResult {
+	if RefuseShallowFork(ws, name) != nil {
+		return RebaseShallow // nothing git says about this history can be trusted
+	}
 	head := forkspace.GitOut(ws, "rev-parse", "HEAD")
 	if head == "" || leftoverRebaseState(ws) != "" || untrustedRebaseState(ws) != "" ||
 		forkspace.GitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD") != name || requireTrackedClean(ws, name) != nil {
