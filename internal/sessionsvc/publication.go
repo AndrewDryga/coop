@@ -96,6 +96,11 @@ func (s *Service) publicationCandidate(ctx context.Context, intent workerproto.P
 		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "existing PR candidate is not based on its authorized head"}
 	}
 	directory, retained, err := s.retainedReviewCandidate(ctx, intent.ReviewOperationID)
+	if ctxErr := ctx.Err(); err != nil && ctxErr != nil {
+		// A stop or a departed caller killed the check's Git: that proves nothing about custody, so
+		// report the cancellation and leave the publication for its next attempt to check again.
+		return "", errors.Join(ctxErr, err)
+	}
 	if err != nil || !reflect.DeepEqual(review, retained) {
 		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "retained review custody does not match"}
 	}
@@ -136,6 +141,9 @@ func (s *Service) runPublishOperation(ctx context.Context, operationID string) e
 	}
 	defer release()
 	bound, err := s.store.GetSession(ctx, intent.SessionID)
+	if err != nil && ctx.Err() != nil {
+		return err // the service is stopping; the next start resumes this publication
+	}
 	if err != nil || bound.State == session.SessionDiscarded || bound.JobDigest != intent.JobDigest || bound.JobRef != intent.JobRef {
 		return s.failServiceOperation(ctx, op.ID, &session.Error{Code: session.CodeInvalidSessionState, Detail: "publication job authority changed"})
 	}

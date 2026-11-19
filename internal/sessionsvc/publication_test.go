@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -171,6 +173,133 @@ func TestBackgroundPublicationSkipsBusySession(t *testing.T) {
 	}
 	if _, result, err := service.GetPublication(ctx, sess.ID, op.ID); err != nil || result.Receipt.CommitSHA != review.CandidateHead {
 		t.Fatalf("published result: %+v %v", result, err)
+	}
+}
+
+// 2026-11-19: stopping `coop sessions connect` while a publish attempt checked its retained
+// candidate failed the publication for good, "retained review custody does not match": the stop
+// killed the custody check's git, and the killed check read as tampering. The connector cancels the
+// service's context on SIGTERM and only then calls Stop; this test stops it the same way.
+func TestPublicationStoppedMidAttemptResumesAfterRestart(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	gate := ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	})
+	service := newReviewTestService(t, repo, 1024, gate)
+	defer service.Stop()
+	sess := createReviewSession(t, service, "stopped-publish")
+	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "result.txt"), "reviewed\n")
+	sessionWorkspaceGit(t, sess.Workspace, "add", "result.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "work")
+	review, err := service.RunReview(context.Background(), "stopped-review", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := workerproto.PublishRequest{AuthorizationRef: "approved", CandidateHead: review.CandidateHead, CandidateTree: review.CandidateTree, Branch: "coop/fix", BaseBranch: "main", Title: "Fix", Body: "Reviewed work"}
+	published := func(_ context.Context, _ string, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
+		return workerproto.PublishResult{Status: "published", Receipt: &workerproto.PublicationReceipt{Repository: intent.Repository.RepositoryRef, BranchRef: "refs/heads/coop/fix", CandidateTree: review.CandidateTree, CommitSHA: review.CandidateHead, PullRequestNumber: 7, PullRequestURL: "https://github.com/" + intent.Repository.GitHubRepository + "/pull/7"}}, nil
+	}
+	service.reviewPublisher = published
+
+	// Admission checks custody once; the background attempt's own check is the one the stop lands in.
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	admitted, started := filepath.Join(bin, "admitted"), filepath.Join(bin, "started")
+	script := fmt.Appendf(nil, "#!/bin/sh\ncase \" $* \" in *\" rev-list --parents \"*)\n  if [ ! -e %q ]; then : > %q\n  elif [ ! -e %q ]; then : > %q; exec /bin/sleep 30\n  fi\nesac\nexec %q \"$@\"\n",
+		admitted, admitted, started, started, realGit)
+	if err := os.WriteFile(filepath.Join(bin, "git"), script, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := service.Start(parent); err != nil {
+		t.Fatal(err)
+	}
+	op, err := service.PublishReview(context.Background(), "stopped-publish", sess.ID, review.OperationID, req)
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("admit: %+v %v", op, err)
+	}
+	waitForSessionTest(t, func() bool { _, err := os.Stat(started); return err == nil })
+	cancel()
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := session.Open(service.stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interrupted, err := stopped.GetOperationByID(context.Background(), op.ID)
+	_ = stopped.Close()
+	if err != nil || interrupted.State != session.OperationRunning || !bytes.Equal(interrupted.Result, op.Result) {
+		t.Fatalf("publication the stop interrupted = %s %s %q %v, want it still running", interrupted.State, interrupted.ErrorCode, interrupted.ErrorDetail, err)
+	}
+
+	after, err := newSessionServiceWithTestStorage(t, Config{
+		StateRoot: service.stateRoot, ReviewGate: gate, ReviewPublisher: published,
+		Runner: RunnerFunc(func(_ context.Context, _ session.Session, turn session.Turn) (session.Turn, error) { return turn, nil }),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer after.Stop()
+	if err := after.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionTest(t, func() bool {
+		current, _ := after.Store().GetOperationByID(context.Background(), op.ID)
+		return sessionOperationReached(t, current, session.OperationSucceeded)
+	})
+	if _, result, err := after.GetPublication(context.Background(), sess.ID, op.ID); err != nil || result.Receipt.CommitSHA != review.CandidateHead {
+		t.Fatalf("resumed publication: %+v %v", result, err)
+	}
+}
+
+// The stop above leaves a publication running; damaged custody found with the service up still
+// fails it for good.
+func TestPublicationWithDamagedCustodyFailsForGood(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "damaged-publish")
+	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "result.txt"), "reviewed\n")
+	sessionWorkspaceGit(t, sess.Workspace, "add", "result.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "work")
+	ctx := t.Context()
+	review, err := service.RunReview(ctx, "damaged-review", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.reviewPublisher = func(context.Context, string, workerproto.PublishIntent) (workerproto.PublishResult, error) {
+		t.Fatal("published damaged custody")
+		return workerproto.PublishResult{}, nil
+	}
+	req := workerproto.PublishRequest{AuthorizationRef: "approved", CandidateHead: review.CandidateHead, CandidateTree: review.CandidateTree, Branch: "coop/fix", BaseBranch: "main", Title: "Fix", Body: "Reviewed work"}
+	op, err := service.PublishReview(ctx, "damaged-publish", sess.ID, review.OperationID, req)
+	if err != nil || op.State != session.OperationRunning {
+		t.Fatalf("admit: %+v %v", op, err)
+	}
+	directory, err := service.reviewCandidatePath(review.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(directory, "review.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.runPublishOperation(ctx, op.ID); session.CodeOf(err) != session.CodeInvalidRequest {
+		t.Fatalf("damaged custody = %v, want invalid_request", err)
+	}
+	failed, err := service.Store().GetOperationByID(ctx, op.ID)
+	if err != nil || failed.State != session.OperationFailed || !strings.Contains(failed.ErrorDetail, "retained review custody does not match") {
+		t.Fatalf("damaged custody left %s %q %v, want it failed", failed.State, failed.ErrorDetail, err)
 	}
 }
 
