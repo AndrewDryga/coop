@@ -1550,7 +1550,8 @@ The inode helps detect a replaced directory, but doesn't prove ownership on its 
 
 By default, co:op refuses to discard uncommitted or unmerged work. If your controller has separate
 permission to destroy that work, set `accept_dirty`, `accept_unmerged` or both when creating
-the plan.
+the plan. The plan itself still succeeds without them and reports `dirty` and `unmerged`; it is the
+discard that refuses.
 
 Execute that exact plan:
 
@@ -1570,6 +1571,15 @@ private ACP state, and saves a record that the session was discarded.
 A `plan_operation_id` that names some other kind of operation returns `400 invalid_request`. A plan
 that didn't finish, or that belongs to another session, returns `409 discard_plan_stale`: make a new
 plan. Neither attempted anything, so neither is `operation_uncertain`.
+
+Every discard refusal that deletes nothing returns `409 discard_plan_stale`, and you recover from
+each one by making a new plan. The detail tells the cases apart:
+
+- If the workspace still matches the plan but the plan lacks the acknowledgement its work needs,
+  the detail names the missing flag, for example `discard plan lacks accept_unmerged: ...`. Make a
+  new plan with that flag only if your controller may destroy that work.
+- If the workspace or session changed since the plan, the detail is
+  `discard plan no longer matches workspace state`. Inspect the session again before you plan.
 
 At startup, the daemon blocks sessions whose workspace ownership it can't verify. This includes
 old session records without a store-owner binding, v1 reservations, and sessions whose fork record

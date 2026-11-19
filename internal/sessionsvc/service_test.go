@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -5188,8 +5189,49 @@ func TestSessionServiceDiscardPlanAndReplay(t *testing.T) {
 		t.Fatalf("plan replay = %v", err)
 	}
 	sessionWorkspaceGit(t, plan.Plan.Workspace.Workspace, "commit", "--allow-empty", "-qm", "head changed")
-	if _, err := service.Discard(context.Background(), "stale-discard", DiscardRequest{PlanOperationID: plan.OperationID}); session.CodeOf(err) != session.CodeDiscardPlanStale {
-		t.Fatalf("stale discard error = %v", err)
+	_, err = service.Discard(context.Background(), "stale-discard", DiscardRequest{PlanOperationID: plan.OperationID})
+	if code, status, detail := sessionHTTPError(err); code != string(session.CodeDiscardPlanStale) ||
+		status != http.StatusConflict || detail != "discard plan no longer matches workspace state" {
+		t.Fatalf("stale discard = %s %d %q (%v)", code, status, detail, err)
+	}
+
+	// A current plan made without the acknowledgement its work needs names the missing flag:
+	// the workspace did not change, so "no longer matches" would send the controller astray.
+	workspace := plan.Plan.Workspace.Workspace
+	for _, test := range []struct {
+		name, want         string
+		dirty, acceptDirty bool
+		acceptUnmerged     bool
+	}{
+		{name: "unmerged", want: session.DiscardNeedsAcceptUnmerged},
+		{name: "dirty", dirty: true, acceptUnmerged: true, want: session.DiscardNeedsAcceptDirty},
+		{name: "both", dirty: true, want: session.DiscardNeedsAcceptDirtyAndUnmerged},
+	} {
+		if test.dirty {
+			if err := os.WriteFile(filepath.Join(workspace, "loose.txt"), []byte("work\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		unacknowledged, err := service.PlanDiscard(context.Background(), "plan-"+test.name, PlanDiscardRequest{
+			SessionID: sess.ID, ExpectedRevision: closed.Revision,
+			AcceptDirty: test.acceptDirty, AcceptUnmerged: test.acceptUnmerged,
+		})
+		if err != nil || !unacknowledged.Plan.Workspace.Unmerged || unacknowledged.Plan.Workspace.Dirty != test.dirty {
+			t.Fatalf("%s plan = %+v, err=%v", test.name, unacknowledged.Plan.Workspace, err)
+		}
+		_, err = service.Discard(context.Background(), "discard-"+test.name, DiscardRequest{PlanOperationID: unacknowledged.OperationID})
+		if code, status, detail := sessionHTTPError(err); code != string(session.CodeDiscardPlanStale) ||
+			status != http.StatusConflict || detail != test.want {
+			t.Fatalf("%s discard = %s %d %q (%v)", test.name, code, status, detail, err)
+		}
+		if !pathExists(workspace) {
+			t.Fatalf("%s refusal removed the workspace", test.name)
+		}
+		if test.dirty {
+			if err := os.Remove(filepath.Join(workspace, "loose.txt")); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	plan, err = service.PlanDiscard(context.Background(), "plan-2", PlanDiscardRequest{SessionID: sess.ID, ExpectedRevision: closed.Revision, AcceptUnmerged: true})
 	if err != nil {

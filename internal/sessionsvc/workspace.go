@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
 
@@ -1166,11 +1167,15 @@ func validateSessionWorkspaceDiscardLocked(plan WorkspaceDiscardPlan) (*validate
 	if branch != plan.Branch || head != plan.Head || sessionWorkspaceStatusDigest(statusRaw) != plan.StatusDigest || dirty != plan.Dirty || unmerged != plan.Unmerged {
 		return fail(errors.New("discard plan is stale: workspace HEAD, branch, or status changed"))
 	}
-	if dirty && !plan.AcceptedDirty {
-		return fail(errors.New("refusing to discard dirty workspace without exact dirty-loss acknowledgement"))
-	}
-	if unmerged && !plan.AcceptedUnmerged {
-		return fail(errors.New("refusing to discard unmerged workspace without exact unmerged-loss acknowledgement"))
+	// The workspace still matches the plan, but the plan lacks a loss acknowledgement its work
+	// needs. The text is one of session's fixed sentences, the only discard details the API shows.
+	switch missingDirty, missingUnmerged := dirty && !plan.AcceptedDirty, unmerged && !plan.AcceptedUnmerged; {
+	case missingDirty && missingUnmerged:
+		return fail(errors.New(session.DiscardNeedsAcceptDirtyAndUnmerged))
+	case missingDirty:
+		return fail(errors.New(session.DiscardNeedsAcceptDirty))
+	case missingUnmerged:
+		return fail(errors.New(session.DiscardNeedsAcceptUnmerged))
 	}
 	if plan.Running || forkspace.NeedsStop(plan.Repo, plan.Name) {
 		return fail(errors.New("refusing to discard a workspace that started running"))

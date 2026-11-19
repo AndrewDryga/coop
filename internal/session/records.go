@@ -228,6 +228,18 @@ const (
 	CodeInternal           ErrorCode = "internal_error"
 )
 
+// The discard refusals a controller can act on: the plan matches the workspace, but it was made
+// without the acknowledgement that workspace's work needs. They are fixed sentences, so
+// PublicErrorDetail can let exactly these through and still hide every other discard detail.
+const (
+	DiscardNeedsAcceptDirty = "discard plan lacks accept_dirty: the workspace has uncommitted work; " +
+		"make a new plan with accept_dirty to destroy it"
+	DiscardNeedsAcceptUnmerged = "discard plan lacks accept_unmerged: the workspace has commits its parent does not; " +
+		"make a new plan with accept_unmerged to destroy them"
+	DiscardNeedsAcceptDirtyAndUnmerged = "discard plan lacks accept_dirty and accept_unmerged: the workspace has " +
+		"uncommitted work and commits its parent does not; make a new plan with both to destroy them"
+)
+
 // PublicErrorDetail removes implementation details that must not cross the
 // session API boundary or be retained in compact idempotency receipts.
 func PublicErrorDetail(code ErrorCode, detail string) string {
@@ -237,6 +249,10 @@ func PublicErrorDetail(code ErrorCode, detail string) string {
 	case CodeInternal:
 		return "internal operation failure"
 	case CodeDiscardPlanStale:
+		switch detail {
+		case DiscardNeedsAcceptDirty, DiscardNeedsAcceptUnmerged, DiscardNeedsAcceptDirtyAndUnmerged:
+			return detail
+		}
 		return "discard plan no longer matches workspace state"
 	case CodeSessionCleanupError:
 		return "session runtime cleanup is temporarily unavailable"

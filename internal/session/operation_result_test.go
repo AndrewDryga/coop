@@ -162,6 +162,20 @@ func TestTurnOperationResultRejectsUnknownOrEmptyReceipts(t *testing.T) {
 	}
 }
 
+func TestPublicErrorDetailShowsOnlyTheFixedDiscardRefusals(t *testing.T) {
+	for _, sentence := range []string{
+		DiscardNeedsAcceptDirty, DiscardNeedsAcceptUnmerged, DiscardNeedsAcceptDirtyAndUnmerged,
+	} {
+		if got := PublicErrorDetail(CodeDiscardPlanStale, sentence); got != sentence {
+			t.Fatalf("PublicErrorDetail(%q) = %q", sentence, got)
+		}
+		// Anything else, including a fixed sentence with more text joined on, stays generic.
+		if got := PublicErrorDetail(CodeDiscardPlanStale, sentence+"\n/private/path"); got != "discard plan no longer matches workspace state" {
+			t.Fatalf("PublicErrorDetail(joined %q) = %q", sentence, got)
+		}
+	}
+}
+
 func TestTurnOperationResultDoesNotRetainPrivateErrorDetails(t *testing.T) {
 	for _, test := range []struct {
 		code ErrorCode
