@@ -16,7 +16,10 @@
   - **Forks.** When a reviewed fork's commits conflict with your branch, `coop fork merge` leaves
     the fork as it was instead of stuck in "merging", and says how to go on. Answering no at the
     merge prompt exits 1. When `coop fork rm --force` discards a fork's work, the tasks it returns
-    to the queue have their subtasks unticked, with a log note, so they no longer look finished.
+    to the queue have their subtasks unticked and a fresh `state.md`, with a log note, so they no
+    longer look finished. A fork whose branch changed after its final review shows as "changed
+    after review" in `coop fork ls`, and `coop fork merge` and the fork's loop say how to go on.
+    An interrupted `coop fork merge` says its checks were interrupted.
   - **Session service.** Cancelling a running turn ends it `cancelled` and answers success; it
     used to answer `operation_uncertain` with "ACP child did not stop". A turn running when the
     service is stopped cleanly is recorded `interrupted` on the next start, as after a crash,
@@ -35,7 +38,7 @@
     session no longer logs "network gateway did not become ready" for warm boxes it stopped.
   - **Command line.** A mistyped option is called an unknown option, not an unknown command or
     an invalid fork name. `coop claude`, `codex`, `gemini` and `grok` refuse `-p` with no prompt
-    before a box starts. When Docker can't be reached and `DOCKER_CONTEXT` or `DOCKER_HOST` is
+    before a box starts, and an empty one too. When Docker can't be reached and `DOCKER_CONTEXT` or `DOCKER_HOST` is
     set, co:op names that variable as the likely cause. `coop init` sets up every agent that has
     a signed-in account, not only those whose default account is signed in, and says when it
     kept your own `AGENTS.md`.

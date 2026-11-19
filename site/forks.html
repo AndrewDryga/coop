@@ -323,7 +323,8 @@ directory.</p>
 </ul>
 <p>Blocked tasks and proposals already imported into the project&#39;s queue stay there. A returned or
 blocked task loses the ticks on its subtasks, since the work they stand for goes with the fork, and
-its log names the subtasks that were unticked. Check
+its log names the subtasks that were unticked. A returned task&#39;s state.md no longer describes the
+discarded work as done. Check
 <code>coop fork ls</code> and <code>coop fork review</code> before discarding a fork. <a href="#land-it">Land it</a> explains the
 different effect of <code>--force</code> on <code>coop fork merge</code>.</p>
 </section><section class="doc-section reference-section" id="review"><h2>Review</h2>
@@ -472,6 +473,11 @@ a task on its own.</p>
 reviewed, with no merge left to resume. A copy you rebase by hand would need a new review, so
 change your branch until the commits apply and merge again, or discard the fork&#39;s work with
 <code>coop fork rm &lt;name&gt; --force</code>, which returns its tasks to the queue.</p>
+<p>A fork whose branch moved after its final review shows as &#34;changed after review&#34; in <code>coop fork ls</code>,
+and <code>coop fork merge</code> refuses it. New commits on top of the reviewed one need another review, which
+the fork&#39;s loop gives them. A branch that no longer builds on the reviewed commit, such as one you
+rebased by hand, can neither merge nor be reviewed again: reset the fork&#39;s branch to the reviewed
+commit that the refusal names, or discard the fork&#39;s work with <code>coop fork rm &lt;name&gt; --force</code>.</p>
 <p>If a fork can&#39;t reach a candidate, for example because its box keeps failing a check your project
 passes, you can bring its commit to your branch yourself, such as with <code>git cherry-pick</code>. Then run
 <code>coop tasks done &lt;id&gt; --from-fork</code> in your terminal. It needs exactly one commit on your branch with
