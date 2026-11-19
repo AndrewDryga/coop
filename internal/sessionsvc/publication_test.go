@@ -118,8 +118,10 @@ func TestPublicationRetainsIntentAndPublishesReviewedSHAAfterWorkspaceMoves(t *t
 	if again == nil || session.CodeOf(again) != session.CodeOf(refused) || failed.State != session.OperationFailed {
 		t.Fatalf("replayed refused publish = %+v %v; want the saved %v", failed, again, refused)
 	}
-	if code, status, _ := sessionHTTPError(again); status < 400 || code != string(session.CodeOf(refused)) {
-		t.Fatalf("replayed refused publish answers %d %s", status, code)
+	// The replay also carries the first answer's detail; it used to repeat the code in front of it.
+	firstCode, firstStatus, firstDetail := sessionHTTPError(refused)
+	if code, status, detail := sessionHTTPError(again); status != firstStatus || code != firstCode || detail != firstDetail {
+		t.Fatalf("replayed refused publish answers %d %s %q; the first answer was %d %s %q", status, code, detail, firstStatus, firstCode, firstDetail)
 	}
 }
 

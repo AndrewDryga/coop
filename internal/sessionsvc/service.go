@@ -2139,12 +2139,12 @@ func (s *Service) failServiceOperation(ctx context.Context, id string, err error
 		code = session.CodeInternal
 	}
 	detail := s.operationalErrorDetail(err)
+	// A replay answers the saved detail, so save what the first answer said: the typed error's own
+	// detail, without the code or the wrapping context in front of it. The log keeps the whole chain.
 	storedDetail := detail
-	if code == session.CodeRepositoryUnavailable {
-		var typed *session.Error
-		if errors.As(err, &typed) {
-			storedDetail = typed.Detail
-		}
+	var typed *session.Error
+	if errors.As(err, &typed) && typed.Detail != "" {
+		storedDetail = s.operationalErrorDetail(errors.New(typed.Detail))
 	}
 	receiptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()

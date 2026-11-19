@@ -1141,12 +1141,21 @@ func TestRefusedSourceGrantAnswersAsPermanent(t *testing.T) {
 		service.sourceRefresher = func(context.Context, string, workerproto.JobSource, string) (string, error) { return "", tc.err }
 		_, changesErr := service.GetChanges(context.Background(), sess.ID)
 		_, reviewErr := service.RunReview(context.Background(), "review-"+tc.name, RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
-		for what, err := range map[string]error{"changes": changesErr, "review": reviewErr} {
+		_, replayErr := service.RunReview(context.Background(), "review-"+tc.name, RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+		if _, _, first := sessionHTTPError(reviewErr); first != publicDetail(replayErr) {
+			t.Errorf("%s review replay detail = %q, want the first answer's %q", tc.name, publicDetail(replayErr), first)
+		}
+		for what, err := range map[string]error{"changes": changesErr, "review": reviewErr, "review replay": replayErr} {
 			if code, status, _ := sessionHTTPError(err); code != string(tc.code) || status != tc.status {
 				t.Errorf("%s %s = %d %s (%v), want %d %s", tc.name, what, status, code, err, tc.status, tc.code)
 			}
 		}
 	}
+}
+
+func publicDetail(err error) string {
+	_, _, detail := sessionHTTPError(err)
+	return detail
 }
 
 // 2026-11-19: an existing-PR publish of a review with no check was refused as "not based on its
