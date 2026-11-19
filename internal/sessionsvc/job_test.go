@@ -524,3 +524,45 @@ func TestProjectRuntimeCannotSetProviderOwnedEnvironment(t *testing.T) {
 		})
 	}
 }
+
+// 2026-11-19: every wrong job egress rule was refused as "job egress rules are invalid or
+// noncanonical", with no word on which rule or what was wrong with it.
+func TestJobEgressRuleRefusalNamesTheRuleAndTheProblem(t *testing.T) {
+	example := workerproto.JobRule{To: workerproto.JobDestination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}}
+	other := workerproto.JobRule{To: workerproto.JobDestination{Domain: "api.example.com"}, Protocol: "tls", Ports: []int{443}}
+	for name, tc := range map[string]struct {
+		rules []workerproto.JobRule
+		want  string
+	}{
+		"no protocol":  {[]workerproto.JobRule{example, {To: workerproto.JobDestination{Domain: "example.org"}}}, "egress rule 2: protocol must be"},
+		"tls no ports": {[]workerproto.JobRule{{To: workerproto.JobDestination{Domain: "example.com"}, Protocol: "tls"}}, "egress rule 1: "},
+		"unsorted":     {[]workerproto.JobRule{example, other}, "job egress rule 1 is not canonical"},
+		"duplicate":    {[]workerproto.JobRule{other, example, example}, "job egress rule 3 is not canonical"},
+		"not lowercase": {[]workerproto.JobRule{{To: workerproto.JobDestination{Domain: "Example.com"}, Protocol: "tls", Ports: []int{443}}},
+			"job egress rule 1 is not canonical"},
+	} {
+		job := emptyWorkerJob()
+		job.Egress = workerproto.JobEgress{Mode: "filtered", Rules: tc.rules}
+		if _, err := jobEgressRules(job); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want it to say %q", name, err, tc.want)
+		}
+	}
+	// The example and the canonical-form rules docs/session-api.md gives.
+	database := workerproto.JobRule{To: workerproto.JobDestination{CIDR: "203.0.113.7/32"}, Protocol: "tcp", Ports: []int{5432}}
+	ping := workerproto.JobRule{To: workerproto.JobDestination{CIDR: "203.0.113.7/32"}, Protocol: "icmp", Types: []string{"8"}}
+	job := emptyWorkerJob()
+	job.Egress = workerproto.JobEgress{Mode: "filtered", Rules: []workerproto.JobRule{ping, database, other, example}}
+	if rules, err := jobEgressRules(job); err != nil || len(rules) != 4 {
+		t.Fatalf("canonical rules = %v, %v", rules, err)
+	}
+	address := database
+	address.To = workerproto.JobDestination{IP: "203.0.113.7"}
+	echo := ping
+	echo.Types = []string{"echo-request"}
+	for _, rule := range []workerproto.JobRule{address, echo} {
+		job.Egress.Rules = []workerproto.JobRule{rule}
+		if _, err := jobEgressRules(job); err == nil || !strings.Contains(err.Error(), "job egress rule 1 is not canonical") {
+			t.Errorf("rule %+v = %v, want it refused as not canonical", rule, err)
+		}
+	}
+}

@@ -83,6 +83,30 @@ model's mounts, repository configuration or exported results. If objects are mis
 is unauthorized or an LFS pointer format is unsupported, creation fails instead of leaving an
 incomplete tree.
 
+### Job network rules
+
+A job's `egress.mode` is `open`, `none` or `filtered`. Only a filtered job may list `egress.rules`,
+and only a filtered job may set `export_destinations`. The rules are the ones
+[`coop net`](networking.md#supported-today) enforces, written as JSON. Each rule's `to` names
+exactly one `domain`, `cidr` or `provider`:
+
+```json
+{"mode": "filtered", "export_destinations": false, "rules": [
+  {"to": {"cidr": "203.0.113.7/32"}, "protocol": "tcp", "ports": [5432]},
+  {"to": {"domain": "example.com"}, "protocol": "tls", "ports": [443]}
+]}
+```
+
+A `domain` takes `protocol: "tls"` and its `ports`; a `cidr` takes `tcp` or `udp` with `ports`, or
+`icmp` with `types`. A `provider` takes only optional `features`.
+
+co:op accepts the rules only in canonical form, so one job digest always means one set of rules.
+Write domains in lowercase and an address as a `cidr` (one IPv4 address is `/32`, and `ip` is never
+canonical). Sort ports, ICMP types (as numbers, `8` for an echo request) and features, without
+repeats. List each rule once, ordered by the bytes of its compact JSON encoding, with keys in the
+order shown. A wrong rule is refused with `400 invalid_request`; the detail names the rule by its
+position and says what is wrong, or which rule is out of canonical form.
+
 ### Workspace storage
 
 Each hello message can carry a `storage` object that reports disk space on the volume holding the
@@ -1187,6 +1211,13 @@ curl --unix-socket "$SOCKET" \
 Compare `admitted_source_tree` with the current tree to distinguish changed content from empty
 commits or changes that were committed and later reverted.
 
+For a session whose job has a GitHub source, every changes read, each page included, finds the
+current `parent_head` by fetching the default branch from GitHub. It asks your controller for a
+fresh source grant each time, so the read needs the controller's read authority for that
+repository. Without a grant it fails with `503 repository_unavailable`, or
+`409 invalid_session_state` when the controller refuses the grant with `403`
+([Errors](#errors)). A session without a source has no parent to fetch.
+
 To fetch the next patch page, call
 `GET /v1/sessions/{session_id}/changes?patch_offset=<next>&patch_limit=<bytes>`. `patch_limit`
 can't exceed the job's `max_patch_bytes`, and offsets can't exceed 1 GiB. Check `patch_digest` as
@@ -1582,8 +1613,13 @@ A `plan_operation_id` that names some other kind of operation returns `400 inval
 that didn't finish, or that belongs to another session, returns `409 discard_plan_stale`: make a new
 plan. Neither attempted anything, so neither is `operation_uncertain`.
 
-Every discard refusal that deletes nothing returns `409 discard_plan_stale`, and you recover from
-each one by making a new plan. The detail tells the cases apart:
+A discard while a publication of the session's review is still running returns
+`409 invalid_session_state`, `publication must finish before discarding its retained candidate`,
+and deletes nothing. A new plan doesn't help: wait until the publication finishes, then discard
+again under a new idempotency key. The same plan still works if the workspace hasn't changed.
+
+A discard refused because its plan no longer fits returns `409 discard_plan_stale`, deletes
+nothing, and you recover by making a new plan. The detail tells the cases apart:
 
 - If the workspace still matches the plan but the plan lacks the acknowledgement its work needs,
   the detail names the missing flag, for example `discard plan lacks accept_unmerged: ...`. Make a

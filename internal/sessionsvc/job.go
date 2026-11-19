@@ -217,8 +217,15 @@ func jobEgressRules(job workerproto.JobSpec) ([]egress.Rule, error) {
 		})
 	}
 	normalized, err := egress.NormalizeRules(rules)
-	if err != nil || len(rules) != 0 && !reflect.DeepEqual(normalized, rules) {
-		return nil, errors.New("job egress rules are invalid or noncanonical")
+	if err != nil {
+		return nil, fmt.Errorf("job egress rules are invalid: %w", err) // names the rule and what is wrong with it
+	}
+	if len(rules) != 0 && !reflect.DeepEqual(normalized, rules) {
+		for index := range rules {
+			if index >= len(normalized) || !reflect.DeepEqual(normalized[index], rules[index]) {
+				return nil, fmt.Errorf("job egress rule %d is not canonical: send each rule in its normalized form, sorted, without duplicates", index+1)
+			}
+		}
 	}
 	for _, rule := range normalized {
 		if rule.To.Provider == "" {
