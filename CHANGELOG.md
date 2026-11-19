@@ -4,6 +4,19 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Session store schema 27: a worker cannot be rolled back after it upgrades.** The store gains
+  indexes for the lookups the worker's janitor runs every minute, so their cost no longer grows
+  with every session the worker has ever run. The first start converts the store in place (a
+  1 GB store took about four seconds). After that an older coop refuses the store. Run
+  `coop sessions check` and copy the stopped state folder aside before you upgrade a worker; see
+  `MIGRATING.md`.
+- **A worker's journal keeps finished create records in their own folder.** A long-lived worker
+  used to open one small record per session it had ever created, every second. Finished records
+  now move to `create-origins/settled/`, which polls skip; nothing is deleted. An older coop does
+  not look there, which is one more reason a worker cannot go back after this upgrade.
+- **A new session store is created in one step.** A store too old to open now names v12.1.0 as
+  the release that converts it, and says how to start fresh with a new `--state` folder.
+
 - **A service with several ports gets a predictable `COOP_SERVICE_<NAME>_URL`.** The variable used
   to name whichever `expose` port was listed last. It now names the first one, and a new
   `coop.service.port` label in `.agent/compose.yml` picks another. Every port is still reachable.

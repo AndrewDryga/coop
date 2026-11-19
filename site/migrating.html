@@ -104,6 +104,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#unreleased-session-store-schema-27-has-no-way-back">Unreleased: session store schema 27 has no way back</a></li>
 <li><a href="#v1400-stricter-defaults-changed-exit-codes-and-session-api-answers">v14.0.0: stricter defaults, changed exit codes and session API answers</a></li>
 <li><a href="#v1310-per-project-tools-git-folders-and-docker-engine-28">v13.1.0: per-project tools, Git folders and Docker Engine 28</a></li>
 <li><a href="#v1300-old-host-state-is-refused-or-read-as-unknown">v13.0.0: old host state is refused or read as unknown</a></li>
@@ -133,6 +134,18 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
+</section><section class="doc-section reference-section" id="unreleased-session-store-schema-27-has-no-way-back"><h2>Unreleased: session store schema 27 has no way back</h2>
+<p>The worker&#39;s session store moves from schema 26 to 27 the first time this build opens it. Schema
+27 only adds two indexes and drops a duplicate one; no session data changes. Once converted, a
+build that uses schema 26 refuses the store as newer than it supports, so the worker cannot be
+rolled back to it.</p>
+<ol>
+<li>Stop the worker, then run <code>coop sessions check --state &lt;path&gt;</code> with the new build. Exit 3 means
+it will convert the store.</li>
+<li>Copy the stopped state folder aside. That copy and the old build are your only way back.</li>
+<li>Start the new build. On a store with many events, building the indexes makes the first start
+take longer.</li>
+</ol>
 </section><section class="doc-section reference-section" id="v1400-stricter-defaults-changed-exit-codes-and-session-api-answers"><h2>v14.0.0: stricter defaults, changed exit codes and session API answers</h2>
 <ul>
 <li><strong><code>coop build</code> refuses while <code>COOP_IMAGE</code> is set.</strong> Unset it to build this project; the override
