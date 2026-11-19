@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,40 @@ import (
 
 // parseServicePorts reads each service's `expose` (the shape `docker compose config --format json`
 // emits) into a stable per-workspace host-port mapping; non-integer/absent expose yields nothing.
+// A service with a database port and an admin port used to hand the box whichever port was listed
+// last, because every port wrote the same variable. The variable now names the first port, or the
+// one the coop.service.port label picks, while every port is still published and forwarded.
+func TestServiceURLNamesOnePortPerService(t *testing.T) {
+	repo := t.TempDir()
+	canon := canonicalWorkspace(repo)
+	url := func(port int) string {
+		return "COOP_SERVICE_DB_URL=http://localhost:" + strconv.Itoa(project.HostPortFor(canon, "db:"+strconv.Itoa(port)))
+	}
+	ports, err := parseServicePortsChecked([]byte(`{"services":{"db":{"expose":["5432","8080"]}}}`), repo)
+	if err != nil || len(ports) != 2 {
+		t.Fatalf("two ports = %+v, %v", ports, err)
+	}
+	if got := serviceURLEnv(ports); !slices.Equal(got, []string{"-e", url(5432)}) {
+		t.Fatalf("default = %q, want only the first port %s", got, url(5432))
+	}
+	if forwards := forwardEnv(ports); strings.Count(forwards, ",") != 1 {
+		t.Fatalf("both ports must still be forwarded, got %q", forwards)
+	}
+	ports, err = parseServicePortsChecked([]byte(`{"services":{"db":{"expose":["5432","8080"],"labels":{"coop.service.port":"8080"}}}}`), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := serviceURLEnv(ports); !slices.Equal(got, []string{"-e", url(8080)}) {
+		t.Fatalf("labelled = %q, want %s", got, url(8080))
+	}
+	for _, label := range []string{"9999", "admin"} {
+		body := `{"services":{"db":{"expose":["5432","8080"],"labels":{"coop.service.port":"` + label + `"}}}}`
+		if _, err := parseServicePortsChecked([]byte(body), repo); err == nil || !strings.Contains(err.Error(), "coop.service.port must be one of its expose ports") {
+			t.Fatalf("label %q = %v, want a refusal that names the label", label, err)
+		}
+	}
+}
+
 func TestParseServicePorts(t *testing.T) {
 	repo := t.TempDir()
 	sp := parseServicePorts([]byte(`{"services":{"keycloak":{"expose":["8443"],"labels":{"coop.service.scheme":"https"}},"db":{}}}`), repo)

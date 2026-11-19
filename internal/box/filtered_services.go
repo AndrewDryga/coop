@@ -249,7 +249,7 @@ func containerPorts(entries []any) []int {
 	return ports
 }
 
-// filteredServiceEnv sets COOP_SERVICE_<NAME>_URL in a filtered box for each `expose`d port of an
+// filteredServiceEnv sets COOP_SERVICE_<NAME>_URL in a filtered box for one `expose`d port of each
 // approved service that the service's rule allows. The box reaches a service only through its rule,
 // at its Compose name, never at the localhost port an open box forwards, so the URL names the
 // service and its own port. Like the open box's, the URLs are best-effort: a file Coop cannot read
@@ -270,15 +270,23 @@ func filteredServiceEnv(composeFile, repo string, repoReadOnly bool, grants []eg
 			continue
 		}
 		expose, _ := service.Expose.([]any)
+		// One variable names one port: the coop.service.port label's, else the first one the rule
+		// allows. A labelled port the rule does not allow gets no variable, never another port's.
+		var allowed []int
 		for _, port := range containerPorts(expose) {
-			allowed := slices.ContainsFunc(grants, func(grant egress.Grant) bool {
+			if slices.ContainsFunc(grants, func(grant egress.Grant) bool {
 				rule := grant.Rule
 				return rule.To.Service == name && rule.Protocol == "tcp" && slices.Contains(rule.Ports, port)
-			})
-			if allowed {
-				env = append(env, "-e", fmt.Sprintf("COOP_SERVICE_%s_URL=%s://%s:%d", serviceEnvName(name), serviceScheme(composeSchemeLabel(service.Labels), service.Image), name, port))
+			}) {
+				allowed = append(allowed, port)
 			}
 		}
+		label := composeLabel(service.Labels, servicePortLabel)
+		port, err := serviceURLPort(name, label, allowed)
+		if err != nil || port == 0 {
+			continue
+		}
+		env = append(env, "-e", fmt.Sprintf("COOP_SERVICE_%s_URL=%s://%s:%d", serviceEnvName(name), serviceScheme(composeSchemeLabel(service.Labels), service.Image), name, port))
 	}
 	return env
 }

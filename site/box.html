@@ -654,9 +654,21 @@ label. Host tools can read all workspace service URLs from <code>coop fork ls --
 <p>The scheme is the label&#39;s. A service with no label gets <code>postgres://</code> for a <code>postgres</code> image,
 <code>redis://</code> for a <code>redis</code> image and <code>http://</code> for any other. co:op never wraps a service&#39;s traffic in
 TLS, so <code>https</code> means the service serves TLS itself, and only its label can say so.</p>
+<p>A service gets one variable. When it exposes several ports, such as a database and its admin page,
+the variable names the first one listed, and the box still reaches every port. To name another
+port, add a second label:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="One URL inside and out code example" tabindex="0" data-copy-source=""><code class="language-yaml">    expose: [&#34;5432&#34;, &#34;8080&#34;]
+    labels:
+      coop.service.port: &#34;8080&#34;          # COOP_SERVICE_*_URL names this port
+</code></pre></div>
+<p>The label must name one of the service&#39;s <code>expose</code> ports. The variable&#39;s name is the service&#39;s name
+in capitals with every other character turned into <code>_</code>, so <code>auth-db</code> becomes
+<code>COOP_SERVICE_AUTH_DB_URL</code>. co:op refuses a Compose file where two services with <code>expose</code> ports
+would share a variable, such as <code>auth-db</code> and <code>auth.db</code>.</p>
 <p>The same URL needs open egress. A filtered box reaches a service only through its approved rule, at
-the service&#39;s name, so it receives <code>COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443</code> for each
-<code>expose</code> port its rule allows, with the same scheme. The services it starts run on a private network
+the service&#39;s name, so it receives <code>COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443</code>, with the same
+scheme. The variable names the first <code>expose</code> port its rule allows, or the labelled port when the
+rule allows that one. The services it starts run on a private network
 with no host port, so use open egress for a service your host browser must reach too.</p>
 <h3 id="what-a-compose-file-may-do">What a Compose file may do</h3>
 <p>co:op sends <code>.agent/compose.yml</code> to your host&#39;s Docker daemon to create the service containers, and

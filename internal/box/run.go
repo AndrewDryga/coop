@@ -1889,10 +1889,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 			}
 			if svc := servicePorts; len(svc) > 0 {
 				spec.ExtraArgs = append(spec.ExtraArgs, "-e", "COOP_FORWARD="+forwardEnv(svc))
-				for _, p := range svc {
-					spec.ExtraArgs = append(spec.ExtraArgs, "-e",
-						fmt.Sprintf("COOP_SERVICE_%s_URL=%s://localhost:%d", serviceEnvName(p.Service), p.Scheme, p.HostPort))
-				}
+				spec.ExtraArgs = append(spec.ExtraArgs, serviceURLEnv(svc)...)
 			}
 		}
 	}

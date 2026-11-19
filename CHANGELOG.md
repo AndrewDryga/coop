@@ -4,6 +4,14 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A service with several ports gets a predictable `COOP_SERVICE_<NAME>_URL`.** The variable used
+  to name whichever `expose` port was listed last. It now names the first one, and a new
+  `coop.service.port` label in `.agent/compose.yml` picks another. Every port is still reachable.
+  If your app relied on the last port, add the label.
+- **Two services can no longer share one service variable.** co:op refuses a Compose file where
+  two services with `expose` ports map to the same variable, such as `auth-db` and `auth.db`. The
+  box used to get one service's URL under both names.
+
 - **Changed session API answers: five errors now name the real problem.** Controllers that match
   on the old answers need a look.
   - Retrying a publish that the worker had refused returns the saved error again. It used to answer

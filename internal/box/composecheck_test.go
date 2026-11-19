@@ -133,6 +133,37 @@ func TestValidateComposeRejects(t *testing.T) {
 	}
 }
 
+// Service names that differ only in punctuation map to one COOP_SERVICE_<NAME>_URL, so the box used
+// to get one service's URL under both names. A port label must name a port the service exposes.
+func TestValidateComposeServiceVariables(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"two exposed services share a variable",
+			"services:\n  auth-db:\n    image: a\n    expose: [5432]\n  auth.db:\n    image: b\n    expose: [5432]\n",
+			`services "auth-db" and "auth.db" would both be announced as COOP_SERVICE_AUTH_DB_URL`},
+		{"port label names an unexposed port",
+			"services:\n  db:\n    image: a\n    expose: [5432]\n    labels: {coop.service.port: 8080}\n",
+			`service "db": coop.service.port must be one of its expose ports`},
+		{"port label on a service that exposes nothing",
+			"services:\n  db:\n    image: a\n    labels: [\"coop.service.port=5432\"]\n",
+			`service "db": coop.service.port must be one of its expose ports`},
+		{"only one of the two is exposed",
+			"services:\n  auth-db:\n    image: a\n    expose: [5432]\n  auth.db:\n    image: b\n", ""},
+		{"port label names an exposed port",
+			"services:\n  db:\n    image: a\n    expose: [5432, 8080]\n    labels: {coop.service.port: 8080}\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, path := writeCompose(t, tc.body)
+			err := ValidateComposeFile(path, repo, false)
+			if tc.want == "" && err != nil {
+				t.Fatalf("refused a valid file: %v", err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("got %v, want a refusal containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 // A symlink inside the repo pointing OUTSIDE it must not smuggle a host path past the bind check.
 func TestValidateComposeSymlinkEscape(t *testing.T) {
 	repo := t.TempDir()

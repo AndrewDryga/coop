@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -79,6 +80,9 @@ func validateComposeData(data []byte, path, repoRoot string, repoReadOnly bool) 
 	if err := checkComposeValues(&node, make(map[*yaml.Node]bool)); err != nil {
 		return err
 	}
+	if err := checkServiceVariableNames(doc); err != nil {
+		return err
+	}
 	composeDir := filepath.Dir(path)
 	realRepo, err := resolveExisting(repoRoot)
 	if err != nil {
@@ -98,6 +102,10 @@ func validateComposeData(data []byte, path, repoRoot string, repoReadOnly bool) 
 			return err
 		}
 		if err := checkComposeScheme(name, svc.Labels); err != nil {
+			return err
+		}
+		exposed, _ := svc.Expose.([]any)
+		if _, err := serviceURLPort(name, composeLabel(svc.Labels, servicePortLabel), containerPorts(exposed)); err != nil {
 			return err
 		}
 		for _, p := range svc.Ports {
@@ -364,19 +372,54 @@ func checkComposeScheme(service string, labels any) error {
 // composeSchemeLabel is what a service's coop.service.scheme label says, in the map or the list form
 // of labels, or "" when it says nothing (see serviceScheme).
 func composeSchemeLabel(labels any) string {
-	var scheme string
+	return composeLabel(labels, "coop.service.scheme")
+}
+
+// composeLabel is what one of a service's labels says, in the map or the list form of labels, or
+// "" when it is absent. YAML reads an unquoted port as a number, so a number counts as its text.
+func composeLabel(labels any, key string) string {
+	var found string
 	switch value := labels.(type) {
 	case map[string]any:
-		scheme, _ = value["coop.service.scheme"].(string)
+		switch raw := value[key].(type) {
+		case string:
+			found = raw
+		case int:
+			found = strconv.Itoa(raw)
+		}
 	case []any:
 		for _, raw := range value {
 			entry, _ := raw.(string)
-			if found, ok := strings.CutPrefix(entry, "coop.service.scheme="); ok {
-				scheme = found
+			if text, ok := strings.CutPrefix(entry, key+"="); ok {
+				found = text
 			}
 		}
 	}
-	return scheme
+	return found
+}
+
+// checkServiceVariableNames refuses two services that would share one COOP_SERVICE_<NAME>_URL.
+// serviceEnvName maps every punctuation mark to "_", so "auth-db" and "auth.db" name the same
+// variable, and the box would silently get one service's URL under both names.
+func checkServiceVariableNames(doc composeDoc) error {
+	owner := map[string]string{}
+	names := make([]string, 0, len(doc.Services))
+	for name := range doc.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		exposed, _ := doc.Services[name].Expose.([]any)
+		if len(containerPorts(exposed)) == 0 {
+			continue
+		}
+		variable := serviceEnvName(name)
+		if other, taken := owner[variable]; taken {
+			return fmt.Errorf("services %q and %q would both be announced as COOP_SERVICE_%s_URL — rename one", other, name, variable)
+		}
+		owner[variable] = name
+	}
+	return nil
 }
 
 // composeDoc / serviceSpec / volumeDecl model the SAFE subset only. Fields we don't inspect are

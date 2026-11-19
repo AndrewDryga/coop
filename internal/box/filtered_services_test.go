@@ -1040,6 +1040,35 @@ func TestFilteredServiceEnvNamesTheServicesTheRulesAllow(t *testing.T) {
 	}
 }
 
+// One variable names one port in a filtered box too: the first exposed port the rule allows, or the
+// one the coop.service.port label picks. It used to name whichever allowed port was listed last.
+func TestFilteredServiceEnvNamesOnePortPerService(t *testing.T) {
+	grant := func(service string, ports ...int) egress.Grant {
+		return egress.Grant{Rule: egress.Rule{To: egress.Destination{Service: service}, Protocol: "tcp", Ports: ports}}
+	}
+	for _, tc := range []struct {
+		name, label string
+		allowed     []int
+		want        []string
+	}{
+		{"first allowed port", "", []int{5432, 8080}, []string{"-e", "COOP_SERVICE_DB_URL=http://db:5432"}},
+		{"first port not allowed", "", []int{8080}, []string{"-e", "COOP_SERVICE_DB_URL=http://db:8080"}},
+		{"label picks the port", "    labels: {coop.service.port: 8080}\n", []int{5432, 8080}, []string{"-e", "COOP_SERVICE_DB_URL=http://db:8080"}},
+		{"label in the list form", "    labels: [\"coop.service.port=8080\"]\n", []int{5432, 8080}, []string{"-e", "COOP_SERVICE_DB_URL=http://db:8080"}},
+		{"labelled port not allowed", "    labels: {coop.service.port: \"8080\"}\n", []int{5432}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, path := writeCompose(t, "services:\n  db:\n    image: a\n    expose: [5432, \"8080\"]\n"+tc.label)
+			if err := ValidateComposeFile(path, repo, false); err != nil {
+				t.Fatal(err)
+			}
+			if got := filteredServiceEnv(path, repo, false, []egress.Grant{grant("db", tc.allowed...)}); !slices.Equal(got, tc.want) {
+				t.Fatalf("filtered service env = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // The URL carries the scheme the service speaks. Nothing wraps a filtered box's traffic in TLS (it
 // reaches the service's own address, raw), so a database is postgres:// or redis:// with no label, a
 // label always wins, and https appears only where a label puts it: the docs' https://keycloak:8443 is

@@ -629,9 +629,25 @@ The scheme is the label's. A service with no label gets `postgres://` for a `pos
 `redis://` for a `redis` image and `http://` for any other. co:op never wraps a service's traffic in
 TLS, so `https` means the service serves TLS itself, and only its label can say so.
 
+A service gets one variable. When it exposes several ports, such as a database and its admin page,
+the variable names the first one listed, and the box still reaches every port. To name another
+port, add a second label:
+
+```yaml
+    expose: ["5432", "8080"]
+    labels:
+      coop.service.port: "8080"          # COOP_SERVICE_*_URL names this port
+```
+
+The label must name one of the service's `expose` ports. The variable's name is the service's name
+in capitals with every other character turned into `_`, so `auth-db` becomes
+`COOP_SERVICE_AUTH_DB_URL`. co:op refuses a Compose file where two services with `expose` ports
+would share a variable, such as `auth-db` and `auth.db`.
+
 The same URL needs open egress. A filtered box reaches a service only through its approved rule, at
-the service's name, so it receives `COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443` for each
-`expose` port its rule allows, with the same scheme. The services it starts run on a private network
+the service's name, so it receives `COOP_SERVICE_KEYCLOAK_URL=https://keycloak:8443`, with the same
+scheme. The variable names the first `expose` port its rule allows, or the labelled port when the
+rule allows that one. The services it starts run on a private network
 with no host port, so use open egress for a service your host browser must reach too.
 
 ### What a Compose file may do

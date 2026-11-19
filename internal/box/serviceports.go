@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +28,9 @@ type ServicePort struct {
 	ContainerPort int
 	HostPort      int
 	Scheme        string // its `coop.service.scheme` label, else its image's, else "http" (serviceScheme)
+	// URL marks the one port COOP_SERVICE_<NAME>_URL names: the `coop.service.port` label's, else
+	// the first one listed. Every port is still published and forwarded.
+	URL bool
 }
 
 // ServicePorts returns the per-workspace host-port mapping for a repo's sidecars: it asks the
@@ -154,6 +158,7 @@ func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]Servic
 		if label != "" && !validServiceScheme(label) {
 			return nil, fmt.Errorf("service %q: coop.service.scheme must be a plain URI scheme", name)
 		}
+		first := len(out)
 		for _, e := range svc.Expose {
 			port, err := strconv.Atoi(strings.TrimSpace(e))
 			if err != nil || port < 1 || port > 65535 {
@@ -168,8 +173,57 @@ func parseServicePortsChecked(configJSON []byte, workspacePath string) ([]Servic
 				Scheme:   serviceScheme(label, svc.Image),
 			})
 		}
+		exposed := make([]int, 0, len(out)-first)
+		for _, port := range out[first:] {
+			exposed = append(exposed, port.ContainerPort)
+		}
+		chosen, err := serviceURLPort(name, svc.Labels[servicePortLabel], exposed)
+		if err != nil {
+			return nil, err
+		}
+		for i := first; i < len(out); i++ {
+			if out[i].ContainerPort == chosen {
+				out[i].URL = true
+				break
+			}
+		}
 	}
 	return out, nil
+}
+
+// serviceURLEnv is the open box's COOP_SERVICE_<NAME>_URL arguments: one per service, for the port
+// marked URL. Every port is still forwarded (forwardEnv); only the variable names a single one.
+func serviceURLEnv(ports []ServicePort) []string {
+	var env []string
+	for _, p := range ports {
+		if p.URL {
+			env = append(env, "-e", fmt.Sprintf("COOP_SERVICE_%s_URL=%s://localhost:%d", serviceEnvName(p.Service), p.Scheme, p.HostPort))
+		}
+	}
+	return env
+}
+
+// servicePortLabel picks the port a service's COOP_SERVICE_<NAME>_URL names when it exposes more
+// than one, such as a database beside its admin page.
+const servicePortLabel = "coop.service.port"
+
+// serviceURLPort is the one port a service's COOP_SERVICE_<NAME>_URL names: the label's when it is
+// set, else the first exposed. A variable holds one value, so every port after the first used to
+// overwrite it and the last one listed won. A label naming a port the service does not expose is
+// refused, since the variable would otherwise silently name a different port. Zero means none.
+func serviceURLPort(service, label string, exposed []int) (int, error) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		if len(exposed) == 0 {
+			return 0, nil
+		}
+		return exposed[0], nil
+	}
+	port, err := strconv.Atoi(label)
+	if err != nil || !slices.Contains(exposed, port) {
+		return 0, fmt.Errorf("service %q: %s must be one of its expose ports", service, servicePortLabel)
+	}
+	return port, nil
 }
 
 // serviceScheme is the scheme of a service's COOP_SERVICE_<NAME>_URL, in an open box and a filtered
