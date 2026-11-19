@@ -412,6 +412,11 @@ their query strings. For Codex, these are:</p>
 <code>service=git-receive-pack</code> isn&#39;t in the list.</p>
 <p>The broker never turns the public Git download route into general GitHub access. Other GitHub
 requests still require ordinary network approval in filtered mode.</p>
+<p>At startup, Codex also copies the plugins installed on your ChatGPT account, downloading each one
+from <code>sdmntpr*.oaiusercontent.com</code>. Those hosts serve every ChatGPT user&#39;s uploaded files, so a
+filtered box never allows them. Instead, its broker asks chatgpt.com for the installed-plugin list
+without download links, and Codex has nothing to fetch. Your account&#39;s plugins don&#39;t sync into a
+filtered box. The curated store isn&#39;t affected, and an open box downloads your plugins as usual.</p>
 </section><section class="doc-section reference-section" id="mcp-servers"><h2>MCP servers</h2>
 <h3 id="filtered-runs">Filtered runs</h3>
 <p>Bearer tokens for MCP servers stay outside filtered boxes. When a shared server uses

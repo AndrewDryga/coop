@@ -106,6 +106,7 @@
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
 <li><a href="#connect">Connect</a></li>
 <li><a href="#session-authority">Session authority</a></li>
+<li class="reference-subsection"><a href="#job-network-rules">Job network rules</a></li>
 <li class="reference-subsection"><a href="#workspace-storage">Workspace storage</a></li>
 <li class="reference-subsection"><a href="#restart-and-recovery">Restart and recovery</a></li>
 <li class="reference-subsection"><a href="#upgrading-a-worker">Upgrading a worker</a></li>
@@ -202,6 +203,29 @@ LFS files and every explicitly authorized submodule, including nested ones. Toke
 model&#39;s mounts, repository configuration or exported results. If objects are missing, a submodule
 is unauthorized or an LFS pointer format is unsupported, creation fails instead of leaving an
 incomplete tree.</p>
+<h3 id="job-network-rules">Job network rules</h3>
+<p>A job&#39;s <code>egress.mode</code> is <code>open</code>, <code>none</code> or <code>filtered</code>. Only a filtered job may list <code>egress.rules</code>,
+and only a filtered job may set <code>export_destinations</code>. The rules are the ones
+<a href="networking.html#supported-today"><code>coop net</code></a> enforces, written as JSON. Each rule&#39;s <code>to</code> names
+exactly one <code>domain</code> or <code>cidr</code>:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Job network rules code example" tabindex="0" data-copy-source=""><code class="language-json">{&#34;mode&#34;: &#34;filtered&#34;, &#34;export_destinations&#34;: false, &#34;rules&#34;: [
+  {&#34;to&#34;: {&#34;cidr&#34;: &#34;203.0.113.7/32&#34;}, &#34;protocol&#34;: &#34;icmp&#34;, &#34;types&#34;: [&#34;8&#34;]},
+  {&#34;to&#34;: {&#34;cidr&#34;: &#34;203.0.113.7/32&#34;}, &#34;protocol&#34;: &#34;tcp&#34;, &#34;ports&#34;: [5432]},
+  {&#34;to&#34;: {&#34;domain&#34;: &#34;example.com&#34;}, &#34;protocol&#34;: &#34;tls&#34;, &#34;ports&#34;: [443]}
+]}
+</code></pre></div>
+<p>A <code>domain</code> takes <code>protocol: &#34;tls&#34;</code> and its <code>ports</code>. A <code>cidr</code> takes <code>tcp</code> or <code>udp</code> with <code>ports</code>, or
+<code>icmp</code> with <code>types</code>. ICMP types are JSON strings; <code>&#34;8&#34;</code>, an echo request, is the one a filtered box
+supports. Don&#39;t list a <code>provider</code> selector: this release has no optional provider features, and
+each job target&#39;s own provider endpoints are allowed without a rule. A job that lists one is refused
+when it is created.</p>
+<p>co:op accepts the rules only in canonical form, so one job digest always means one set of rules.
+Write domains in lowercase and an address as a <code>cidr</code> (one IPv4 address is <code>/32</code>, and <code>ip</code> is never
+canonical). Sort ports and ICMP types, without repeats. List each rule once, ordered by the bytes of
+its compact JSON encoding, with keys in the order shown. A wrong rule is refused with
+<code>400 invalid_request</code>. The detail names the rule by its position and says what is wrong with it.
+For a rule out of canonical form it gives the rule&#39;s canonical spelling, the earlier rule it
+repeats, or the rule it belongs before.</p>
 <h3 id="workspace-storage">Workspace storage</h3>
 <p>Each hello message can carry a <code>storage</code> object that reports disk space on the volume holding the
 worker&#39;s fork workspaces. The connector reads it from the daemon&#39;s
@@ -1299,6 +1323,12 @@ the budget before the last budgeted turn finishes.</p>
 </ul>
 <p>Compare <code>admitted_source_tree</code> with the current tree to distinguish changed content from empty
 commits or changes that were committed and later reverted.</p>
+<p>For a session whose job has a GitHub source, every changes read, each page included, finds the
+current <code>parent_head</code> by fetching the default branch from GitHub. It asks your controller for a
+fresh source grant each time, so the read needs the controller&#39;s read authority for that
+repository. Without a grant it fails with <code>503 repository_unavailable</code>, or
+<code>409 invalid_session_state</code> when the controller refuses the grant with <code>403</code>
+(<a href="#errors">Errors</a>). A session without a source has no parent to fetch.</p>
 <p>To fetch the next patch page, call
 <code>GET /v1/sessions/{session_id}/changes?patch_offset=&lt;next&gt;&amp;patch_limit=&lt;bytes&gt;</code>. <code>patch_limit</code>
 can&#39;t exceed the job&#39;s <code>max_patch_bytes</code>, and offsets can&#39;t exceed 1 GiB. Check <code>patch_digest</code> as
@@ -1680,8 +1710,12 @@ private ACP state, and saves a record that the session was discarded.</p>
 <p>A <code>plan_operation_id</code> that names some other kind of operation returns <code>400 invalid_request</code>. A plan
 that didn&#39;t finish, or that belongs to another session, returns <code>409 discard_plan_stale</code>: make a new
 plan. Neither attempted anything, so neither is <code>operation_uncertain</code>.</p>
-<p>Every discard refusal that deletes nothing returns <code>409 discard_plan_stale</code>, and you recover from
-each one by making a new plan. The detail tells the cases apart:</p>
+<p>A discard while a publication of the session&#39;s review is still running returns
+<code>409 invalid_session_state</code>, <code>publication must finish before discarding its retained candidate</code>,
+and deletes nothing. A new plan doesn&#39;t help: wait until the publication finishes, then discard
+again under a new idempotency key. The same plan still works if the workspace hasn&#39;t changed.</p>
+<p>A discard refused because its plan no longer fits returns <code>409 discard_plan_stale</code>, deletes
+nothing, and you recover by making a new plan. The detail tells the cases apart:</p>
 <ul>
 <li>If the workspace still matches the plan but the plan lacks the acknowledgement its work needs,
 the detail names the missing flag, for example <code>discard plan lacks accept_unmerged: ...</code>. Make a
@@ -1785,6 +1819,11 @@ tight loop or delete protected workspaces just to meet the limit.</p>
 the session&#39;s saved network permissions. Check its container runtime and network setup. The
 worker stops execution instead of falling back to open networking. Don&#39;t change a saved job to
 bypass the refusal.</p>
+<p>A review without <code>parent_head</code> and <code>GET …/changes</code> read the current default branch of a
+repository-backed job with a fresh controller source grant. When the controller can&#39;t grant it for
+now, or the worker can&#39;t reach it, they return <code>503 repository_unavailable</code>, and a later retry may
+succeed. When the controller refuses the grant with <code>403</code>, they return <code>409 invalid_session_state</code>:
+asking again for the same job gets the same refusal.</p>
 <p>For <code>operation_uncertain</code> or <code>turn.interrupted</code>, inspect the saved operation and resulting
 session state to find out what happened. An unknown result isn&#39;t a reason to submit the same
 action with a new key: that could run it twice.</p>

@@ -43,6 +43,34 @@
     a signed-in account, not only those whose default account is signed in, and says when it
     kept your own `AGENTS.md`.
 
+- **A reviewed fork that conflicts with your branch can now be merged.** When `coop fork merge`
+  hits a conflict it names the files and records the conflict; `coop fork <name> --loop` then has
+  the fork's agent rebase onto your branch as it is now and resolve the conflict, and the result
+  is reviewed again in full before `coop fork merge` lands it. `coop fork ls` shows the fork as
+  conflicting and names the next command at each step. This path is for ordinary forks; an
+  isolated fork still needs your branch changed or the fork discarded.
+- **A fork merge lands only what the review saw.** Three ways a merge could differ from the
+  reviewed work are closed. A fork whose commits include a merge commit is no longer reviewed or
+  merged as it is, since a merge can carry changes the review never showed; co:op asks for a
+  straight line of commits. A fork whose repository is shallow is refused. And when your branch
+  already has one of the fork's commits, co:op checks that rebasing lands exactly the reviewed
+  change; when it would not, the fork is rebased and reviewed again instead.
+- **Filtered Codex runs no longer end with a blocked-traffic warning for `oaiusercontent.com`.**
+  Codex was trying to download the plugins installed on your ChatGPT account from a file host a
+  filtered box does not reach. co:op now asks for that plugin list without download links in a
+  filtered box. `coop codex -- plugin list` also lists your plugins in a box instead of failing
+  with "native route refused".
+- **Publishing through the session service: fixes from a manual test (2026-11-19).** A publish
+  that was running when the worker stopped now resumes after restart instead of failing with
+  "retained review custody does not match". When the controller refuses a job's source grant
+  with 403, a review or a changes read answers `409 invalid_session_state` instead of a
+  retryable 503. An existing-PR publish of a review without a passed check says the check is
+  missing. Retrying a refused request with the same key returns the same detail as the first
+  answer.
+- **A refused job network rule names the rule and the problem.** The session API page now
+  documents the rule format, with ICMP types written as strings. A rule with a provider selector
+  is refused when the job is created instead of failing later as a network outage; no provider
+  feature exists to approve, and an agent's own endpoints are allowed automatically.
 - **Session store schema 27: a worker cannot be rolled back after it upgrades.** The store gains
   indexes for the lookups the worker's janitor runs every minute, so their cost no longer grows
   with every session the worker has ever run. The first start converts the store in place (a
