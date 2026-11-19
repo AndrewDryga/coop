@@ -935,7 +935,9 @@ A completed turn may include `output_artifacts` for images the agent generated o
 turn's `.coop-output/<turn_id>` directory. Each record has an opaque ID, a safe filename, the
 media type, a SHA-256 digest and the exact byte count, but not the image itself. Download it
 through the raw endpoint, which returns the saved file with matching `Content-Type`,
-`Content-Length` and `ETag` headers. The saved file can't change.
+`Content-Length` and `ETag` headers. The saved file can't change. An artifact ID the turn doesn't
+have answers `404 turn_not_found` with the detail `output artifact not found`; a missing turn
+keeps the detail `turn not found`.
 
 co:op captures image blocks and embedded image resources from ACP tool updates in output order,
 naming them `generated-1.<ext>`, `generated-2.<ext>` and so on. Image bytes don't count toward

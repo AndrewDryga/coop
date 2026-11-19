@@ -2471,7 +2471,16 @@ func (s *Store) GetOutputArtifact(ctx context.Context, sessionID, turnID, artifa
 		WHERE t.session_id = ? AND t.id = ? AND a.id = ?`, sessionID, turnID, artifactID).
 		Scan(&artifact.ID, &artifact.Name, &artifact.MediaType, &artifact.SHA256, &artifact.Bytes, &artifact.Data)
 	if errors.Is(err, sql.ErrNoRows) {
-		return OutputArtifact{}, ErrTurnNotFound
+		// Name what is missing. The code stays turn_not_found, the 404 clients already handle.
+		var exists int
+		err = s.db.QueryRowContext(ctx, `SELECT 1 FROM turns WHERE session_id = ? AND id = ?`, sessionID, turnID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return OutputArtifact{}, ErrTurnNotFound
+		}
+		if err != nil {
+			return OutputArtifact{}, fmt.Errorf("get output artifact turn: %w", err)
+		}
+		return OutputArtifact{}, &Error{Code: CodeTurnNotFound, Detail: "output artifact not found"}
 	}
 	if err != nil {
 		return OutputArtifact{}, fmt.Errorf("get output artifact: %w", err)

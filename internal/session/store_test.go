@@ -976,6 +976,17 @@ func TestCompletedTurnOutputArtifactExposesMetadataAndExactBytes(t *testing.T) {
 	if err != nil || string(got.Data) != string(data) || got.SHA256 != artifact.SHA256 {
 		t.Fatalf("artifact = %+v err=%v", got, err)
 	}
+	// An unknown artifact on a real turn names the artifact; it read "turn not found". The code
+	// stays turn_not_found (404), as a missing checkpoint bundle keeps operation_not_found.
+	var missing *Error
+	if _, err := store.GetOutputArtifact(ctx, sess.ID, turn.ID, "nope"); !errors.As(err, &missing) ||
+		missing.Code != CodeTurnNotFound || missing.Detail != "output artifact not found" {
+		t.Fatalf("unknown artifact on an existing turn = %v", err)
+	}
+	if _, err := store.GetOutputArtifact(ctx, sess.ID, "turn-missing", artifact.ID); !errors.As(err, &missing) ||
+		missing.Code != CodeTurnNotFound || missing.Detail != "" {
+		t.Fatalf("artifact on a missing turn = %v", err)
+	}
 }
 
 func TestTurnArtifactValidationAndIdempotencyBinding(t *testing.T) {

@@ -1244,6 +1244,15 @@ func TestSessionHTTPGeneratedArtifactIsSeparateFromTurnJSON(t *testing.T) {
 		!bytes.Equal(artifactGet.Body.Bytes(), data) {
 		t.Fatalf("artifact response = %d headers=%v bytes=%q", artifactGet.Code, artifactGet.Header(), artifactGet.Body.Bytes())
 	}
+	missing := sessionHTTPTestRequest(
+		t, handler, http.MethodGet,
+		"/v1/sessions/"+created.Session.ID+"/turns/"+completed.ID+"/artifacts/nope",
+		"", "", "",
+	)
+	if want := `{"error":{"code":"turn_not_found","detail":"output artifact not found"}}`; missing.Code != http.StatusNotFound ||
+		strings.TrimSpace(missing.Body.String()) != want {
+		t.Fatalf("unknown artifact = %d %s, want 404 %s", missing.Code, missing.Body.String(), want)
+	}
 }
 
 // The store has recorded per-turn usage since schema v5, but TurnDTO had no field for it and
