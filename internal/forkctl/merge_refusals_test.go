@@ -1,6 +1,7 @@
 package forkctl
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/project"
+	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -292,5 +295,31 @@ func TestTaskLandSaysTheChecksCouldNotStart(t *testing.T) {
 	c.gateOK = func(_, _, _ string) bool { return true }
 	if landed, err := mergeOneForTest(t, c, repo, "gate-image", identity.Name, false); !landed || err != nil {
 		t.Fatalf("retry once the checks can run = (%v, %v)", landed, err)
+	}
+}
+
+// Checks an interrupt stopped did start, so the refusal says they were interrupted. It used to say
+// they "could not start", with "interrupted" as the reason.
+func TestInterruptedChecksSayTheyWereInterrupted(t *testing.T) {
+	signalled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, stopped := box.Run(&config.Config{}, runtime.Runtime{}, box.RunSpec{Ctx: signalled})
+	if !box.Interrupted(stopped) {
+		t.Fatalf("a run whose context was cancelled returned %v", stopped)
+	}
+	err := &gateStartError{name: "c", cause: stopped}
+	block := mergeRefusal(err)
+	if block == nil || block.Headline != "The project checks were interrupted for fork c" || block.Cause != "Nothing was merged." ||
+		!slices.Equal(block.Rows, [][2]string{{"Run them again:", "coop fork merge c"}}) {
+		t.Errorf("refusal for interrupted checks = %#v", block)
+	}
+	if got := err.Error(); got != "c: the project checks were interrupted, so nothing was merged" {
+		t.Errorf("one-line form = %q", got)
+	}
+	// A box that never started still says so, even when the interrupt came with another failure.
+	for _, cause := range []error{errors.New("Docker is unavailable"), errors.Join(stopped, errors.New("cleanup failed"))} {
+		if block := mergeRefusal(&gateStartError{name: "c", cause: cause}); block == nil || block.Headline != "The project checks could not start for fork c" {
+			t.Errorf("refusal for %v = %#v", cause, block)
+		}
 	}
 }

@@ -891,6 +891,10 @@ func TestForkDiscardUnticksTheDiscardedWork(t *testing.T) {
 	// not a subtask, and stays as written.
 	task := "---\nid: discarded-work\n---\n# Task\n\n## Subtasks\n- [x] Create mu.txt\n  * [X] nested check\n- [ ] still open\n\n```\n- [x] example\n```\n"
 	writeTaskFile(t, filepath.Join(canonical.Dir, "task.md"), task)
+	// And the state.md the fork's worker left, describing a commit the discard throws away.
+	writeTaskFile(t, filepath.Join(canonical.Dir, "state.md"), "# State — Task\n\n**Status:** candidate ready for project landing\n"+
+		"**Done so far:** Committed mu.txt under Coop-Task: discarded-work.\nVerification (worker-reported):\n- `cmp` passed.\n"+
+		"**Next action:** review and land\n**Traps:** mu.txt needs its final newline.\n")
 	if err := DiscardForkTaskStateLocked(repo, identity); err != nil {
 		t.Fatal(err)
 	}
@@ -915,6 +919,16 @@ func TestForkDiscardUnticksTheDiscardedWork(t *testing.T) {
 	}
 	if note := "- Discarded with fork discarded-worker: its work for this task went with it, so Coop unticked 2 subtasks: Create mu.txt; nested check."; !strings.Contains(string(log), note) {
 		t.Errorf("log.md does not say what the discard unticked:\n%s", log)
+	}
+	state, err := os.ReadFile(filepath.Join(item.Dir, "state.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantState := "# State — discarded-work\n\n**Status:** ready — sandbox assignment discarded\n" +
+		"**Done so far:** nothing on your branch: the work went with fork discarded-worker when it was discarded\n" +
+		"**Next action:** claim or assign this canonical task again\n**Traps:** mu.txt needs its final newline.\n"
+	if string(state) != wantState {
+		t.Errorf("state.md after discard =\n%s\nwant\n%s", state, wantState)
 	}
 }
 

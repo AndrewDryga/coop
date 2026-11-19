@@ -238,7 +238,8 @@ On `coop fork rm` and `--fresh`, `--force` can:
 
 Blocked tasks and proposals already imported into the project's queue stay there. A returned or
 blocked task loses the ticks on its subtasks, since the work they stand for goes with the fork, and
-its log names the subtasks that were unticked. Check
+its log names the subtasks that were unticked. A returned task's state.md no longer describes the
+discarded work as done. Check
 `coop fork ls` and `coop fork review` before discarding a fork. [Land it](#land-it) explains the
 different effect of `--force` on `coop fork merge`.
 

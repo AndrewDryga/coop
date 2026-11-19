@@ -472,7 +472,11 @@ func discardForkAssignment(repo string, identity forkspace.Identity, index ForkA
 				item.State = StateTodo
 				item.Dir = filepath.Join(root, StateTodo, id)
 			}
-			if err := NormalizeTaskState(id, item.Dir, "ready — sandbox assignment discarded", "claim or assign this canonical task again", "sandbox workspace was explicitly discarded", "review retained artifacts before retrying"); err != nil {
+			// The snapshot describes the fork's work, which is gone, so it starts over; log.md keeps
+			// the history.
+			if err := resetTaskState(id, item.Dir, "ready — sandbox assignment discarded",
+				"nothing on your branch: the work went with fork "+identity.Name+" when it was discarded",
+				"claim or assign this canonical task again", "review retained artifacts before retrying"); err != nil {
 				return err
 			}
 		}

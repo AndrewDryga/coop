@@ -102,7 +102,9 @@ refuse unresolved ownership or write and replay an exact-generation discard. The
 every subtask the canonical task.md has ticked, after a log.md note that names them
 (`untickDiscardedWork`, internal/tasks/discard.go): acceptance copied the fork's ticks there for work
 that goes with the fork, and a returned task with its checklist done let `coop tasks done` close it
-with nothing committed. Trailers are human
+with nothing committed. A task returned to todo also gets a fresh state.md (`resetTaskState`,
+internal/tasks/cmd.go) whose Done so far says the work went with the fork; only a unique Traps value
+carries over. Trailers are human
 labels and consistency checks only.
 
 `ReadProjectSnapshot` is the shared read model: it joins canonical queues (including external
@@ -117,6 +119,8 @@ before renaming it over its record, and a record its box removed after the direc
 `WorkspaceReservations` treats its own temp files and released reservations the same way.
 
 ## Changelog
+- 2026-11-19 — a returned task's state.md still described the discarded commit as done; the discard
+  now rewrites it (task 2026-11-19-tidy-three-leftovers-from-the-fork-and-prompt-fi).
 - 2026-11-19 — a fork discard (`rm --force`, `--fresh`, session discard) returned its task with the
   fork's ticked subtasks, so `coop tasks done` closed it with no commit; the discard now unticks them
   and notes which in log.md (task 2026-11-19-return-a-task-honestly-when-its-fork-is-removed).

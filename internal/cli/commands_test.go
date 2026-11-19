@@ -2328,6 +2328,10 @@ func TestPromptOptionWithNoPromptIsRefusedBeforeTheBox(t *testing.T) {
 	}
 	for _, name := range []string{"claude", "codex", "gemini", "grok"} {
 		runs[name] = func(a *app) (int, error) { return a.launchAgent(name, []string{"-p"}) }
+		// A blank prompt is no prompt: `-p ""` started a box, and `-p "   "` made a model call.
+		runs[name+" empty"] = func(a *app) (int, error) { return a.launchAgent(name, []string{"-p", ""}) }
+		runs[name+" blank"] = func(a *app) (int, error) { return a.launchAgent(name, []string{"-p", "   "}) }
+		runs[name+" -p=blank"] = func(a *app) (int, error) { return a.launchAgent(name, []string{"-p=  ", "--"}) }
 	}
 	runs["codex -p="] = func(a *app) (int, error) {
 		return a.launchAgent("codex", []string{"--egress", "offline", "--search", "-p=", "--"})
@@ -2347,7 +2351,7 @@ func TestPromptOptionWithNoPromptIsRefusedBeforeTheBox(t *testing.T) {
 			}
 		})
 	}
-	for _, args := range [][]string{{"-p", "go"}, {"-p", "-fix"}, {"-p=go"}, {"-p", "--", "--help"}, {"--", "-p"}, {"fix it", "-p"}, {"resume", "--last", "-p"}} {
+	for _, args := range [][]string{{"-p", "go"}, {"-p", "-fix"}, {"-p=go"}, {"-p", "--", "--help"}, {"--", "-p"}, {"fix it", "-p"}, {"resume", "--last", "-p"}, {"fix it", "-p", ""}, {"-p", " go "}, {"-p", "", "--", "x"}} {
 		if err := refuseEmptyPrompt("coop codex", args); err != nil {
 			t.Errorf("refuseEmptyPrompt(%q) = %v, want the arguments left to the agent", args, err)
 		}

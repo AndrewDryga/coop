@@ -630,7 +630,14 @@ func refuseEmptyPrompt(command string, args []string) error {
 		typed = args[:i]
 	}
 	n := len(typed)
-	if n == 0 || typed[n-1] != "-p" && typed[n-1] != "-p=" {
+	// A blank value (`-p ""`, `-p "   "`, `-p= `) is no prompt either: the agent would fail on it, or
+	// make a model call with nothing to do.
+	switch {
+	case n > 0 && strings.HasPrefix(typed[n-1], "-p=") && strings.TrimSpace(typed[n-1][3:]) == "":
+	case n > 0 && typed[n-1] == "-p":
+	case n > 1 && typed[n-2] == "-p" && strings.TrimSpace(typed[n-1]) == "":
+		n--
+	default:
 		return nil
 	}
 	for _, arg := range typed[:n-1] {

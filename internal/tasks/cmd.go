@@ -2133,6 +2133,31 @@ func normalizeTaskStateRoot(id string, root *os.Root, statusValue, nextValue, do
 	return nil
 }
 
+// resetTaskState replaces the whole state.md snapshot, for a task whose recorded progress no longer
+// exists (its fork's work was discarded). Only a unique Traps value carries over: it is about the
+// task, not about the work that went.
+func resetTaskState(id, taskDir, statusValue, doneValue, nextValue, trapsFallback string) error {
+	root, err := OpenTaskMetadataRoot(taskDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	body, err := ReadTaskMetadataFile(root, "state.md")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read %q: %w", filepath.Join(taskDir, "state.md"), err)
+	}
+	trapsValue := uniqueLabeledValue(strings.Split(string(body), "\n"), taskStateTraps, trapsFallback)
+	out := fmt.Sprintf("# State — %s\n\n%s %s\n%s %s\n%s %s\n%s %s\n",
+		id, taskStateStatus, statusValue, taskStateDone, doneValue, taskStateNext, nextValue, taskStateTraps, trapsValue)
+	if err == nil && string(body) == out {
+		return nil
+	}
+	if err := AtomicWriteTaskFile(root, "state.md", []byte(out)); err != nil {
+		return fmt.Errorf("write %q: %w", filepath.Join(taskDir, "state.md"), err)
+	}
+	return nil
+}
+
 func labeledLineIndexes(lines []string, label string) []int {
 	var indexes []int
 	for i, line := range lines {

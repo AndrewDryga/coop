@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -20,18 +21,25 @@ func (e *forkTrackedChangesError) Error() string {
 	return "fork " + e.name + " has uncommitted changes to tracked files — commit or stash them in the fork, then merge again"
 }
 
-// gateStartError is project checks that never ran, because the box for them could not start. They
-// neither passed nor failed, so a merge says that, with the box's own reason and what it asks for.
+// gateStartError is project checks that did not finish: the box for them could not start, or an
+// interrupt stopped them. They neither passed nor failed, so a merge says that, with the box's own
+// reason and what it asks for.
 type gateStartError struct {
 	name  string
 	cause error
 }
 
 func (e *gateStartError) Error() string {
+	if e.interrupted() {
+		return e.name + ": the project checks were interrupted, so nothing was merged"
+	}
 	return fmt.Sprintf("%s: the project checks could not start, so nothing was merged — %v", e.name, e.cause)
 }
 
 func (e *gateStartError) Unwrap() error { return e.cause }
+
+// interrupted is checks that started and were stopped by an interrupt, not ones that never ran.
+func (e *gateStartError) interrupted() bool { return box.Interrupted(e.cause) }
 
 // requireTrackedClean refuses a fork whose tracked files differ from its last commit. An untracked
 // file does not stop a rebase, and a merge keeps such a fork with a note afterwards. A rebase a
@@ -58,6 +66,9 @@ func mergeRefusal(err error) *ui.UsageError {
 	var activity *forkspace.ForkActivityError
 	var block *ui.UsageError
 	switch {
+	case errors.As(err, &start) && start.interrupted():
+		return ui.CommandFailed("The project checks were interrupted for fork "+start.name, "Nothing was merged.",
+			[2]string{"Run them again:", "coop fork merge " + start.name})
 	case errors.As(err, &start):
 		return ui.CommandFailed("The project checks could not start for fork "+start.name, start.cause.Error(),
 			[2]string{"", "Nothing was merged. Fix this, then merge again."})
