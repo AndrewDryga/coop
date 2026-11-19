@@ -109,11 +109,12 @@ func initAgentsOption() listOption {
 	}
 }
 
-// scaffoldAgentSet resolves the implicit per-agent dirs from signed-in agents. Empty means
-// .agent/ only; a box synthesizes a missing agent's skills from the shared source on demand.
+// scaffoldAgentSet resolves the implicit per-agent dirs from agents with any signed-in account.
+// Empty means .agent/ only; a box synthesizes a missing agent's skills from the shared source on
+// demand.
 func scaffoldAgentSet(cfg *config.Config) []string {
 	var out []string
-	for _, name := range box.AuthedAgents(cfg) {
+	for _, name := range box.SignedInAgents(cfg) {
 		if ag, ok := agents.Get(name); ok && ag.Scaffold().Project.Dir != "" && !slices.Contains(out, name) {
 			out = append(out, name)
 		}

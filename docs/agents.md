@@ -533,7 +533,9 @@ changed.
 
 `coop init` sets up shared instructions for all agents. It links `CLAUDE.md` and `GEMINI.md` to
 one `AGENTS.md` and gives every agent the same project skills source. An existing instruction file
-stays unchanged if it's a regular file, not a symlink.
+stays unchanged if it's a regular file, not a symlink. When you first run `coop init` in a repo that
+already has its own `AGENTS.md`, it says it kept the file, because that file doesn't have co:op's
+agent contract.
 
 ### Instructions that follow you
 
@@ -555,7 +557,7 @@ repositories with no local override.
 ### Skills and the .agent/ folder
 
 `coop init` creates the agent directories (`.claude/`, `.codex/`, `.gemini/`, `.grok/`) only for
-agents you're signed in to. You can choose them explicitly with `--agents claude,codex`, or use
+agents you're signed in to on any account. You can choose them explicitly with `--agents claude,codex`, or use
 `all`.
 
 You can delete an agent's directory from a repo that doesn't use it. If you later run that

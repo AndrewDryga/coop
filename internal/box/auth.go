@@ -29,6 +29,30 @@ func AuthedAgents(cfg *config.Config) []string {
 	return authed
 }
 
+// SignedInAgents returns agents with any account that looks authenticated, by the same presence
+// heuristic as AuthedAgents: an agent whose default account needs a sign-in but whose other
+// account is signed in still counts. coop init reads it to pick the agents a project is set up
+// for, which is about which agents a person uses, not which account a run would pick.
+func SignedInAgents(cfg *config.Config) []string {
+	keys := envFileKeys(cfg.EnvFile())
+	var out []string
+	for _, name := range agents.Names() {
+		ag, _ := agents.Get(name)
+		def := cfg.DefaultProfileOf(name)
+		// A listing error still returns the accounts read before it, and each one checked here is
+		// real; a hidden one only leaves the agent out, as before.
+		accounts, _ := EffectiveProfiles(cfg, name)
+		accounts = append(accounts, cfg.ActiveProfile(name))
+		for _, account := range accounts {
+			if profileCredentialPresent(cfg, ag, name, account, keys, account == def) {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // runPrimary is the lead agent whose box this is: the consult lead when present, else the
 // launched agent. "" for a raw/maintenance run (no agent session).
 func runPrimary(spec RunSpec) string {

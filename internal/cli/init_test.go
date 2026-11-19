@@ -226,6 +226,51 @@ func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 	}
 }
 
+// A first init in a repository that already has its own AGENTS.md keeps it and says so, with the
+// way to add Coop's contract; with no --agents it sets up every agent that has any signed-in
+// account, not only those whose default account is.
+func TestInitOverOwnInstructionsSaysTheyWereKept(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	hermeticGit(t)
+	dir, cfgDir := t.TempDir(), t.TempDir()
+	gitInit(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := initAppOnDocker(dir, cfgDir)
+	seedNativeFixture(t, a.cfg, "claude", "personal_backup")
+	out := captureStderr(t, func() {
+		if code, err := a.cmdInit([]string{"--services", "none"}); code != 0 || err != nil {
+			t.Fatalf("cmdInit = (%d, %v)", code, err)
+		}
+	})
+	if data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md")); err != nil || string(data) != "mine\n" {
+		t.Errorf("init clobbered AGENTS.md: %q, %v", data, err)
+	}
+	for _, want := range []string{
+		"✓ Coop project created",
+		"Claude has instructions, skills, and one task queue.",
+		"Coop kept your AGENTS.md",
+		"move your AGENTS.md aside, run coop init again",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init over an own AGENTS.md is missing %q:\n%s", want, out)
+		}
+	}
+	if !pathExists(filepath.Join(dir, ".claude")) {
+		t.Error("init left out Claude, which is signed in on its second account")
+	}
+	// A re-init over the same file is not news: it was said once.
+	out = captureStderr(t, func() {
+		if code, err := a.cmdInit(nil); code != 0 || err != nil {
+			t.Fatalf("re-init = (%d, %v)", code, err)
+		}
+	})
+	if strings.Contains(out, "Coop kept your AGENTS.md") {
+		t.Errorf("re-init repeated the kept-instructions notice:\n%s", out)
+	}
+}
+
 type initTreeEntry struct {
 	info os.FileInfo
 	data string

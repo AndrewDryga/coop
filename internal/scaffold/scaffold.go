@@ -46,6 +46,11 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 		return nil, err
 	}
 	s := &scaffolder{repo: repo}
+	// A first init over the project's own AGENTS.md keeps it, so the instructions every agent reads
+	// lack Coop's contract unless the person adds it. Checked before anything is written; a re-init
+	// over the file init wrote, or the person's edit of it, says nothing.
+	_, statErr := os.Lstat(filepath.Join(repo, "AGENTS.md"))
+	ownInstructions := statErr == nil && !Initialized(repo)
 	// A per-agent dir (.claude/.codex/.gemini) is scaffolded only for agents in agentDirs — the ones
 	// you actually use. A repo that drops the others stays clean: a box synthesizes a missing agent's
 	// skills from the repo's shared source on demand (see box.synthSkillsMounts). agentDirs is the
@@ -103,6 +108,13 @@ func Init(repo, stack string, gateLangs, agentDirs []string, services ...string)
 		if err := s.writeIfAbsent(f.dest, f.src, f.perm); err != nil {
 			return s.notices, err
 		}
+	}
+	if ownInstructions && !Stock(repo, "AGENTS.md") {
+		s.notices = append(s.notices, Notice{
+			Headline: "Coop kept your AGENTS.md",
+			Reason:   "It already existed, so it lacks Coop's agent contract: the task queue, the gate and one commit per task.",
+			Action:   "To add it, move your AGENTS.md aside, run coop init again, then copy your own instructions into the new file.",
+		})
 	}
 
 	// One brain, every agent: AGENTS.md is canonical and CLAUDE.md / GEMINI.md symlink to it.

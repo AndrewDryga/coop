@@ -67,6 +67,30 @@ func TestAuthedAgentsUsesConcreteActiveProfile(t *testing.T) {
 	}
 }
 
+// coop init sets a project up for the agents a person uses: one signed in only on a second account
+// counts, though its default account would need a sign-in to run. A provider-wide env token still
+// stands for the default account alone, and an agent with no account at all stays out.
+func TestSignedInAgentsCountsAnySignedInAccount(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir()}
+	seedCanonicalFixture(t, cfg, "claude", "personal_backup")
+	if slices.Contains(AuthedAgents(cfg), "claude") {
+		t.Fatal("fixture: the default Claude account is signed in")
+	}
+	if got := SignedInAgents(cfg); !slices.Equal(got, []string{"claude"}) {
+		t.Errorf("SignedInAgents = %v, want [claude] from its second account", got)
+	}
+	// The env token belongs to codex's default account, which is not "work": it still counts once.
+	if err := cfg.SetDefaultProfile("codex", "work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.EnvFile(), []byte("OPENAI_API_KEY=token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := SignedInAgents(cfg); !slices.Equal(got, []string{"claude", "codex"}) {
+		t.Errorf("SignedInAgents = %v, want [claude codex]", got)
+	}
+}
+
 func TestEnvFileKeysFollowRuntimeSemantics(t *testing.T) {
 	t.Setenv("IMPORTED_TOKEN", "ambient")
 	t.Setenv("EMPTY_IMPORT", "")
