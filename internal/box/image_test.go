@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -199,6 +200,58 @@ func TestEntrypointRecordsTheBoxPath(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil || string(out) != boxPath {
 		t.Fatalf("the provider saw COOP_BOX_PATH %q (%v), want the box's own %q", out, err, boxPath)
+	}
+}
+
+// coop-entry starts the command only once each service forwarder accepts connections, so an app
+// that reaches COOP_SERVICE_<NAME>_URL in its first moment is never refused; a forwarder that dies
+// or never listens is named on stderr and the command still starts. The socat stand-in binds after
+// a delay (or never) and answers the readiness probe only once it has.
+func TestEntrypointWaitsForTheServiceForwarders(t *testing.T) {
+	entry := filepath.Join(t.TempDir(), "coop-entry")
+	if err := os.WriteFile(entry, []byte(entrypointScript(t)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		listener string // what the stand-in does in place of TCP-LISTEN
+		ready    bool
+	}{
+		"slow to bind": {listener: `sleep 0.5; : > "$MARK.$port"; while [ -e "$MARK.$port" ]; do sleep 0.1; done`, ready: true},
+		"dies":         {listener: `exit 1`},
+		"never binds":  {listener: `sleep 10`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bin := t.TempDir()
+			mark := filepath.Join(t.TempDir(), "listening")
+			socat := "#!/bin/sh\ncase \"$1\" in\n" +
+				"TCP-LISTEN:*) port=${1#TCP-LISTEN:}; port=${port%%,*}; " + tc.listener + " ;;\n" +
+				"*) port=${3#TCP:127.0.0.1:}; port=${port%%,*}; [ -e \"$MARK.$port\" ] ;;\nesac\n"
+			for file, script := range map[string]string{"socat": socat, "setsid": "#!/bin/sh\nexec \"$@\"\n"} {
+				if err := os.WriteFile(filepath.Join(bin, file), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { _ = os.Remove(mark + ".5432"); _ = os.Remove(mark + ".8080") })
+			cmd := exec.Command("/bin/sh", entry, "/bin/sh", "-c", `echo started; [ -e "$MARK.5432" ] && [ -e "$MARK.8080" ] && echo both-listening`)
+			cmd.Env = []string{"PATH=" + bin + ":/bin:/usr/bin", "MARK=" + mark, "COOP_FORWARD=5432:db:5432,8080:web-admin:80"}
+			started := time.Now()
+			out, err := cmd.CombinedOutput()
+			got := string(out)
+			if tc.ready {
+				if err != nil || got != "started\nboth-listening\n" {
+					t.Fatalf("the command started before its forwarders listened: %q (%v)", got, err)
+				}
+				return
+			}
+			for _, want := range []string{"started\n", "forwarder for service db is not listening on localhost:5432", "forwarder for service web-admin is not listening on localhost:8080"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("output %q does not name the dead forwarder: want %q", got, want)
+				}
+			}
+			if elapsed := time.Since(started); elapsed > 10*time.Second {
+				t.Errorf("the wait was not bounded: %s", elapsed)
+			}
+		})
 	}
 }
 

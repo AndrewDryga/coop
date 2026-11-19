@@ -621,7 +621,9 @@ services:
 co:op assigns a stable host port for each development workspace or loop run, so concurrent stacks
 have separate ports. The host port listens only on loopback. Inside the box,
 `https://localhost:<port>` reaches the same Keycloak service, so both sides use the same issuer URL
-without `host.docker.internal` or broader network access.
+without `host.docker.internal` or broader network access. The box's command starts only after
+these `localhost` ports accept connections; if one is still closed after about five seconds, the
+box says which service on stderr and starts anyway.
 
 The box receives `COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>`, using the scheme from the
 label. Host tools can read all workspace service URLs from `coop fork ls --json`.

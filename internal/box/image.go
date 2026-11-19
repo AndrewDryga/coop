@@ -169,6 +169,7 @@ proc_start_token() {
 } 2>/dev/null
 
 forward_sessions=
+forward_waits=
 if [ -n "$COOP_FORWARD" ] && command -v socat >/dev/null 2>&1; then
   oldifs=$IFS; IFS=,
   for forward in $COOP_FORWARD; do
@@ -180,9 +181,24 @@ if [ -n "$COOP_FORWARD" ] && command -v socat >/dev/null 2>&1; then
     fp=$!
     token=$(proc_start_token "$fp")
     [ -n "$token" ] && forward_sessions="$forward_sessions $fp:$token"
+    forward_waits="$forward_waits $hp:$svc:$fp"
     IFS=,
   done
   IFS=$oldifs
+  # Start the command only once every listener accepts, within one shared bound: a command that
+  # reaches its database in its first moment must not be refused because socat had not bound yet.
+  tries=0
+  for forward in $forward_waits; do
+    hp=${forward%%%%:*}; rest=${forward#*:}; svc=${rest%%%%:*}; fp=${rest#*:}
+    until socat -u OPEN:/dev/null "TCP:127.0.0.1:$hp,connect-timeout=1" >/dev/null 2>&1; do
+      tries=$((tries + 1))
+      if ! kill -0 "$fp" 2>/dev/null || [ "$tries" -ge 50 ]; then
+        echo "coop: the forwarder for service $svc is not listening on localhost:$hp; connections to it will be refused" >&2
+        break
+      fi
+      sleep 0.1
+    done
+  done
 fi
 
 # The PATH the box started with, for coop-consult and coop-delegate to hand their arms: a lead's
