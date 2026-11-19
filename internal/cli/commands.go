@@ -436,6 +436,9 @@ func (a *app) launchAgent(target string, args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	if err := refuseEmptyPrompt("coop "+tool, args); err != nil {
+		return 2, err
+	}
 	// `coop claude login` reads as "log in to claude" — route it to the sign-in flow like
 	// `coop login claude`; the account rides the target (`coop claude@work login`).
 	if len(args) >= 1 && args[0] == "login" {
@@ -485,6 +488,9 @@ func (a *app) launchPreset(p *preset.Preset, args []string) (int, error) {
 	}
 	peerVals, args, err := extractPeer(a.launchCommand(), args)
 	if err != nil {
+		return 2, err
+	}
+	if err := refuseEmptyPrompt("coop "+p.Name, args); err != nil {
 		return 2, err
 	}
 	if _, err := resolvePeerTargets("coop "+p.Name, peerVals, agents.Names()); err != nil {
@@ -608,6 +614,31 @@ func extractRepeatable(command string, args []string, flag, usage, example strin
 		rest = append(rest, args[i])
 	}
 	return vals, rest, nil
+}
+
+// refuseEmptyPrompt refuses a launch that ends with -p and has no prompt anywhere. An agent session
+// never reads piped input, so no agent could get its prompt any other way, and the refusal comes
+// before a box starts rather than as the agent's own error inside one. Anything after -p, even a word
+// that starts with a dash, is left for the agent to read, and so is a -p after a plain word: that
+// word may be Claude's prompt (`coop claude "fix it" -p`) or a subcommand whose own -p it is.
+func refuseEmptyPrompt(command string, args []string) error {
+	typed := args
+	if i := slices.Index(args, "--"); i >= 0 {
+		if i+1 < len(args) {
+			return nil // `-p -- --help`: what follows is the agent's
+		}
+		typed = args[:i]
+	}
+	n := len(typed)
+	if n == 0 || typed[n-1] != "-p" && typed[n-1] != "-p=" {
+		return nil
+	}
+	for _, arg := range typed[:n-1] {
+		if !strings.HasPrefix(arg, "-") {
+			return nil
+		}
+	}
+	return ui.MissingOptionValue("-p", command, command+` -p "fix the failing test"`)
 }
 
 // agentArgs is what an agent's CLI receives from a launch: the arguments typed after its name, without

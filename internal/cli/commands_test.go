@@ -2319,6 +2319,41 @@ func TestRemovedExposureFlagsAreRefused(t *testing.T) {
 	}
 }
 
+// `coop <agent> -p` with no prompt is a usage error before any runtime work, for every agent and a
+// preset: an agent session never reads piped input, so the agent could only fail inside a box.
+func TestPromptOptionWithNoPromptIsRefusedBeforeTheBox(t *testing.T) {
+	lead := &preset.Preset{Name: "frontier", LeadTargets: []agents.Target{{Provider: "claude"}}}
+	runs := map[string]func(a *app) (int, error){
+		"frontier": func(a *app) (int, error) { return a.launchPreset(lead, []string{"-p"}) },
+	}
+	for _, name := range []string{"claude", "codex", "gemini", "grok"} {
+		runs[name] = func(a *app) (int, error) { return a.launchAgent(name, []string{"-p"}) }
+	}
+	runs["codex -p="] = func(a *app) (int, error) {
+		return a.launchAgent("codex", []string{"--egress", "offline", "--search", "-p=", "--"})
+	}
+	for name, run := range runs {
+		t.Run(name, func(t *testing.T) {
+			recorder := filepath.Join(t.TempDir(), "runtime-args")
+			a := &app{cfg: &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}, rt: recordingRuntime(t, recorder), rtSet: true}
+			code, err := run(a)
+			command := "coop " + strings.Fields(name)[0]
+			if code != 2 || err == nil || !strings.Contains(err.Error(), `Missing value for "-p" in "`+command+`"`) ||
+				!strings.Contains(err.Error(), command+` -p "fix the failing test"`) {
+				t.Fatalf("= (%d, %v), want a usage refusal for -p", code, err)
+			}
+			if _, err := os.Stat(recorder); err == nil {
+				t.Fatal("the runtime was invoked")
+			}
+		})
+	}
+	for _, args := range [][]string{{"-p", "go"}, {"-p", "-fix"}, {"-p=go"}, {"-p", "--", "--help"}, {"--", "-p"}, {"fix it", "-p"}, {"resume", "--last", "-p"}} {
+		if err := refuseEmptyPrompt("coop codex", args); err != nil {
+			t.Errorf("refuseEmptyPrompt(%q) = %v, want the arguments left to the agent", args, err)
+		}
+	}
+}
+
 func TestCmdRunDelimiterForwardsLeadingOptions(t *testing.T) {
 	for _, command := range []string{"--help", "--bare"} {
 		t.Run(command, func(t *testing.T) {
