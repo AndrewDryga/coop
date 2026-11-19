@@ -96,6 +96,17 @@ const (
 type sessionACPCommand func(string, ...string) *exec.Cmd
 
 type sessionCancelRequestContextKey struct{}
+
+// sessionCancelRequested reports whether a person asked to cancel the turn ctx runs.
+func sessionCancelRequested(ctx context.Context) bool {
+	lookup, ok := ctx.Value(sessionCancelRequestContextKey{}).(func() (string, session.CancelTurnRequest, bool))
+	if !ok {
+		return false
+	}
+	_, _, requested := lookup()
+	return requested
+}
+
 type sessionWarmIdleTimeoutContextKey struct{}
 type sessionTargetLadderContextKey struct{}
 
@@ -534,7 +545,11 @@ func (r *sessionTurnRunner) Run(ctx context.Context, bound session.Session, leas
 				}
 			}
 		}
-		if baseErr != nil {
+		// A stopping service, not a person, ended this turn: leave it active, as a crash would, so
+		// the next start records it interrupted (or queues it again if its prompt never left)
+		// instead of a cancellation nobody asked for.
+		interruptedByStop := !protocolComplete && sessionServiceStopping(ctx) && !sessionCancelRequested(ctx)
+		if baseErr != nil && !interruptedByStop {
 			pending := session.Usage{}
 			if usagePending {
 				pending = pendingUsage

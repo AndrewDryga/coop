@@ -326,6 +326,15 @@ type Config struct {
 	Logger        *slog.Logger
 }
 
+// errSessionServiceStopping is the cause a stopping service cancels its workers with. A turn it
+// interrupts stays active for the next start to settle, exactly as after a crash: interrupted when
+// its prompt may have reached the provider, queued again when it cannot have. Nobody cancelled it.
+var errSessionServiceStopping = errors.New("session service is stopping")
+
+func sessionServiceStopping(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), errSessionServiceStopping)
+}
+
 type sessionWorker struct {
 	sessionID string
 	trigger   chan struct{}
@@ -843,7 +852,8 @@ func (s *Service) Start(parent context.Context) error {
 		}
 	}
 	s.historicalMu.Unlock()
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancelCause := context.WithCancelCause(parent)
+	cancel := func() { cancelCause(errSessionServiceStopping) }
 	s.mu.Lock()
 	if s.started {
 		s.starting = false
@@ -1497,7 +1507,8 @@ func (s *Service) ensureWorkerLocked(sessionID string) *sessionWorker {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	workerCtx, cancel := context.WithCancel(ctx)
+	workerCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(errSessionServiceStopping) } // only Stop cancels a worker
 	worker := &sessionWorker{sessionID: sessionID, trigger: make(chan struct{}, 1), cancel: cancel, done: make(chan struct{})}
 	s.workers[sessionID] = worker
 	s.wg.Add(1)
@@ -1644,7 +1655,10 @@ func (s *Service) drainSession(ctx context.Context, sessionID string) {
 			}
 		}
 		close(active.done)
-		if runErr != nil {
+		if runErr != nil && !requested && sessionServiceStopping(ctx) {
+			s.log.Info("session turn interrupted by the service stopping; the next start settles it",
+				"session_id", sessionID, "turn_id", leased.ID)
+		} else if runErr != nil {
 			// A test runner may return an error without terminalizing its lease. Do not leave a
 			// durable starting turn wedged; the production runner already records its own detail.
 			current, getErr := s.store.GetTurn(context.Background(), sessionID, leased.ID)

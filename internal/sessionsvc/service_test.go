@@ -4678,6 +4678,65 @@ func TestSessionServiceRetriesParkedCleanupWithoutRacingActiveTurn(t *testing.T)
 	waitForSessionTest(t, func() bool { return runner.calls.Load() > during })
 }
 
+// A clean stop (SIGTERM) must leave a running turn the way a crash does: the next start records it
+// interrupted. It used to be failed on the spot as if someone had cancelled it.
+func TestSessionServiceStopLeavesRunningTurnInterruptedNotCancelled(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	var fakeStore *session.Store
+	started := make(chan struct{})
+	runner := RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+		if _, err := fakeStore.MarkTurnSendIntent(context.Background(), bound.ID, turn.ID); err != nil {
+			return turn, err
+		}
+		if _, err := fakeStore.MarkTurnSent(context.Background(), bound.ID, turn.ID); err != nil {
+			return turn, err
+		}
+		close(started)
+		<-ctx.Done()
+		if !sessionServiceStopping(ctx) {
+			t.Errorf("the turn's context does not say the service is stopping: %v", context.Cause(ctx))
+		}
+		return turn, ctx.Err()
+	})
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, func(store *session.Store) Runner {
+		fakeStore = store
+		return runner
+	})
+	defer service.Stop()
+	if err := service.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.CreateRemoteSession(context.Background(), "create-stop", service.request(t, "stop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.SubmitTurn(context.Background(), "turn-stop", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "long"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.Open(service.Store().Root())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	stopped, err := store.GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil || stopped.State != session.TurnRunning {
+		t.Fatalf("turn after a clean stop = %+v %v, want it still running for the next start", stopped, err)
+	}
+	if _, err := store.ReconcileInterruptedTurns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.GetTurn(context.Background(), sess.ID, turn.ID)
+	if err != nil || recovered.State != session.TurnInterrupted || recovered.ErrorCode != session.CodeTurnInterrupted {
+		t.Fatalf("turn after restart = %+v %v, want interrupted", recovered, err)
+	}
+}
+
 func TestSessionServiceWorkerRetiresParkedSessionAndStartsAgain(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")

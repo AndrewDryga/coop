@@ -4167,6 +4167,38 @@ func TestSessionCancelLetsTheChildStopItsOwnBox(t *testing.T) {
 	}
 }
 
+// A stopping service ends a running turn without settling it, so the next start records it
+// interrupted as after a crash; it used to fail acp_cancelled although nobody cancelled it.
+func TestSessionTurnRunnerLeavesATurnTheServiceStopsForRestart(t *testing.T) {
+	fixture := newSessionACPFixture(t, "hang")
+	turn := fixture.submit(t, "long work")
+	ctx, cancel := context.WithCancelCause(contextWithTurnDeadline(t))
+	defer cancel(nil)
+	done := make(chan error, 1)
+	go func() { _, err := fixture.runner.Run(ctx, fixture.session, turn); done <- err }()
+	waitForSessionTest(t, func() bool {
+		data, err := os.ReadFile(fixture.childLog)
+		return err == nil && bytes.Contains(data, []byte(`"method":"session/prompt"`))
+	})
+	cancel(errSessionServiceStopping)
+	select {
+	case <-done:
+	case <-time.After(wait.Deadline):
+		t.Fatal("runner did not stop")
+	}
+	stopped, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil || stopped.State != session.TurnRunning || stopped.SendState != session.SendStateSent {
+		t.Fatalf("turn the service stopped = %+v %v, want it still running", stopped, err)
+	}
+	if _, err := fixture.store.ReconcileInterruptedTurns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil || recovered.State != session.TurnInterrupted || recovered.ErrorCode != session.CodeTurnInterrupted {
+		t.Fatalf("turn after restart = %+v %v, want interrupted", recovered, err)
+	}
+}
+
 // A turn that fails AFTER a completed prompt round keeps the usage that round reported: the
 // schema-repair request was real and billed, and Responder's ledger must not show the turn as
 // "no token report". The failing round itself reports nothing, and a turn that fails before any

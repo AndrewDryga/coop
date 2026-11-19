@@ -440,7 +440,8 @@ idle-runtime cleanup every minute without interfering with an active turn. A tur
 successfully stays successful if cleanup fails, and the background cleaner retries and logs the
 error. If the turn itself failed, its error includes the cleanup failure too.
 
-On restart:
+A clean stop (SIGTERM) ends a running turn's process and box the same way, but leaves the turn
+itself for the next start to settle, as after a crash. On restart:
 
 - Queued turns that were never sent to the provider remain in the queue.
 - A turn waiting for your validation keeps its unpublished candidate, and you can still accept or
