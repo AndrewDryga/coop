@@ -630,7 +630,8 @@ these `localhost` ports accept connections; if one is still closed after about f
 box says which service on stderr and starts anyway.
 
 The box receives `COOP_SERVICE_KEYCLOAK_URL=https://localhost:<port>`, using the scheme from the
-label. Host tools can read all workspace service URLs from `coop fork ls --json`.
+label. Host tools can read every workspace's service URLs from the `services` field of
+`coop fork ls --json`, keyed by `<service>:<port>`.
 
 The scheme is the label's. A service with no label gets `postgres://` for a `postgres` image,
 `redis://` for a `redis` image and `http://` for any other. co:op never wraps a service's traffic in

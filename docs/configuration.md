@@ -271,7 +271,9 @@ Most commands that change state report success or failure through exit codes, no
 views are:
 
 - `coop tasks watch --json` is the standard snapshot of the project's tasks and activity.
-- `coop fork ls --json` lists workspace URLs and fork status.
+- `coop fork ls --json` lists each workspace (`name`, `path`), its published URLs (`serve`, keyed
+  by box port, and `services`, keyed by `<service>:<port>`, each present only when the workspace
+  publishes one), and each fork's `status`.
 
 `coop context`, the `coop net` views, `coop sessions doctor` and `coop sessions quiescence` also accept
 `--json`.
