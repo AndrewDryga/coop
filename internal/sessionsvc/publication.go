@@ -91,9 +91,13 @@ func (s *Service) publicationCandidate(ctx context.Context, intent workerproto.P
 		review.Gate == ReviewGateFailed {
 		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "review is not an exact shareable candidate"}
 	}
-	if intent.Request.Mode == "existing_pull_request" &&
-		(review.ParentHead != intent.Request.ExpectedHead || review.Source == nil || review.Source.SelectedCommit != intent.Request.ExpectedHead || review.Gate != ReviewGatePassed || !review.Publishable) {
-		return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "existing PR candidate is not based on its authorized head"}
+	if intent.Request.Mode == "existing_pull_request" {
+		if review.Gate != ReviewGatePassed || !review.Publishable {
+			return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "existing PR publication requires a publishable review whose check passed"}
+		}
+		if review.ParentHead != intent.Request.ExpectedHead || review.Source == nil || review.Source.SelectedCommit != intent.Request.ExpectedHead {
+			return "", &session.Error{Code: session.CodeInvalidRequest, Detail: "existing PR candidate is not based on its authorized head"}
+		}
 	}
 	directory, retained, err := s.retainedReviewCandidate(ctx, intent.ReviewOperationID)
 	if ctxErr := ctx.Err(); err != nil && ctxErr != nil {

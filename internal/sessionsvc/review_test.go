@@ -1148,3 +1148,46 @@ func TestRefusedSourceGrantAnswersAsPermanent(t *testing.T) {
 		}
 	}
 }
+
+// 2026-11-19: an existing-PR publish of a review with no check was refused as "not based on its
+// authorized head" although the head was right; the missing check was the reason.
+func TestExistingPullPublishOfAnUncheckedReviewNamesTheCheck(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "default")
+	base := gitOut(repo, "rev-parse", "HEAD")
+	git("checkout", "-qb", "human-pr")
+	git("commit", "--allow-empty", "-qm", "human change")
+	selected := gitOut(repo, "rev-parse", "HEAD")
+	checked := false
+	service := newReviewTestService(t, repo, 1<<20, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: checked, Passed: checked}, nil
+	}))
+	defer service.Stop()
+	service.pullSource(t, repo, 42, selected, base, base)
+	sess := createReviewSession(t, service, "unchecked-existing-pr")
+	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "fix.txt"), "selected fix\n")
+	sessionWorkspaceGit(t, sess.Workspace, "add", "fix.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "commit", "-qm", "selected fix")
+	service.reviewPublisher = func(context.Context, string, workerproto.PublishIntent) (workerproto.PublishResult, error) {
+		t.Fatal("refused publication reached the publisher")
+		return workerproto.PublishResult{}, nil
+	}
+	publish := func(key, expected string) error {
+		t.Helper()
+		review, err := service.RunReview(context.Background(), "review-"+key, RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, ParentHead: selected})
+		if err != nil || !review.CandidateRetained || review.Publishable != checked {
+			t.Fatalf("review %s = %+v, %v", key, review, err)
+		}
+		_, err = service.PublishReview(t.Context(), "publish-"+key, sess.ID, review.OperationID, workerproto.PublishRequest{
+			Mode: "existing_pull_request", AuthorizationRef: "selected-findings", CandidateHead: review.CandidateHead, CandidateTree: review.CandidateTree,
+			Branch: "human-pr", BaseBranch: "main", ExpectedHead: expected, PullRequestNumber: 42, Title: "Unused", Body: "Unused"})
+		return err
+	}
+	if err := publish("unchecked", selected); session.CodeOf(err) != session.CodeInvalidRequest || !strings.Contains(err.Error(), "check passed") {
+		t.Fatalf("unchecked existing PR publish = %v, want a refusal that names the check", err)
+	}
+	checked = true
+	if err := publish("moved-head", base); session.CodeOf(err) != session.CodeInvalidRequest || !strings.Contains(err.Error(), "not based on its authorized head") {
+		t.Fatalf("existing PR publish on another head = %v, want the head refusal", err)
+	}
+}
