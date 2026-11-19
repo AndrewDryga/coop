@@ -218,6 +218,10 @@ other loops can recognize the completed folder without trusting task metadata th
 each done folder in a host-only journal. If co:op crashes, the next loop uses the journal
 to undo any completion that had no authorized owner. Tasks completed outside a supervised box
 remain part of the ordinary task history.</p>
+<p>To check a completed task, co:op reads the Git history that the branch can reach. It stops at
+100,000 commits or 128 MB of commit data, so that a planted history can&#39;t use up the host&#39;s memory.
+In a larger repository the loop refuses every completion, and a shallow clone doesn&#39;t help because
+the loop refuses those too.</p>
 <h3 id="sweeps-and-commit-hooks">Sweeps and commit hooks</h3>
 <p>The <code>/sweep</code> skill has a <code>Stop</code> hook that keeps an active sweep running while it has tasks to work
 on, without holding other sessions open. <code>coop init</code> sets it up in new projects. A repo set up by

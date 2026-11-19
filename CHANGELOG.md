@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The loop page states its history limit.** The loop checks completed tasks against at most
+  100,000 commits or 128 MB of commit data, and refuses completions in a larger repository.
+
 - **The session API page now says what the worker really refuses to publish.** It refuses a review
   whose check failed. A review with no check, or a check that could not start, reports
   `publishable: false`, and the worker still publishes it as a new draft pull request when the
