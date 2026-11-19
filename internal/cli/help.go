@@ -1166,7 +1166,7 @@ Usage: coop tasks park <id> ["<reason>"] [--tasks <path>]...
 
   Moves the task to the backlog with its folder and log, so nothing picks it
   up or returns it to todo on its own. Your reason is saved in the task's log.
-  For a blocked task this answers its decision with "not now"; the decision
+  A blocked task's decision is left unanswered and moves with it, so it
   stays open. Release a task in progress before you park it.
   coop backlog promote brings it back, blocked while its decision is open.
 

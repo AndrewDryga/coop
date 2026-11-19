@@ -1419,7 +1419,7 @@ func parseTaskParkArgs(args []string) (id, reason string, err error) {
 	return args[0], strings.TrimSpace(strings.Join(args[1:], " ")), nil
 }
 
-// tasksFolderPark sets a todo task aside, or answers a blocked task's decision with "not now": the
+// tasksFolderPark sets a todo or blocked task aside without answering a blocked task's decision: the
 // folder moves to the backlog drawer with its log (and a blocked task's decision.md), so neither the
 // loop nor a preflight can pick it up (the drawer is never scanned). `coop backlog promote` later
 // brings it back to todo, or to blocked while its question is still open.

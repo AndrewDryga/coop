@@ -72,11 +72,15 @@ func TestParkRecordsWhoParkedTheTask(t *testing.T) {
 	}
 }
 
-// Parking answers a decision with "not now": the folder moves to the backlog with its log and open
+// Parking leaves a decision unanswered: the folder moves to the backlog with its log and open
 // decision, preflight leaves it there, and promote brings it back blocked with the question.
 func TestParkMovesABlockedTaskToTheBacklogAndPromoteBringsTheQuestionBack(t *testing.T) {
 	root := t.TempDir()
 	id := addBlocked(t, root, "Choose the storage")
+	question, err := os.ReadFile(filepath.Join(root, StateBlocked, id, "decision.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if code, err := tasksFolderPark(root, []string{id, "not this quarter"}); code != 0 || err != nil {
 		t.Fatalf("park: code=%d err=%v", code, err)
@@ -84,6 +88,9 @@ func TestParkMovesABlockedTaskToTheBacklogAndPromoteBringsTheQuestionBack(t *tes
 	dir := filepath.Join(root, StateBacklog, id)
 	if !pathExists(filepath.Join(dir, "decision.md")) || pathExists(filepath.Join(root, StateBlocked, id)) {
 		t.Fatal("the task should sit in the backlog with its decision.md, and nowhere else")
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "decision.md")); string(after) != string(question) {
+		t.Errorf("parking wrote to the decision, which must stay unanswered:\n%s", after)
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "log.md")); !parkNoted(string(data), ": not this quarter") {
 		t.Errorf("log.md should record the owner's reason:\n%s", data)
