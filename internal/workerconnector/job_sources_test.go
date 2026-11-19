@@ -909,6 +909,7 @@ func TestStagingANewCommitStartsFromTheEarlierCopyOfTheRepository(t *testing.T) 
 func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 	source := testJobSource().RepositoryIdentity()
 	grant, _ := (&jobSourceGrantFixture{}).FetchJobSourceGrant(context.Background(), "job:one", source)
+	status := http.StatusOK
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/v1/coop-workers/jobs/job:one/source-grants" {
 			t.Errorf("request %s %s", r.Method, r.URL.Path)
@@ -918,6 +919,10 @@ func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 			"github_repository_id": float64(source.GitHubRepositoryID)}
 		if err := json.NewDecoder(r.Body).Decode(&requested); err != nil || !reflect.DeepEqual(requested, expected) {
 			t.Fatalf("grant request changed source: %+v, %v", requested, err)
+		}
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(grant)
@@ -943,6 +948,17 @@ func TestJobSourceGrantIsJobAndExactRepositoryBound(t *testing.T) {
 		grant.Public, grant.Token = refused.Public, refused.Token
 		if _, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); !errors.Is(err, ErrJobSourceIntegrity) {
 			t.Fatalf("grant public=%v token=%q = %v", refused.Public, refused.Token, err)
+		}
+	}
+	// A 403 refuses the repository for good; a review or changes read must not answer it as
+	// retry-later. Any other status stays what it was.
+	status = http.StatusForbidden
+	if _, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); !errors.Is(err, workerproto.ErrSourceGrantRefused) || !permanentBodyRefusal(err) {
+		t.Fatalf("403 grant = %v, want a permanent refusal", err)
+	}
+	for _, status = range []int{http.StatusNotFound, http.StatusServiceUnavailable} {
+		if _, err := transport.FetchJobSourceGrant(context.Background(), "job:one", source); errors.Is(err, workerproto.ErrSourceGrantRefused) {
+			t.Fatalf("%d grant = %v, want no 403 refusal", status, err)
 		}
 	}
 }

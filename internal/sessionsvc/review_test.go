@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1115,5 +1116,35 @@ func TestSessionReviewCandidateNamesItsTrustedParentForTheGate(t *testing.T) {
 	}
 	if dossier.Gate != ReviewGatePassed || !dossier.Publishable {
 		t.Fatalf("review with a named parent = %+v", dossier)
+	}
+}
+
+// 2026-11-19: a controller's 403 to the source grant a review or a changes read asks for answered
+// 503 repository_unavailable, which a controller reads as "try again later". The 403 is for good.
+func TestRefusedSourceGrantAnswersAsPermanent(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "refused-grant")
+	for _, tc := range []struct {
+		name   string
+		err    error
+		code   session.ErrorCode
+		status int
+	}{
+		{"refused", fmt.Errorf("fetch grant: %w", workerproto.ErrSourceGrantRefused), session.CodeInvalidSessionState, http.StatusConflict},
+		{"unavailable", errors.New("controller body request returned HTTP 503"), session.CodeRepositoryUnavailable, http.StatusServiceUnavailable},
+	} {
+		service.sourceRefresher = func(context.Context, string, workerproto.JobSource, string) (string, error) { return "", tc.err }
+		_, changesErr := service.GetChanges(context.Background(), sess.ID)
+		_, reviewErr := service.RunReview(context.Background(), "review-"+tc.name, RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+		for what, err := range map[string]error{"changes": changesErr, "review": reviewErr} {
+			if code, status, _ := sessionHTTPError(err); code != string(tc.code) || status != tc.status {
+				t.Errorf("%s %s = %d %s (%v), want %d %s", tc.name, what, status, code, err, tc.status, tc.code)
+			}
+		}
 	}
 }

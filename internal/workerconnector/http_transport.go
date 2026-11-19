@@ -176,6 +176,9 @@ func (t *HTTPTransport) FetchJobSourceGrant(
 		return JobSourceGrant{}, fmt.Errorf("fetch controller job source grant: %w", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusForbidden {
+		return JobSourceGrant{}, fmt.Errorf("%w: %w", workerproto.ErrSourceGrantRefused, &BodyStatusError{Status: response.StatusCode})
+	}
 	if response.StatusCode != http.StatusOK {
 		return JobSourceGrant{}, &BodyStatusError{Status: response.StatusCode}
 	}

@@ -1674,6 +1674,12 @@ the session's saved network permissions. Check its container runtime and network
 worker stops execution instead of falling back to open networking. Don't change a saved job to
 bypass the refusal.
 
+A review without `parent_head` and `GET …/changes` read the current default branch of a
+repository-backed job with a fresh controller source grant. When the controller can't grant it for
+now, or the worker can't reach it, they return `503 repository_unavailable`, and a later retry may
+succeed. When the controller refuses the grant with `403`, they return `409 invalid_session_state`:
+asking again for the same job gets the same refusal.
+
 For `operation_uncertain` or `turn.interrupted`, inspect the saved operation and resulting
 session state to find out what happened. An unknown result isn't a reason to submit the same
 action with a new key: that could run it twice.

@@ -109,6 +109,10 @@ func (r RepositoryIdentity) FirstDownloadKey() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ErrSourceGrantRefused is a controller's 403 to a job source grant: it refuses read access to the
+// repository for good, so asking again for the same job cannot succeed.
+var ErrSourceGrantRefused = errors.New("the controller refused read access to the job's repository")
+
 func (s JobSource) RepositoryIdentity() RepositoryIdentity {
 	return RepositoryIdentity{s.RepositoryRef, s.GitHubRepository, s.GitHubRepositoryID}
 }

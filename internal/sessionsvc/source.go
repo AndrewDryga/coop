@@ -2,6 +2,7 @@ package sessionsvc
 
 import (
 	"context"
+	"errors"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -44,6 +45,10 @@ func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Sess
 			Detail: "current default revision requires a controller-authorized source refresh"}
 	}
 	head, err := s.sourceRefresher(ctx, job.JobRef, *job.Source, execution.Repository)
+	if errors.Is(err, workerproto.ErrSourceGrantRefused) {
+		return "", &session.Error{Code: session.CodeInvalidSessionState,
+			Detail: "the controller refuses read access to the job's repository; asking again will not change that"}
+	}
 	if err != nil {
 		return "", &session.Error{Code: session.CodeRepositoryUnavailable, Detail: "could not refresh the job's default revision"}
 	}
