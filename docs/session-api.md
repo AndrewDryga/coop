@@ -826,7 +826,8 @@ Other workspace states you can fix also refuse with `409 invalid_session_state` 
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
 large untracked files, a missing or changed bound task, or a restore that must finish first.
 Restore answers `400 invalid_request` for a malformed descriptor or a bundle it must not apply
-(submodule changes, an unused LFS object, a file that would replace fork authority). It also
+(submodule changes, an unused LFS object, a file that would replace fork authority, a task offer
+other than the session's task). It also
 answers `400 invalid_request` when `Content-Length` is missing or differs from the descriptor's
 size, and `415` when the content type differs from the descriptor's. A worker fault stays
 `500 internal_error`.
@@ -839,7 +840,8 @@ read its own store, so retry that one.
 To capture a checkpoint, the session must be idle, writable and bound to a task. You can capture an
 open, exhausted or closed session, but not a discarded one. Capture keeps a closed session closed
 and can't restart model execution. To restore a checkpoint, create an unused replacement session
-with the same authorized base and task offer. Both requests require an idempotency key. Restore uses
+with the same authorized base, and with the checkpoint's task offer (its bound task's `offer_ref`)
+as the create request's `task`. Both requests require an idempotency key. Restore uses
 the content type `application/vnd.coop.workspace-checkpoint.v2+tar`, and its Content-Length must
 match the descriptor.
 

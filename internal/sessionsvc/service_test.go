@@ -824,6 +824,26 @@ func TestClosedWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *te
 			t.Fatal("unverified checkpoint content reached the live workspace")
 		}
 	})
+	// The replacement session must carry the checkpoint's task offer. Another task is the
+	// caller's mistake, refused as one (it answered 500 internal_error, which invites a retry).
+	t.Run("another task offer", func(t *testing.T) {
+		other, err := service.CreateRemoteSession(context.Background(), "restore-mismatch-create", service.request(t, "record:task_offer:mismatch"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = service.RestoreWorkspaceCheckpoint(context.Background(), "restore-mismatch-once", RestoreWorkspaceCheckpointRequest{
+			SessionID: other.ID, ExpectedRevision: other.Revision, Checkpoint: captured.Checkpoint, Stream: bytes.NewReader(bundle),
+		})
+		if session.CodeOf(err) != session.CodeInvalidRequest || !strings.Contains(err.Error(), "task offer") {
+			t.Fatalf("restore into another task = %v (code %q), want invalid_request naming the task offer", err, session.CodeOf(err))
+		}
+		if current := mustSession(t, service, other.ID); current.Revision != other.Revision || current.WorkspaceTask != nil {
+			t.Fatalf("refused restore published a task binding: %+v", current)
+		}
+		if _, err := os.Stat(filepath.Join(other.Workspace, "committed.bin")); !os.IsNotExist(err) {
+			t.Fatal("refused checkpoint content reached the live workspace")
+		}
+	})
 	restored, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-once", RestoreWorkspaceCheckpointRequest{
 		SessionID: target.ID, ExpectedRevision: target.Revision,
 		Checkpoint: captured.Checkpoint, Stream: bytes.NewReader(bundle),

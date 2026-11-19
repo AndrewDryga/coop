@@ -332,8 +332,13 @@ func verifyStreamedCheckpoint(ctx context.Context, sess session.Session, checkpo
 	}
 	recovered, err := tasks.ReadControllerTaskBinding(sess.Workspace, checkpoint.Task.ID)
 	if err != nil || recovered.QueueID != checkpoint.Task.QueueID || recovered.TaskID != checkpoint.Task.TaskID ||
-		recovered.ID != checkpoint.Task.ID || recovered.OfferRef != sess.ExternalRef {
+		recovered.ID != checkpoint.Task.ID {
 		return binding, errors.New("restored workspace task authority does not match")
+	}
+	if recovered.OfferRef != sess.ExternalRef {
+		// The caller created the replacement session for another task: their mistake, not ours.
+		return binding, &session.Error{Code: session.CodeInvalidRequest,
+			Detail: "checkpoint belongs to another task offer; create the replacement session with the checkpoint's task offer as its task"}
 	}
 	binding = session.WorkspaceTaskBinding{QueueID: recovered.QueueID, TaskID: recovered.TaskID, ID: recovered.ID,
 		OfferRef: recovered.OfferRef, DraftSHA256: recovered.DraftSHA256}
