@@ -97,6 +97,11 @@ func (s composeShim) build(t *testing.T) runtime.Runtime {
 	}
 	script.WriteString("    ;;\n")
 	up := "echo '[Compose output]'; "
+	if s.upSays != "" {
+		// What Compose said goes to stderr; the stand-in must share that stream, or the two reach
+		// the transcript through separate pipes in either order (it failed that way on CI).
+		up = "echo '[Compose output]' >&2; "
+	}
 	if len(s.upProgress) > 0 {
 		up = "printf '%s\\n' '" + strings.Join(s.upProgress, "' '") + "' >&2; "
 	}
