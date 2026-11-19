@@ -539,14 +539,14 @@ What the report shows depends on what co:op could record:
 - For TLS traffic, the gateway records each connection's requested name, resolved address and
   transferred bytes. It also saves an event when it blocks a name. `coop net blocked <host>` finds
   this project's newest run that blocked that host, groups its blocked attempts by cause and counts
-  repeats. Use `--run <run>` to choose a run, and with it you can supply an exact event ID instead
-  of a host. When no recorded block matches, it says so and exits `1`, as `grep` does.
+  repeats. Give `<host>:<port>` to see only blocks on that port. Use `--run <run>` to choose a
+  run, and with it you can supply an exact event ID instead of a host. When no recorded block matches, it says so and exits `1`, as `grep` does.
 - A blocked DNS lookup doesn't record which port the program wanted, so `coop net blocked` shows a
-  rule for TLS on port 443, labeled as the likely fix.
+  rule for TLS on the port you named, or on 443, labeled as the likely fix.
 - A direct connection to an address the run looked up, such as `http://` to a name approved only
   for TLS or `https://` to a port its rule doesn't list, is listed under that name with the address
-  and port beside it, so `coop net blocked <host>` finds it. For a port other than 80, it shows a
-  rule for TLS on that port, labeled as the likely fix. An address that two looked-up names share
+  and port beside it, so `coop net blocked <host>` finds it. For each port other than 80, it shows
+  a rule for TLS on that port, labeled as the likely fix, even when port 80 was blocked too. An address that two looked-up names share
   is listed as an address.
 - For raw traffic, the kernel counts packets and bytes for each approved address rule. These
   appear under `Raw traffic` in `coop net inspect`, each row named by its rule, such as

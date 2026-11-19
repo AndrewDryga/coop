@@ -35,6 +35,7 @@ type netDiagnosticOptions struct {
 	run, query string
 	json       bool
 	policy     networkstate.PolicyQuery
+	port       int // blocked: the port a host:port or URL named, 0 for any
 }
 
 func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, error) {
@@ -138,11 +139,11 @@ func parseNetDiagnosticArgs(verb string, args []string) (netDiagnosticOptions, e
 		}
 		return opts, nil
 	}
-	host, _, err := netQueryHost(opts.query)
+	host, port, err := netQueryHost(opts.query)
 	if err != nil {
 		return opts, netInvalidAddress(command)
 	}
-	opts.query = host
+	opts.query, opts.port = host, port
 	return opts, nil
 }
 
@@ -547,6 +548,8 @@ type netExplanation struct {
 	Causes  []netExplainCause `json:"causes"`
 	// lossy: the run's record lost or trimmed refusals, so an absence here proves nothing.
 	lossy bool
+	// port is the one the query named, 0 for any: the port a likely fix for a lookup allows.
+	port int
 }
 
 type netExplainCause struct {
@@ -609,7 +612,7 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	}
 	lossy := false
 	for _, runID := range runs {
-		explanation, err := netExplainHost(evidence, runID, opts.query)
+		explanation, err := netExplainHost(evidence, runID, opts.query, opts.port)
 		if err != nil {
 			return 1, netRunErr(runID, err)
 		}
@@ -635,7 +638,11 @@ func (a *app) netExplain(evidence *networkstate.Evidence, page networkstate.Exec
 	}
 	// A run that trimmed its oldest refusals (or lost records) may have dropped this one.
 	complete := !page.Incomplete && page.Unreadable == 0 && !lossy
-	return 1, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetNoBlock(b, p, opts.query, scope, complete) })
+	asked := opts.query
+	if opts.port != 0 {
+		asked += ":" + strconv.Itoa(opts.port)
+	}
+	return 1, netRender(os.Stdout, func(b *bytes.Buffer) { writeNetNoBlock(b, p, asked, scope, complete) })
 }
 
 // writeNetNoBlock answers "nothing blocked this here" — and only says it as an
@@ -655,14 +662,15 @@ const netIncompleteRecording = "Recording is incomplete; some blocked attempts m
 // netExplainHost reads one run for every refusal of one host and groups the
 // repeats by what actually differed — the boundary, the reason, the port, the service — so
 // a name refused forty times reads as one cause, and two different refusals
-// of it read as two.
-func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExplanation, error) {
+// of it read as two. A port other than 0 keeps the refusals on that port and the
+// ones that record none, such as a DNS lookup, which may have been for it.
+func netExplainHost(evidence *networkstate.Evidence, runID, host string, port int) (netExplanation, error) {
 	inspection, err := evidence.Inspect(runID, time.Now(), true)
 	if err != nil {
 		return netExplanation{}, err
 	}
 	loss := inspection.Observed.Loss
-	out := netExplanation{Version: networkview.Version, RunID: runID, Host: host,
+	out := netExplanation{Version: networkview.Version, RunID: runID, Host: host, port: port,
 		lossy: loss.Unknown || loss.Records != 0 || loss.DetailTruncated}
 	type group struct {
 		newest networkview.Denial
@@ -671,7 +679,7 @@ func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExp
 	index := map[string]*group{}
 	var order []string
 	for _, denial := range inspection.Observed.Denials {
-		if denial.Name != host {
+		if denial.Name != host || port != 0 && denial.Port != nil && *denial.Port != port {
 			continue
 		}
 		key := networkreport.RefusalLabel(denial) + " " + denial.Request // two refused requests are two causes
@@ -702,8 +710,8 @@ func netExplainHost(evidence *networkstate.Evidence, runID, host string) (netExp
 func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation netExplanation) {
 	first := explanation.Causes[0].Explanation.Event
 	title := explanation.Host
-	if first.Port != nil && first.Name != "" {
-		title += ":" + strconv.Itoa(*first.Port)
+	if port := netTitlePort(explanation.Causes); port != 0 && first.Name != "" {
+		title += ":" + strconv.Itoa(port)
 	}
 	fmt.Fprintf(w, "%s\n", p.Bold(p.Cyan(title+" "+netBlockedVerb(first.Reason))))
 	detail := "Run " + networkreport.ShortID(explanation.RunID) + " · " + networkreport.WhenAt(now, first.At)
@@ -760,15 +768,31 @@ func writeNetExplanation(w io.Writer, p ui.Palette, now time.Time, explanation n
 	}
 }
 
+// netTitlePort is the port the title names: the first cause's, unless another cause recorded a
+// different one, when no single port describes what was blocked.
+func netTitlePort(causes []netExplainCause) int {
+	first := causes[0].Explanation.Event.Port
+	if first == nil {
+		return 0
+	}
+	for _, cause := range causes[1:] {
+		if port := cause.Explanation.Event.Port; port != nil && *port != *first {
+			return 0
+		}
+	}
+	return *first
+}
+
 // netLikelyRule is the one draft a record that cannot prove a rule earns, with what it assumes. A
 // lookup refused only because no rule names the host proves the name, not the port, so TLS on 443
 // — what most lookups are for — is offered as the likely fix rather than as something the record
 // proved. A direct connection to a name the run resolved proves the name and port but not TLS, the
 // one thing a rule for a name allows, so TLS on its port is the likely fix — except on port 80,
-// where plain HTTP is what it almost surely was. Any other cause beside these (a protected answer,
-// a connection the gateway refused) leaves the decision to that evidence.
+// where plain HTTP is what it almost surely was, so that port joins no draft but leaves the other
+// ports' draft standing. Any other cause beside these (a protected answer, a connection the gateway
+// refused) leaves the decision to that evidence. A lookup's draft takes the port the query named.
 func netLikelyRule(explanation netExplanation) (egress.Rule, string, bool) {
-	name, lookups := "", 0
+	name, lookups, plain := "", 0, 0
 	var ports []int
 	for _, cause := range explanation.Causes {
 		event := cause.Explanation.Event
@@ -779,17 +803,23 @@ func netLikelyRule(explanation netExplanation) (egress.Rule, string, bool) {
 		switch {
 		case event.Kind == "dns_denied" && event.Reason == "unapproved_name":
 			lookups++
-		case event.Kind == "direct_tcp_attempt" && event.Reason == "fixed_egress_policy" && event.Port != nil && *event.Port != 80:
+		case event.Kind == "direct_tcp_attempt" && event.Reason == "fixed_egress_policy" && event.Port != nil && *event.Port == 80:
+			plain++
+		case event.Kind == "direct_tcp_attempt" && event.Reason == "fixed_egress_policy" && event.Port != nil:
 			ports = append(ports, *event.Port)
 		default:
 			return egress.Rule{}, "", false
 		}
 	}
 	switch {
-	case name == "" || lookups != 0 && len(ports) != 0:
+	case name == "" || lookups != 0 && (len(ports) != 0 || plain != 0):
 		return egress.Rule{}, "", false
+	case lookups != 0 && explanation.port != 0 && explanation.port != 443:
+		return egress.Rule{To: egress.Destination{Domain: name}, Protocol: "tls", Ports: []int{explanation.port}}, "if the program looked up this name to connect over TLS on that port", true
 	case lookups != 0:
 		return egress.Rule{To: egress.Destination{Domain: name}, Protocol: "tls", Ports: []int{443}}, "most programs look up a name to connect over HTTPS on port 443.\nIf this one did", true
+	case len(ports) == 0:
+		return egress.Rule{}, "", false
 	}
 	slices.Sort(ports)
 	return egress.Rule{To: egress.Destination{Domain: name}, Protocol: "tls", Ports: slices.Compact(ports)}, "if the program used TLS, as https:// does", true

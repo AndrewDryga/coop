@@ -1972,8 +1972,9 @@ OPTIONS
 
   Without --run, finds the newest matching block in this project's runs.
   Shows a rule you can copy when the record proves the remote address and port.
-  A blocked DNS lookup records no port, so it shows TLS on port 443 as the
-  likely fix.
+  A host:port, such as example.com:8443, shows only blocks on that port.
+  A blocked DNS lookup records no port, so it shows TLS on the port you
+  named, or on 443, as the likely fix.
   An exact event ID can replace the host when --run is supplied.
 
 EXAMPLES

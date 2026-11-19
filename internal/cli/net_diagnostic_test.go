@@ -509,8 +509,8 @@ func TestBlockedDraftsTheUnlistedPortOfAResolvedName(t *testing.T) {
 	if got != want {
 		t.Errorf("blocked for an unlisted port:\n%s\nwant:\n%s", got, want)
 	}
-	// Two unlisted ports draft one rule for both; plain HTTP's port 80 beside them drafts nothing,
-	// because no rule for a hostname could have allowed that.
+	// Two unlisted ports draft one rule for both; plain HTTP's port 80 beside them joins no draft,
+	// because no rule for a hostname could have allowed that, but leaves the other port's standing.
 	var b bytes.Buffer
 	causes := func(ports ...int) netExplanation {
 		explanation := netExplanation{RunID: netTestRun, Host: "example.com"}
@@ -525,9 +525,72 @@ func TestBlockedDraftsTheUnlistedPortOfAResolvedName(t *testing.T) {
 		t.Errorf("two unlisted ports did not draft one rule:\n%s", b.String())
 	}
 	b.Reset()
-	writeNetExplanation(&b, ui.Palette{}, time.Now(), causes(8443, 80))
+	writeNetExplanation(&b, ui.Palette{}, time.Now(), causes(80, 8443))
+	if !strings.HasPrefix(b.String(), "example.com was blocked\n") ||
+		!strings.Contains(b.String(), "  - to: {domain: \"example.com\"}\n    protocol: tls\n    ports: [8443]\n") {
+		t.Errorf("a plain HTTP attempt beside an unlisted port did not draft that port alone:\n%s", b.String())
+	}
+	b.Reset()
+	writeNetExplanation(&b, ui.Palette{}, time.Now(), causes(80))
 	if strings.Contains(b.String(), "- to:") {
-		t.Errorf("a plain HTTP attempt beside an unlisted port drafted a rule:\n%s", b.String())
+		t.Errorf("a plain HTTP attempt alone drafted a rule:\n%s", b.String())
+	}
+}
+
+// One run that was refused example.com on port 80 and on 8443: the bare name shows both and drafts
+// the rule for 8443, and example.com:8443 narrows the answer to that port.
+func TestBlockedHostOnTwoPorts(t *testing.T) {
+	store := netHostFixture(t)
+	project := netFixtureProject(t)
+	at := time.Date(2026, 9, 10, 16, 3, 0, 0, time.UTC)
+	refused := func(id string, sequence networkview.Count, port int) networkview.Denial {
+		return networkview.Denial{ID: strings.Repeat(id, 16), Source: "kernel", Basis: "observed-socket-and-captured-policy", Sequence: sequence,
+			Kind: "direct_tcp_attempt", Reason: "fixed_egress_policy", Name: "example.com", Peer: "104.20.23.154:" + strconv.Itoa(port), Port: &port, At: at}
+	}
+	run := netSealRun(t, store, netRecordRun(t, store, project), refused("e1", 1, 80), refused("e2", 2, 8443))
+	a := &app{cfg: &config.Config{RepoOverride: project}}
+	blocked := func(query string) string {
+		return captureStdout(t, func() {
+			if code, err := a.netDiagnostic("blocked", []string{query}); code != 0 || err != nil {
+				t.Fatalf("coop net blocked %s = (%d, %v)", query, code, err)
+			}
+		})
+	}
+	got := blocked("example.com")
+	for _, want := range []string{"example.com was blocked\n", "direct connection on port 80 · 1 attempt", "direct connection on port 8443 · 1 attempt",
+		"Likely fix: if the program used TLS", "  - to: {domain: \"example.com\"}\n    protocol: tls\n    ports: [8443]\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("blocked example.com lost %q:\n%s", want, got)
+		}
+	}
+	want := "example.com:8443 was blocked\n  Run " + networkreport.ShortID(run.ID) + " · " + networkreport.WhenAt(time.Now(), at) + " · address 104.20.23.154\n\n" +
+		"No approved rule allowed this direct connection. A rule for a hostname covers TLS only, on the ports it lists.\n\n" +
+		"Likely fix: if the program used TLS, as https:// does, add this rule under box.egress_rules in .agent/project.yaml:\n\n" +
+		"  - to: {domain: \"example.com\"}\n    protocol: tls\n    ports: [8443]\n\nThen run:\n  coop approve\n"
+	for _, query := range []string{"example.com:8443", "https://example.com:8443"} {
+		if got := blocked(query); got != want {
+			t.Errorf("blocked %s:\n%s\nwant:\n%s", query, got, want)
+		}
+	}
+	if got := blocked("example.com:80"); !strings.HasPrefix(got, "example.com:80 was blocked\n") || strings.Contains(got, "8443") {
+		t.Errorf("blocked example.com:80 did not narrow to port 80:\n%s", got)
+	}
+	note := captureStdout(t, func() {
+		if code, err := a.netDiagnostic("blocked", []string{"example.com:9443"}); code != 1 || err != nil {
+			t.Fatalf("blocked on a port never refused = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(note, "No recorded block for example.com:9443 in this project's runs.") || !strings.Contains(note, "coop net check example.com:9443") {
+		t.Errorf("blocked on a port never refused:\n%s", note)
+	}
+
+	// A lookup records no port, so it matches any port asked for, and the likely fix takes that port.
+	var b bytes.Buffer
+	explanation := netExplanation{RunID: netTestRun, Host: "example.com", port: 8443,
+		Causes: []netExplainCause{netBlockedFixture("example.com", "dns_denied", "unapproved_name", nil, 1, nil)}}
+	writeNetExplanation(&b, ui.Palette{}, time.Now(), explanation)
+	if !strings.Contains(b.String(), "    protocol: tls\n    ports: [8443]\n") {
+		t.Errorf("a lookup asked about on port 8443 drafted another port:\n%s", b.String())
 	}
 }
 
