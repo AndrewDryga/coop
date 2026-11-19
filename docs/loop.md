@@ -52,8 +52,8 @@ A cron job or CI can act on the loop's exit code without parsing its output:
 | Exit code | Meaning |
 |---|---|
 | `0` | Final review and enabled final checks passed, or a successful `--max-tasks` pause before final review. |
-| `1` | A failure, an unverified final pass, or work still left to do. |
-| `2` | A usage error. |
+| `1` | A failure, an unverified final pass, or work still left to do. A preset or `.agent/loop.yaml` that does not load is a run that could not start, so it exits `1`. |
+| `2` | A usage error, such as an unknown option or target, or a preset name nothing defines. |
 | `3` | The loop stopped with a task blocked on a human decision, including one the review kept reopening past the round limit. Resolve it with `coop tasks decisions`, then run the loop again. |
 | `130` | The run was interrupted before the final verdict. |
 

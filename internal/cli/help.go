@@ -1628,8 +1628,10 @@ NETWORK ACCESS
 EXIT STATUS
   0    review and enabled final checks passed, or the task limit was reached
   1    the run failed or could not start, final checks failed, or work remains,
-       including work another agent holds
-  2    rejected input, such as an unknown option, target or preset
+       including work another agent holds; a preset or .agent/loop.yaml that
+       does not load is a run that could not start
+  2    rejected input, such as an unknown option or target, or a preset name
+       nothing defines
   3    stopped for a decision
   130  interrupted before the final verdict`,
 
