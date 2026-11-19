@@ -227,6 +227,12 @@ The github.com lines fetch one public repository and never push. The same discov
 The broker never turns the public Git download route into general GitHub access. Other GitHub
 requests still require ordinary network approval in filtered mode.
 
+At startup, Codex also copies the plugins installed on your ChatGPT account, downloading each one
+from `sdmntpr*.oaiusercontent.com`. Those hosts serve every ChatGPT user's uploaded files, so a
+filtered box never allows them. Instead, its broker asks chatgpt.com for the installed-plugin list
+without download links, and Codex has nothing to fetch. Your account's plugins don't sync into a
+filtered box. The curated store isn't affected, and an open box downloads your plugins as usual.
+
 ## MCP servers
 
 ### Filtered runs

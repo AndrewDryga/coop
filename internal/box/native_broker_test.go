@@ -286,6 +286,53 @@ func TestNativeRunCarriesSelectedAccountDiscoveryProjection(t *testing.T) {
 	}
 }
 
+// A filtered box blocks the ChatGPT store the installed-plugin downloads come from, so only its
+// broker asks for the list without download links; an open box reaches the store and keeps them.
+func TestNativeRunDropsPluginDownloadLinksOnlyInAFilteredBox(t *testing.T) {
+	for egress, want := range map[string]int{"filtered": 2, "open": 0} {
+		t.Run(egress, func(t *testing.T) {
+			cfg := &config.Config{ConfigDir: t.TempDir(), Egress: egress, HomeInBox: "/home/node"}
+			account := cfg.ActiveProfile("codex")
+			seedCanonicalFixture(t, cfg, "codex", account)
+			repo := t.TempDir()
+			cfg = cfg.WithNativeHomes(map[string]string{"codex": scopedFixtureHome(t, cfg, "codex", repo, false)})
+			run, err := planNativeRun(t.Context(), cfg, runtime.Runtime{}, RunSpec{Agent: "codex", Homes: true, Repo: repo})
+			if err != nil || run == nil {
+				t.Fatal(err)
+			}
+			if err := run.prepare(t.Context(), t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			run.cancel()
+			run.workers.Wait()
+			defer run.close()
+			data, err := os.ReadFile(filepath.Join(run.dir, "config.json"))
+			var plan networkgateway.NativeRunConfig
+			if err != nil || json.Unmarshal(data, &plan) != nil {
+				t.Fatal("invalid native plan", err)
+			}
+			dropped := 0
+			for _, selected := range plan.Accounts {
+				for _, origin := range selected.Origins {
+					for _, line := range origin.Requests {
+						for _, query := range line.Queries {
+							if query.Dropped {
+								dropped++
+								if origin.Host != "chatgpt.com" || line.Path != "/backend-api/ps/plugins/installed" || query.Name != "includeDownloadUrls" {
+									t.Errorf("%s %s drops %s", origin.Host, line.Path, query.Name)
+								}
+							}
+						}
+					}
+				}
+			}
+			if dropped != want {
+				t.Errorf("%d dropped queries, want %d", dropped, want)
+			}
+		})
+	}
+}
+
 func TestNativeNetworkOptionsMoveOnlyNamespaceConfiguration(t *testing.T) {
 	workload, owner, network, err := nativeNetworkOptions([]string{"-e", "KEEP=yes", "--network=bridge", "--add-host", "coop-broker:172.17.0.2", "--publish", "127.0.0.1:3000:3000", "--memory", "1g"})
 	if err != nil || network != "bridge" || strings.Join(workload, " ") != "-e KEEP=yes --memory 1g" ||

@@ -28,7 +28,7 @@ func nativeAdapterRoutes(t *testing.T, provider, selection, host, account string
 			line := NativeBrokerRequestLine{Method: route.Method, Path: route.Path, Query: route.Query, Segment: route.Segment, Suffix: route.Suffix,
 				CredentialFree: route.CredentialFree, Header: route.Header, HeaderPrefix: route.HeaderPrefix}
 			for _, query := range route.Queries {
-				line.Queries = append(line.Queries, NativeBrokerQuery{Name: query.Name, Values: query.Values, Optional: query.Optional, MaxBytes: query.MaxBytes})
+				line.Queries = append(line.Queries, NativeBrokerQuery{Name: query.Name, Values: query.Values, Optional: query.Optional, MaxBytes: query.MaxBytes, Dropped: query.Dropped})
 			}
 			if !route.CredentialFree {
 				line.ClientHeader, line.ClientPrefix, line.ClientMarker = route.Header, route.HeaderPrefix, "public-selector"
@@ -223,6 +223,47 @@ func TestNativeBrokerRefusesAQueryTheProviderWouldReadDifferently(t *testing.T) 
 				t.Errorf("recorded %d refusals, want %d", len(recorded), len(outside))
 			}
 		})
+	}
+}
+
+// Every filtered Codex start tried to download the ChatGPT account's installed plugins from
+// sdmntpr*.oaiusercontent.com, which the box blocks, so each run ended with "Traffic to 3 remote
+// addresses was blocked". The installed list now goes upstream without includeDownloadUrls, so it
+// names nothing to fetch; every other parameter, the opaque pageToken included, goes as sent, and
+// a value the route never admitted is still refused before it reaches the provider.
+func TestNativeBrokerAsksForTheInstalledPluginListWithoutDownloadLinks(t *testing.T) {
+	forwarded := make(chan string, 8)
+	f := newNativeTransportFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded <- r.URL.RawQuery
+		_, _ = io.WriteString(w, "provider")
+	}), nativeAdapterRoutes(t, "codex", "chatgpt", "chatgpt.com", "selected-id"))
+	send := func(query string) int {
+		request := f.request(t, "/backend-api/ps/plugins/installed")
+		request.Header.Del("ChatGPT-Account-ID")
+		request.URL.RawQuery = query
+		response, _ := nativeResponse(t, f.client, request)
+		return response.StatusCode
+	}
+	for query, want := range map[string]string{
+		"limit=200&includeDownloadUrls=true":                   "limit=200",
+		"limit=200&includeDownloadUrls=true&pageToken=a%2Bb~c": "limit=200&pageToken=a%2Bb~c",
+		"includeDownloadUrls=true&scope=WORKSPACE":             "scope=WORKSPACE",
+		"limit=200&pageToken=x%26includeDownloadUrls%3Dtrue":   "limit=200&pageToken=x%26includeDownloadUrls%3Dtrue",
+		"limit=200": "limit=200",
+	} {
+		if status := send(query); status != http.StatusOK {
+			t.Fatalf("%s was not admitted: %d", query, status)
+		}
+		if got := <-forwarded; got != want {
+			t.Errorf("%s went upstream as %q, want %q", query, got, want)
+		}
+	}
+	before := f.forwarded.Load()
+	if status := send("limit=200&includeDownloadUrls=false"); status != http.StatusForbidden {
+		t.Errorf("an unadmitted value was admitted: %d", status)
+	}
+	if f.forwarded.Load() != before {
+		t.Fatal("a refused query reached the provider")
 	}
 }
 

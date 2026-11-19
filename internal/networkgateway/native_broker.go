@@ -70,6 +70,22 @@ type NativeBrokerQuery struct {
 	Values   []string
 	Optional bool
 	MaxBytes int
+	// Admitted from the client but dropped from the forwarded query.
+	Dropped bool
+}
+
+// forwardedQuery is the checked query minus the parameters the adapter drops. The rest go
+// upstream byte for byte: re-encoding would rewrite an opaque pageToken the provider minted.
+func (line NativeBrokerRequestLine) forwardedQuery(raw string) string {
+	var kept []string
+	for _, part := range strings.Split(raw, "&") {
+		name, _, _ := strings.Cut(part, "=")
+		name, _ = url.QueryUnescape(name)
+		if !slices.ContainsFunc(line.Queries, func(rule NativeBrokerQuery) bool { return rule.Dropped && rule.Name == name }) {
+			kept = append(kept, part)
+		}
+	}
+	return strings.Join(kept, "&")
 }
 
 func (line NativeBrokerRequestLine) matches(request *http.Request) bool {
@@ -308,6 +324,7 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 				Rewrite: func(p *httputil.ProxyRequest) {
 					access := p.In.Context().Value(nativeAccessKey{}).(NativeAccessSnapshot)
 					p.Out.URL.Scheme, p.Out.URL.Host, p.Out.Host = "https", host, host
+					p.Out.URL.RawQuery = line.forwardedQuery(p.Out.URL.RawQuery)
 					for _, header := range []string{"Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Goog-Api-Key", line.Header, line.ClientHeader} {
 						if header != "" {
 							p.Out.Header.Del(header)

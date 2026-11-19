@@ -169,10 +169,17 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 		add("GET", path, "")
 		out[len(out)-1].Queries = append(queries, page)
 	}
-	paged("/backend-api/ps/plugins/installed", limit, NativeBrokerQuery{Name: "includeDownloadUrls", Values: []string{"true"}, Optional: true})
+	// The installed list's download links point at the account's bundles on
+	// sdmntpr*.oaiusercontent.com, ChatGPT's store for every user's uploads, which a filtered box
+	// never reaches. There the broker drops includeDownloadUrls, so the list comes without links
+	// and the client skips those downloads (remote_installed_plugin_sync.rs) instead of trying 8
+	// blocked connections at every start; an open box still asks for them. The curated store is a
+	// separate route and still syncs.
+	downloads := NativeBrokerQuery{Name: "includeDownloadUrls", Values: []string{"true"}, Optional: true, Dropped: true}
+	paged("/backend-api/ps/plugins/installed", limit, downloads)
 	// A workspace account also reads one scope's installed list at a time, with no limit
 	// (get_remote_plugin_installed_page, RemoteInstalledPluginScope::Single).
-	paged("/backend-api/ps/plugins/installed", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL", "WORKSPACE"}}, NativeBrokerQuery{Name: "includeDownloadUrls", Values: []string{"true"}, Optional: true})
+	paged("/backend-api/ps/plugins/installed", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL", "WORKSPACE"}}, downloads)
 	paged("/backend-api/ps/plugins/list", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL"}}, limit)
 	add("GET", "/backend-api/ps/plugins/suggested/codex", "scope=GLOBAL")
 	return out, nil

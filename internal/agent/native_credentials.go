@@ -97,6 +97,8 @@ type NativeBrokerQuery struct {
 	Values   []string
 	Optional bool
 	MaxBytes int
+	// Admitted from the client but never sent upstream, so the provider answers without it.
+	Dropped bool
 }
 
 const NativeBrokerAccount = "coop-broker-account"

@@ -55,6 +55,8 @@ type nativeRun struct {
 	publicFiles   []string
 	cancel        context.CancelFunc
 	workers       sync.WaitGroup
+	// A filtered box can never reach what a Dropped query asks for, so only it drops the query.
+	filtered bool
 }
 
 func planNativeRun(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec) (*nativeRun, error) {
@@ -65,7 +67,7 @@ func planNativeAccounts(ctx context.Context, cfg *config.Config, rt runtime.Runt
 	if !spec.Homes || spec.Login || cfg.Egress == "none" {
 		return nil, nil
 	}
-	run := &nativeRun{cfg: cfg.NativeAuthorityConfig(), runID: randid.Hex(16)}
+	run := &nativeRun{cfg: cfg.NativeAuthorityConfig(), runID: randid.Hex(16), filtered: cfg.Egress == "filtered"}
 	for _, provider := range credentialScope(cfg, spec) {
 		ag, _ := agents.Get(provider)
 		if err := validateNativeOverrides(cfg, spec, ag); err != nil {
@@ -685,7 +687,7 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 					line.ClientMarker = ""
 				}
 				for _, query := range route.Queries {
-					line.Queries = append(line.Queries, networkgateway.NativeBrokerQuery{Name: query.Name, Values: query.Values, Optional: query.Optional, MaxBytes: query.MaxBytes})
+					line.Queries = append(line.Queries, networkgateway.NativeBrokerQuery{Name: query.Name, Values: query.Values, Optional: query.Optional, MaxBytes: query.MaxBytes, Dropped: query.Dropped && r.filtered})
 				}
 				lines = append(lines, line)
 				if route.AccountHeader != "" {
