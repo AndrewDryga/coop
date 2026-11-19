@@ -439,7 +439,9 @@ session discard removes the workspace's volumes and network.
 The daemon repeats cleanup at startup after a crash or upgrade, and a background check retries
 idle-runtime cleanup every minute without interfering with an active turn. A turn that completed
 successfully stays successful if cleanup fails, and the background cleaner retries and logs the
-error. If the turn itself failed, its error includes the cleanup failure too.
+error. A turn that failed only at cleanup fails with `session_cleanup_error`. If the turn had
+already failed, its `error_code` and `error_detail` describe that first failure, and the cleanup
+failure appears only in the daemon log next to it.
 
 A clean stop (SIGTERM) ends a running turn's process and box the same way, but leaves the turn
 itself for the next start to settle, as after a crash. On restart:
@@ -922,7 +924,9 @@ means the turn was really cancelled.
 
 A completed turn includes `usage` when the adapter reports it. The fields are `input_tokens`,
 `cached_input_tokens`, `output_tokens`, `reasoning_tokens` and, when available, the provider's
-`cost_usd`. Check `cost_recorded` to distinguish a reported zero cost from a missing cost.
+`cost_usd`. Check `cost_recorded` to distinguish a reported zero cost from a missing cost: it is
+`true` only when the provider reported a cost, and it is left out otherwise. A `usage` object
+without `cost_recorded`, as Codex turns report it, means no cost was recorded, not a free turn.
 
 ACP reports the cumulative cost of the provider session, and co:op calculates this turn's share
 before returning it, including after daemon restarts or adapter-process resets. Fresh and cached
@@ -1156,6 +1160,12 @@ prevents the same request from being applied twice.
 
 Submitting a turn to a session that has used its whole budget returns `409 budget_exhausted`.
 Extend the budget, then submit again with a new key.
+
+The budget counts turns that ran, not turns waiting in the queue. A submit is accepted while
+`turns_used` is below `max_turns`, even if the turns already queued would use up the rest. When the
+last budgeted turn finishes, the session becomes exhausted and each turn still in the queue ends in
+state `budget_exhausted` with error code `budget_exhausted`, without running. To keep them, extend
+the budget before the last budgeted turn finishes.
 
 ### Changes
 
@@ -1646,6 +1656,7 @@ Common status mapping:
 | --- | --- |
 | `400` | Invalid request, or a field exceeds its allowed limit |
 | `404` | Session, turn or operation not found |
+| `405` | `method_not_allowed`: the path exists but not for this method, such as a `GET` on a path that only takes `POST` |
 | `409` | Idempotency, operation fence, revision, state, queue, budget, resume, uncertainty or discard conflict |
 | `413` | Ordinary request body exceeds 128 KiB, or turn submission exceeds 12 MiB |
 | `500` | Internal failure. co:op leaves host paths and raw internal errors out of the response. |

@@ -32,6 +32,11 @@ func TestApprovedSessionDoctorFailures(t *testing.T) {
 	if got := usageBlock(t, custom); !strings.Contains(got, "Start the service that listens at /tmp/other.sock.") {
 		t.Errorf("a custom socket lost its context:\n%s", got)
 	}
+	// A named control.sock is one coop sessions connect can start: name the command that does.
+	named := sessionDoctorFailure(sessionDoctorResult{Socket: "/srv/coop/control.sock"}, true, syscall.ECONNREFUSED)
+	if got := usageBlock(t, named); !strings.Contains(got, "Run coop sessions connect --state /srv/coop to start the service that listens there.") {
+		t.Errorf("a named control socket does not name the command that starts it:\n%s", got)
+	}
 }
 
 // The compaction stages a failure can be in are read from what the run PROVED: a verified backup

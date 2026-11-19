@@ -702,7 +702,15 @@ func runSessionDoctor(socket string, jsonOutput bool) (int, error) {
 func sessionDoctorFailure(result sessionDoctorResult, socketGiven bool, healthErr error) error {
 	start := [2]string{"", "Run coop sessions connect to start it."}
 	if socketGiven {
-		start = [2]string{"", "Start the service that listens at " + result.Socket + "."}
+		// coop sessions connect listens at <state>/control.sock, so it can start only a socket of
+		// that name; any other path belongs to a service started some other way.
+		state := filepath.Dir(result.Socket)
+		if filepath.Base(result.Socket) == "control.sock" {
+			start = [2]string{"", "Run coop sessions connect --state " + state + " to start the service that listens there."}
+		} else {
+			start = [2]string{"", "Start the service that listens at " + result.Socket +
+				". coop sessions connect listens only at <state>/control.sock."}
+		}
 	}
 	switch {
 	case healthErr == nil && !result.Ready:
