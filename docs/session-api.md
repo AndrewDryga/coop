@@ -678,7 +678,8 @@ for job settings, not for model or GitHub credentials.
 
 The check is a list of command arguments, passed directly to the process and never interpreted as
 a shell command. If you need shell syntax, run a shell explicitly. If both `check.argv` and the
-check environment are empty, no check runs, so the review can't be published.
+check environment are empty, no check runs. The review then reports `publishable: false`, and
+it can reach a new draft PR only if your controller grants that publication.
 
 | Field | Meaning | Accepted range |
 | --- | --- | --- |
@@ -1343,8 +1344,11 @@ same granted project toolchain or worker-configured image as the turns. Without 
 it continues to use the worker-configured image, or locked filtered client image.
 
 The check can create ignored build files in its temporary checkout. If it changes the reviewed
-source, the result can't be published. Publication is also blocked when no check is configured, or
-when the check fails or can't start.
+source, the result can't be published. The worker also refuses to publish a review whose check
+failed. A review with no configured check, or with a check that couldn't start, reports
+`publishable: false`, but the worker still publishes it as a new draft PR when your controller
+grants that; this lets a person approve sharing a draft that was never checked. Updating an
+existing PR always needs a passed check.
 
 When your controller authorizes publication, the change may edit CI workflows. Running repository
 checks is part of the authorized task and doesn't need a separate human approval. The scan still
@@ -1385,6 +1389,11 @@ It doesn't grant permission to push or merge. It is false when there is:
 
 `candidate_retained` tells you whether co:op saved the exact candidate, which it can do even if the
 check is missing or fails. Saving it doesn't authorize publication.
+
+`publishable` is advice for your controller, and the worker enforces a narrower rule. For a new
+draft PR it refuses a conflict, a failed check, policy findings, an empty change and a candidate
+that wasn't saved. It doesn't refuse a missing check or one that couldn't start, so your
+controller decides whether to grant those. For an existing PR it requires `publishable: true`.
 
 To publish, use the saved `candidate_head` unchanged, get a separate controller grant and update the
 destination ref only if it still matches the expected value. Never reconstruct the result from a

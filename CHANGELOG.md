@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **The session API page now says what the worker really refuses to publish.** It refuses a review
+  whose check failed. A review with no check, or a check that could not start, reports
+  `publishable: false`, and the worker still publishes it as a new draft pull request when the
+  controller grants that. The page used to say the worker refused those too.
+
 ## 14.0.0
 
 - **Coop is built with Go 1.27.4.** It fixes a published net/http server crash (GO-2026-6859) that
