@@ -177,9 +177,12 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	// separate route and still syncs.
 	downloads := NativeBrokerQuery{Name: "includeDownloadUrls", Values: []string{"true"}, Optional: true, Dropped: true}
 	paged("/backend-api/ps/plugins/installed", limit, downloads)
-	// A workspace account also reads one scope's installed list at a time, with no limit
-	// (get_remote_plugin_installed_page, RemoteInstalledPluginScope::Single).
-	paged("/backend-api/ps/plugins/installed", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL", "WORKSPACE"}}, downloads)
+	// One scope's installed list at a time (get_remote_plugin_installed_page,
+	// RemoteInstalledPluginScope::Single), as `codex plugin list` and a workspace account read it:
+	// 0.166.0 sends scope=…&limit=200; the list without a limit stays admitted.
+	scopedLimit := limit
+	scopedLimit.Optional = true
+	paged("/backend-api/ps/plugins/installed", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL", "WORKSPACE"}}, scopedLimit, downloads)
 	paged("/backend-api/ps/plugins/list", NativeBrokerQuery{Name: "scope", Values: []string{"GLOBAL"}}, limit)
 	add("GET", "/backend-api/ps/plugins/suggested/codex", "scope=GLOBAL")
 	return out, nil

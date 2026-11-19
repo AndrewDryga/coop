@@ -46,7 +46,8 @@ func nativeAdapterRoutes(t *testing.T, provider, selection, host, account string
 // provider", and the record could not say which. Captured offline from the pinned clients: Codex
 // 0.159.2 asks for the second page of the plugin catalog with an opaque pageToken (refusing it
 // failed the whole catalog), and Grok 1.0.44 checks its API host with a bare GET / and no
-// credential. Both are now admitted from the adapters' own routes; their neighbours are still
+// credential. `codex plugin list` on 0.166.0 found no plugins: it reads one scope's installed list
+// with scope and limit together. All are now admitted from the adapters' own routes; their neighbours are still
 // refused, and each refusal records which check refused it and the request's class, never a value.
 func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 	token := "opaque-" + strings.Repeat("Zm9v", 512) // a page token is the provider's own cursor
@@ -66,6 +67,8 @@ func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 				"/backend-api/ps/plugins/installed?limit=200&includeDownloadUrls=true&pageToken=" + token,
 				"/backend-api/ps/plugins/installed?scope=GLOBAL",
 				"/backend-api/ps/plugins/installed?scope=WORKSPACE",
+				"/backend-api/ps/plugins/installed?scope=GLOBAL&limit=200",
+				"/backend-api/ps/plugins/installed?scope=WORKSPACE&limit=200&pageToken=" + token,
 				"/backend-api/ps/plugins/installed?scope=WORKSPACE&includeDownloadUrls=true&pageToken=" + token,
 				"/backend-api/wham/rate-limit-reset-credits",
 			},
@@ -79,7 +82,7 @@ func TestNativeBrokerAdmitsThePagesAndProbeThePinnedClientsSend(t *testing.T) {
 				"/backend-api/ps/plugins/list?scope=GLOBAL&limit=200&collection=x":                           "GET /backend-api/ps/plugins/list?collection&limit&scope",
 				"/backend-api/ps/plugins/installed?limit=200&includeDownloadUrls=false":                      "GET /backend-api/ps/plugins/installed?includeDownloadUrls&limit",
 				"/backend-api/ps/plugins/installed?scope=USER":                                               "GET /backend-api/ps/plugins/installed?scope",
-				"/backend-api/ps/plugins/installed?scope=GLOBAL&limit=200":                                   "GET /backend-api/ps/plugins/installed?limit&scope",
+				"/backend-api/ps/plugins/installed?scope=GLOBAL&limit=100":                                   "GET /backend-api/ps/plugins/installed?limit&scope",
 				"/backend-api/wham/rate-limit-reset-credits?id=1":                                            "GET /backend-api/wham/rate-limit-reset-credits?id",
 				"/backend-api/ps/plugins/installed?scope=GLOBAL&scope=WORKSPACE":                             "GET /backend-api/ps/plugins/installed?scope",
 				"POST /backend-api/wham/rate-limit-reset-credits":                                            "POST /backend-api/wham/rate-limit-reset-credits",
