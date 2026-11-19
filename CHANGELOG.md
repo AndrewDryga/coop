@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop usage` counts history in a provider home that is a link.** If your `~/.claude`,
+  `~/.codex`, `~/.gemini` or `~/.grok` is a link, as dotfiles setups make it, its history was
+  skipped and the total showed as partial with no reason. Homes that a box can write are still
+  never read through a link.
+
 - **The loop page states its history limit.** The loop checks completed tasks against at most
   100,000 commits or 128 MB of commit data, and refuses completions in a larger repository.
 

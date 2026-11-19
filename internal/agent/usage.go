@@ -33,19 +33,29 @@ type UsageSpec struct {
 
 // Native host history has no historical account binding. Only the owning CLI's declared
 // home is scanned; a current login is never evidence about older requests.
+//
+// A host home is the person's own and no box mounts it, so a home that is a link (a dotfiles
+// setup) is followed here. openSessionRoot then opens the real directory under its usual rule,
+// which still refuses a link for the homes a box can write.
 func nativeUsageHomes(dir, env string, parent bool) []string {
 	var homes []string
+	add := func(home string) {
+		home = filepath.Clean(home)
+		if real, err := filepath.EvalSymlinks(home); err == nil {
+			home = real
+		}
+		if !slices.Contains(homes, home) {
+			homes = append(homes, home)
+		}
+	}
 	if home, err := os.UserHomeDir(); err == nil {
-		homes = append(homes, filepath.Join(home, dir))
+		add(filepath.Join(home, dir))
 	}
 	if home := os.Getenv(env); home != "" {
 		if parent {
 			home = filepath.Join(home, dir)
 		}
-		home = filepath.Clean(home)
-		if !slices.Contains(homes, home) {
-			homes = append(homes, home)
-		}
+		add(home)
 	}
 	return homes
 }
