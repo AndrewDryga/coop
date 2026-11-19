@@ -115,7 +115,7 @@ func TestRunSessionCheckReportsEachVerdictWithoutWriting(t *testing.T) {
 		}, sessionCheckRefused, []string{
 			"✗ This build can't use the session data",
 			fmt.Sprintf("      Session schema %d is older than this coop build supports (%d to %d); "+
-				"open it once with a coop build that uses session schema %d and converts older stores (commit 29133b0e or earlier), then upgrade.",
+				"open it once with a coop build that uses session schema %d and converts older stores (v12.1.0, or any build at or before commit 29133b0e), then upgrade, or start fresh with a new --state folder.",
 				session.OldestSchemaVersion-1, session.OldestSchemaVersion, session.SchemaVersion, session.OldestSchemaVersion),
 		}},
 		{"too new", func(t *testing.T, state string) func() {
@@ -214,7 +214,7 @@ func TestSessionCheckReportsAConvertingStore(t *testing.T) {
 // returns once a waypoint is set: the refusal names the converting schema and exits 4.
 func TestSessionCheckRefusesATooOldStoreWithItsWaypoint(t *testing.T) {
 	refusal := errors.New("session schema 24 is older than this coop build supports (25 to 26); " +
-		"open it once with a coop build that uses session schema 25 and converts older stores (commit 29133b0e or earlier), then upgrade")
+		"open it once with a coop build that uses session schema 25 and converts older stores (v12.1.0, or any build at or before commit 29133b0e), then upgrade, or start fresh with a new --state folder")
 	code, err := reportSessionCheck("/srv/state", session.StoreCheck{Status: session.StoreTooOld, Version: 24, Refusal: refusal},
 		[]workerconnector.RecordCheck{{Noun: "worker command receipt", Version: 1, Current: 3}})
 	if code != sessionCheckRefused || err == nil {
@@ -222,7 +222,7 @@ func TestSessionCheckRefusesATooOldStoreWithItsWaypoint(t *testing.T) {
 	}
 	got := usageBlock(t, err)
 	want := "      Session schema 24 is older than this coop build supports (25 to 26); " +
-		"open it once with a coop build that uses session schema 25 and converts older stores (commit 29133b0e or earlier), then upgrade."
+		"open it once with a coop build that uses session schema 25 and converts older stores (v12.1.0, or any build at or before commit 29133b0e), then upgrade, or start fresh with a new --state folder."
 	if !strings.Contains(got, "✗ This build can't use the session data") || !strings.Contains(got, want) ||
 		strings.Contains(got, "newer coop build") {
 		t.Fatalf("too-old refusal:\n%s", got)

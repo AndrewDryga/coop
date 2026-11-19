@@ -42,7 +42,7 @@ func TestSchemaWindowRefusesOutsideItAndNamesTheConvertingSchema(t *testing.T) {
 	}{
 		{0, StoreEmpty, ""},
 		{24, StoreTooOld, "session schema 24 is older than this coop build supports (25 to 26); " +
-			"open it once with a coop build that uses session schema 25 and converts older stores (commit 29133b0e or earlier), then upgrade"},
+			"open it once with a coop build that uses session schema 25 and converts older stores (v12.1.0, or any build at or before commit 29133b0e), then upgrade, or start fresh with a new --state folder"},
 		{25, StoreConverts, ""},
 		{26, StoreCurrent, ""},
 		{27, StoreTooNew, "session schema 27 is newer than this coop build supports (25 to 26)"},

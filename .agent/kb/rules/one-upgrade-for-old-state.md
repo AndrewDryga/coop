@@ -4,7 +4,7 @@ description: an old on-disk format is read for one upgrade step, then refused wi
 scope: architecture
 sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/box/native_account.go, internal/box/native_home.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
-updated: 2026-11-17
+updated: 2026-11-18
 ---
 
 # Read old on-disk state for one upgrade step, then refuse it by name
@@ -42,8 +42,8 @@ schemas, so the worker had no way back.
      store. If the check does not read that state yet, add it to the check first.
   2. Raise the oldest-version constant and refuse older versions with the waypoint message.
   3. Update the row below, and remove only the conversion code the raised constant retires. A new
-     session store is built by running every migration from schema 1, so retiring session steps
-     first makes Open create new stores at the current schema directly.
+     session store is created from one current schema (`currentSchema` in schema.go), so a
+     conversion step only ever serves older stores and goes once the floor passes it.
   4. Announce it in CHANGELOG.md under `## Unreleased` with a bold headline that names the state,
      the oldest version still converted, and the build that converts older data. Add a
      MIGRATING.md section with the exact steps. For example:
@@ -116,6 +116,7 @@ a Docker daemon, not a store; v1 retired on 2026-11-04 once Ryker's workers (ima
 `legacyLabelsAreLocal` stays, since network recovery judges a run record naming no host with it.
 
 ## Changelog
+- 2026-11-18 — the session schema ladder became one `currentSchema` that builds new stores; the refusal of an older store also names v12.1.0 and starting fresh with a new `--state` folder (task 2026-10-15-collapse-the-session-database-migrations-into-on).
 - 2026-11-17 — rooted the renewal-journal and pre-v11 login and history rows at `~/.config/coop/agents/<provider>/`, where those folders live (audit D1-15).
 - 2026-11-17 — merged two `sources:` lines into one; the second had dropped old_records.go and the first the two box files.
 - 2026-11-04 — retired the v1 box supervisor label, the version 4 service approval hint, the Linux

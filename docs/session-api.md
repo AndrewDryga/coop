@@ -211,7 +211,7 @@ Before replacing the worker, check its data with the new build:
 | --- | --- | --- |
 | `0` | The new build can use the data unchanged, or the service has initialized its storage without saving any sessions yet | Start the new build |
 | `3` | The new build will convert the data, and older builds can't open it afterwards | To keep a way back, copy the stopped state directory aside, then start the new build |
-| `4` | The data is too old for this build to convert, or was written by a newer build | Restart the old build. If the data is too old, first upgrade through a build that uses the session schema named in the message. |
+| `4` | The data is too old for this build to convert, or was written by a newer build | Restart the old build. If the data is too old, first upgrade through a build that uses the session schema named in the message, or start fresh with a new `--state` directory. |
 | `1` | The check couldn't finish: the service is still running, the path has no session data, or some data can't be read | Fix the reported problem and check again. A directory that no service has used can't pass, even if it's empty. Check for a mistyped `--state` or a new volume. A worker that has never run has no data to check. |
 | `2` | The arguments are invalid | Fix the command |
 

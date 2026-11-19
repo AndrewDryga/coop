@@ -56,7 +56,8 @@ func ReadUsageSnapshot(ctx context.Context, root string, since, until time.Time)
 	}
 	defer tx.Rollback()
 	var version int
-	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version > SchemaVersion || version < 22 {
+	// The same window Open accepts: the query below reads columns no older store is promised.
+	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil || version > SchemaVersion || version < OldestSchemaVersion {
 		return out, errors.New("retained session usage schema is unavailable")
 	}
 	rows, err := tx.QueryContext(ctx, `

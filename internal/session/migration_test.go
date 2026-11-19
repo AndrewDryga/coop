@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -70,6 +72,77 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 	}
 }
 
+// A new store is built from currentSchema in one step, while every store in service reached its
+// shape through the old step-by-step migrations, whose DDL the frozen fixtures still hold. Both must
+// end with the same tables, columns, constraints and indexes, and a new store gets exactly one
+// store identity.
+func TestNewStoreSchemaMatchesTheLastConvertedShape(t *testing.T) {
+	fresh := filepath.Join(t.TempDir(), "fresh")
+	createStore(t, fresh)
+	historical := filepath.Join(t.TempDir(), "historical")
+	// Schema 26 changed no table, so the frozen schema 25 DDL is the schema 26 shape.
+	stoppedHistoricalStore(t, historical, 25)
+	got, want := schemaShape(t, filepath.Join(fresh, databaseName)), schemaShape(t, filepath.Join(historical, databaseName))
+	if !slices.Equal(got, want) {
+		t.Errorf("new store schema differs from the converted one:\n got: %q\nwant: %q", got, want)
+	}
+
+	ids := map[string]bool{}
+	for range 2 {
+		root := filepath.Join(t.TempDir(), "state")
+		createStore(t, root)
+		db, err := sql.Open("sqlite", "file:"+filepath.Join(root, databaseName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rows, slot int
+		var id string
+		err = db.QueryRow(`SELECT COUNT(*), MIN(slot), MIN(id) FROM store_identity`).Scan(&rows, &slot, &id)
+		db.Close()
+		if err != nil || rows != 1 || slot != 1 || !validStoreID(id) {
+			t.Fatalf("store identity = %d rows, slot %d, id %q, %v; want one valid row in slot 1", rows, slot, id, err)
+		}
+		ids[id] = true
+	}
+	if len(ids) != 2 {
+		t.Fatal("two new stores got the same identity")
+	}
+}
+
+// schemaShape lists every schema object as type, name, table and its SQL with layout whitespace
+// removed. SQLite keeps an ALTER TABLE ADD COLUMN as text spliced into the original CREATE TABLE,
+// so only spacing and line breaks may differ between a converted store and a new one.
+func schemaShape(t *testing.T, path string) []string {
+	t.Helper()
+	db, err := sql.Open("sqlite", sqliteFileURI(path, url.Values{"mode": {"ro"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_master ORDER BY type, name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var shape []string
+	for rows.Next() {
+		var kind, name, table, text string
+		if err := rows.Scan(&kind, &name, &table, &text); err != nil {
+			t.Fatal(err)
+		}
+		text = strings.Join(strings.Fields(text), " ")
+		for _, punct := range []string{",", "(", ")"} {
+			text = strings.ReplaceAll(text, " "+punct, punct)
+			text = strings.ReplaceAll(text, punct+" ", punct)
+		}
+		shape = append(shape, kind+" "+name+" on "+table+": "+text)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return shape
+}
+
 // A store left behind below the oldest schema this build converts is refused by name, with the
 // schema whose builds convert it, and Open changes nothing on disk.
 func TestOpenRefusesEveryOlderSchemaByNameAndLeavesTheStoreAlone(t *testing.T) {
@@ -84,7 +157,7 @@ func TestOpenRefusesEveryOlderSchemaByNameAndLeavesTheStoreAlone(t *testing.T) {
 			}
 
 			want := fmt.Sprintf("session schema %d is older than this coop build supports (%d to %d); "+
-				"open it once with a coop build that uses session schema %d and converts older stores (commit 29133b0e or earlier), then upgrade",
+				"open it once with a coop build that uses session schema %d and converts older stores (v12.1.0, or any build at or before commit 29133b0e), then upgrade, or start fresh with a new --state folder",
 				version, OldestSchemaVersion, SchemaVersion, OldestSchemaVersion)
 			if store, err := Open(root); err == nil || err.Error() != want {
 				if store != nil {
@@ -105,37 +178,24 @@ func TestOpenRefusesEveryOlderSchemaByNameAndLeavesTheStoreAlone(t *testing.T) {
 	}
 }
 
-// migrate() runs every catch-up step in one transaction and only sets user_version at the very
+// migrate() builds the whole schema in one transaction and only sets user_version at the very
 // end, so a failure partway through must roll back everything, including the version pragma —
-// otherwise a retried Open would think a step had already applied when it hadn't.
+// otherwise a retried Open would find half a schema and take it for a store.
 func TestFailedMigrationRollsBackAndLeavesUserVersionUntouched(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, databaseName)
-	db, err := sql.Open("sqlite", "file:"+path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(legacySchemas[0]); err != nil {
-		t.Fatal(err)
-	}
-	// Sabotage the v1->v2 step: pre-create the column schemaV2's ALTER TABLE is about to add,
-	// so migrate()'s tx.Exec(schemaV2) fails on "duplicate column name" mid-transaction — a
-	// deterministic, real SQL failure partway through migrate(), without touching production
-	// code to inject one.
-	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN companions TEXT NOT NULL DEFAULT '[]'`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
+	// Sabotage the last table currentSchema creates, so its CREATE TABLE fails after every other
+	// table was made in the same transaction: a deterministic, real SQL failure partway through
+	// migrate(), without touching production code to inject one.
+	execAndClose(t, path, `CREATE TABLE session_owner_bindings (stray INTEGER)`)
 
 	if _, err := Open(root); err == nil {
-		t.Fatal("Open succeeded despite a broken migration step")
-	} else if !strings.Contains(err.Error(), "migrate schema v2") {
-		t.Fatalf("migration failure = %v, want a v2 migration error", err)
+		t.Fatal("Open succeeded despite a broken schema step")
+	} else if !strings.Contains(err.Error(), fmt.Sprintf("create session schema %d", SchemaVersion)) {
+		t.Fatalf("migration failure = %v, want a schema creation error", err)
 	}
 
 	// Open closes the handle and releases the lock on any error, so the file is safe to
@@ -145,12 +205,18 @@ func TestFailedMigrationRollsBackAndLeavesUserVersionUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer verify.Close()
-	var version int
+	var version, tables int
 	if err := verify.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
 	if version != 0 {
 		t.Fatalf("user_version after failed migration = %d, want unchanged 0", version)
+	}
+	if err := verify.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'`).Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 1 {
+		t.Fatalf("tables after failed migration = %d, want only the stray one", tables)
 	}
 }
 

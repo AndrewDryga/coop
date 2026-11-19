@@ -2,12 +2,21 @@ package session
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 )
 
-const schemaV1 = `
-CREATE TABLE IF NOT EXISTS operations (
+// currentSchema builds a new store at SchemaVersion in one step. Columns keep the order the old
+// step-by-step migrations gave them, so a new store and a converted one have the same shape; the
+// test TestNewStoreSchemaMatchesTheLastConvertedShape holds the two together.
+//
+// Why some columns sit where they do: usage is columns on the turn, since each turn has exactly one
+// row of it; ACP reports cost as a cumulative session counter, so the session keeps the last one
+// and a turn stores only its delta; the escalation floor, rewind and output contract are request
+// data of one turn; a session's repository access, network posture, execution mode, source binding
+// and job are immutable authority a restarted daemon relaunches it under. Empty strings in the
+// later session columns mean "a session from before that field existed".
+const currentSchema = `
+CREATE TABLE operations (
     id TEXT PRIMARY KEY,
     method TEXT NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
@@ -22,7 +31,7 @@ CREATE TABLE IF NOT EXISTS operations (
     updated_at INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
+CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
     external_ref TEXT NOT NULL DEFAULT '',
     target TEXT NOT NULL,
@@ -48,10 +57,32 @@ CREATE TABLE IF NOT EXISTS sessions (
     next_ordinal INTEGER NOT NULL DEFAULT 1,
     last_event_sequence INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    companions TEXT NOT NULL DEFAULT '[]',
+    pull_request_number INTEGER NOT NULL DEFAULT 0,
+    pull_request_ref TEXT NOT NULL DEFAULT '',
+    pull_request_head_commit TEXT NOT NULL DEFAULT '',
+    project_env INTEGER NOT NULL DEFAULT 1,
+    project_mcp INTEGER NOT NULL DEFAULT 1,
+    usage_cumulative_cost_usd REAL NOT NULL DEFAULT 0,
+    usage_cost_recorded INTEGER NOT NULL DEFAULT 0,
+    repository_read_only INTEGER NOT NULL DEFAULT 0,
+    fork_generation TEXT NOT NULL DEFAULT '',
+    responder_endpoint TEXT NOT NULL DEFAULT '',
+    responder_token TEXT NOT NULL DEFAULT '',
+    workspace_task TEXT NOT NULL DEFAULT '',
+    authority_digest TEXT NOT NULL DEFAULT '',
+    repository_freshness TEXT NOT NULL DEFAULT '',
+    network_mode TEXT NOT NULL DEFAULT 'open',
+    network_fingerprint TEXT NOT NULL DEFAULT '',
+    network_qualification TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL DEFAULT '',
+    source_binding TEXT NOT NULL DEFAULT '',
+    job_document TEXT NOT NULL DEFAULT '',
+    job_digest TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS turns (
+CREATE TABLE turns (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,
@@ -67,10 +98,29 @@ CREATE TABLE IF NOT EXISTS turns (
     assistant_message TEXT NOT NULL DEFAULT '',
     error_code TEXT NOT NULL DEFAULT '',
     error_detail TEXT NOT NULL DEFAULT '',
+    usage_input_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_output_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_cost_usd REAL NOT NULL DEFAULT 0,
+    usage_cost_recorded INTEGER NOT NULL DEFAULT 0,
+    min_target_index INTEGER NOT NULL DEFAULT 0,
+    rewind_target INTEGER NOT NULL DEFAULT 0,
+    output_schema BLOB NOT NULL DEFAULT '',
+    output_schema_sha256 TEXT NOT NULL DEFAULT '',
+    output_semantic_validation INTEGER NOT NULL DEFAULT 0,
+    candidate_message TEXT NOT NULL DEFAULT '',
+    candidate_sha256 TEXT NOT NULL DEFAULT '',
+    validation_attempt INTEGER NOT NULL DEFAULT 0,
+    validation_error TEXT NOT NULL DEFAULT '',
+    validation_receipt TEXT NOT NULL DEFAULT '',
+    runtime_run_id TEXT NOT NULL DEFAULT '',
+    responder_endpoint TEXT NOT NULL DEFAULT '',
+    responder_token TEXT NOT NULL DEFAULT '',
     UNIQUE(session_id, ordinal)
 );
 
-CREATE TABLE IF NOT EXISTS events (
+CREATE TABLE events (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     sequence INTEGER NOT NULL,
@@ -82,16 +132,10 @@ CREATE TABLE IF NOT EXISTS events (
     UNIQUE(session_id, sequence)
 );
 
-CREATE INDEX IF NOT EXISTS turns_fifo ON turns(session_id, state, ordinal);
-CREATE INDEX IF NOT EXISTS events_replay ON events(session_id, sequence);
-`
+CREATE INDEX turns_fifo ON turns(session_id, state, ordinal);
+CREATE INDEX events_replay ON events(session_id, sequence);
 
-const schemaV2 = `
-ALTER TABLE sessions ADD COLUMN companions TEXT NOT NULL DEFAULT '[]';
-`
-
-const schemaV3 = `
-CREATE TABLE IF NOT EXISTS turn_artifacts (
+CREATE TABLE turn_artifacts (
     turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,
     name TEXT NOT NULL,
@@ -100,11 +144,9 @@ CREATE TABLE IF NOT EXISTS turn_artifacts (
     data BLOB NOT NULL,
     PRIMARY KEY(turn_id, ordinal)
 );
-CREATE INDEX IF NOT EXISTS turn_artifacts_turn ON turn_artifacts(turn_id, ordinal);
-`
+CREATE INDEX turn_artifacts_turn ON turn_artifacts(turn_id, ordinal);
 
-const schemaV4 = `
-CREATE TABLE IF NOT EXISTS turn_output_artifacts (
+CREATE TABLE turn_output_artifacts (
     turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,
     id TEXT NOT NULL,
@@ -116,159 +158,8 @@ CREATE TABLE IF NOT EXISTS turn_output_artifacts (
     UNIQUE(turn_id, ordinal),
     UNIQUE(turn_id, sha256)
 );
-CREATE INDEX IF NOT EXISTS turn_output_artifacts_turn ON turn_output_artifacts(turn_id, ordinal);
-`
+CREATE INDEX turn_output_artifacts_turn ON turn_output_artifacts(turn_id, ordinal);
 
-// Usage columns, added rather than a table: exactly one row of usage exists per
-// turn, so a join would buy nothing and a nullable set of columns says
-// "provider reported nothing" as naturally as a missing row would.
-const schemaV5 = `
-ALTER TABLE turns ADD COLUMN usage_input_tokens INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE turns ADD COLUMN usage_cached_input_tokens INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE turns ADD COLUMN usage_output_tokens INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE turns ADD COLUMN usage_reasoning_tokens INTEGER NOT NULL DEFAULT 0;
-`
-
-const schemaV6 = `
-ALTER TABLE sessions ADD COLUMN pull_request_number INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sessions ADD COLUMN pull_request_ref TEXT NOT NULL DEFAULT '';
-ALTER TABLE sessions ADD COLUMN pull_request_head_commit TEXT NOT NULL DEFAULT '';
-`
-
-const schemaV7 = `
-ALTER TABLE sessions ADD COLUMN project_env INTEGER NOT NULL DEFAULT 1;
-ALTER TABLE sessions ADD COLUMN project_mcp INTEGER NOT NULL DEFAULT 1;
-`
-
-// ACP reports monetary cost as a cumulative session counter. Keep the last
-// counter on the session so turn completion can atomically persist only this
-// turn's delta, including across daemon restarts and adapter process resets.
-const schemaV8 = `
-ALTER TABLE sessions ADD COLUMN usage_cumulative_cost_usd REAL NOT NULL DEFAULT 0;
-ALTER TABLE sessions ADD COLUMN usage_cost_recorded INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE turns ADD COLUMN usage_cost_usd REAL NOT NULL DEFAULT 0;
-ALTER TABLE turns ADD COLUMN usage_cost_recorded INTEGER NOT NULL DEFAULT 0;
-`
-
-// The escalation floor is per-turn request data, so it lives on the turn rather
-// than the session: a caller re-delivering a corrected turn on a higher rung is
-// making a claim about that turn, not editing the session's ladder.
-const schemaV9 = `
-ALTER TABLE turns ADD COLUMN min_target_index INTEGER NOT NULL DEFAULT 0;
-`
-
-// A turn may explicitly return a durably escalated session to its ladder's first
-// rung. This is request data like the escalation floor and must survive the
-// asynchronous admission/lease boundary.
-const schemaV10 = `
-ALTER TABLE turns ADD COLUMN rewind_target INTEGER NOT NULL DEFAULT 0;
-`
-
-// Repository access is immutable session authority: it must survive daemon
-// restarts unchanged.
-const schemaV11 = `
-ALTER TABLE sessions ADD COLUMN repository_read_only INTEGER NOT NULL DEFAULT 0;
-`
-
-// The output contract is execution authority for completion, not an input
-// artifact the runner may forget after admission. Persist the exact bytes and
-// their caller-supplied digest on the turn that must satisfy them.
-const schemaV12 = `
-ALTER TABLE turns ADD COLUMN output_schema BLOB NOT NULL DEFAULT '';
-ALTER TABLE turns ADD COLUMN output_schema_sha256 TEXT NOT NULL DEFAULT '';
-`
-
-// A schema-valid model result is still only a candidate when the caller owns
-// semantic rules that depend on frozen external state. Keep that candidate
-// separate from the published assistant message until its exact digest is
-// accepted.
-const schemaV13 = `
-ALTER TABLE turns ADD COLUMN output_semantic_validation INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE turns ADD COLUMN candidate_message TEXT NOT NULL DEFAULT '';
-ALTER TABLE turns ADD COLUMN candidate_sha256 TEXT NOT NULL DEFAULT '';
-ALTER TABLE turns ADD COLUMN validation_attempt INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE turns ADD COLUMN validation_error TEXT NOT NULL DEFAULT '';
-ALTER TABLE turns ADD COLUMN validation_receipt TEXT NOT NULL DEFAULT '';
-`
-
-// Fork names are reusable; a durable remote session owns one exact workspace incarnation.
-const schemaV14 = `
-ALTER TABLE sessions ADD COLUMN fork_generation TEXT NOT NULL DEFAULT '';
-`
-
-// A turn can finish successfully before its container cleanup succeeds. Keep
-// the exact runtime identity independently of turn state until teardown is
-// proven, including when the turn borrowed a session's warm container.
-const schemaV15 = `
-ALTER TABLE turns ADD COLUMN runtime_run_id TEXT NOT NULL DEFAULT '';
-`
-
-// The controller may bind exactly one HTTPS Responder state MCP endpoint to a
-// session. This is separate from the operator-owned shared MCP catalog and
-// survives daemon restarts and provider-native session resets.
-const schemaV16 = `
-ALTER TABLE sessions ADD COLUMN responder_endpoint TEXT NOT NULL DEFAULT '';
-ALTER TABLE sessions ADD COLUMN responder_token TEXT NOT NULL DEFAULT '';
-`
-
-// A remote engineering session binds one controller-approved task projection. The JSON is a
-// compact immutable identity, not a mirror of the task files or their mutable lifecycle state.
-const schemaV17 = `
-ALTER TABLE sessions ADD COLUMN workspace_task TEXT NOT NULL DEFAULT '';
-`
-
-// Responder state-tool authority is logical-turn scoped. A native session may
-// continue across many turns, but a completed or replaced turn's bearer must
-// not authorize its successor.
-const schemaV18 = `
-ALTER TABLE turns ADD COLUMN responder_endpoint TEXT NOT NULL DEFAULT '';
-ALTER TABLE turns ADD COLUMN responder_token TEXT NOT NULL DEFAULT '';
-`
-
-// The model-independent authority digest of a session from before jobs. New rows leave it empty.
-const schemaV19 = `
-ALTER TABLE sessions ADD COLUMN authority_digest TEXT NOT NULL DEFAULT '';
-`
-
-// Repository resolution is performed by Coop before a remote session exists.
-// Keep its exact non-secret receipts beside the immutable session bindings so
-// controllers never have to infer freshness from a later worker heartbeat.
-const schemaV20 = `
-ALTER TABLE sessions ADD COLUMN repository_freshness TEXT NOT NULL DEFAULT '';
-`
-
-// A session's network posture is frozen when it is created, not re-resolved per
-// turn: the mode plus, for a filtered session, the owner-keyed snapshot
-// fingerprint and the host qualification its runs must match. An open or
-// offline session stores its mode and two empty strings.
-const schemaV21 = `
-ALTER TABLE sessions ADD COLUMN network_mode TEXT NOT NULL DEFAULT 'open';
-ALTER TABLE sessions ADD COLUMN network_fingerprint TEXT NOT NULL DEFAULT '';
-ALTER TABLE sessions ADD COLUMN network_qualification TEXT NOT NULL DEFAULT '';
-`
-
-// The execution mode is immutable session authority like the read-only bit above it: a
-// restarted daemon relaunches the session under the mode it was created with. A row from
-// before modes existed stores an empty mode and reads as normal.
-const schemaV22 = `
-ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT '';
-`
-
-// One session binds one immutable source inside its job's repository. Nothing writes the three
-// pull_request_* columns; migration derives a binding from them only where their exact values,
-// beside the immutable freshness receipts, prove one.
-const schemaV23 = `
-ALTER TABLE sessions ADD COLUMN source_binding TEXT NOT NULL DEFAULT '';
-`
-
-// A worker job carries complete immutable authority. A session from before jobs keeps empty
-// fields and stays readable and closeable without inventing a job it never received.
-const schemaV24 = `
-ALTER TABLE sessions ADD COLUMN job_document TEXT NOT NULL DEFAULT '';
-ALTER TABLE sessions ADD COLUMN job_digest TEXT NOT NULL DEFAULT '';
-`
-
-const schemaV25 = `
 CREATE TABLE store_identity (
     slot INTEGER PRIMARY KEY CHECK (slot = 1),
     id TEXT NOT NULL
@@ -278,98 +169,6 @@ CREATE TABLE session_owner_bindings (
     store_id TEXT NOT NULL
 );
 `
-
-// backfillSourceBindings derives the generic binding for pull-request sessions whose durable
-// values prove it, and leaves every other historical row exactly as it is. Nothing here guesses:
-// a row without receipts, or whose receipts disagree with its own columns, keeps no binding and
-// stays a readable already-bound session. There is no reverse direction and no re-resolution —
-// the remote is never contacted by a migration.
-func backfillSourceBindings(tx *sql.Tx) error {
-	rows, err := tx.Query(`SELECT id, base_commit, repository_freshness,
-		pull_request_number, pull_request_ref, pull_request_head_commit
-		FROM sessions WHERE pull_request_number > 0`)
-	if err != nil {
-		return fmt.Errorf("read historical pull request sessions: %w", err)
-	}
-	type derived struct{ id, binding string }
-	var updates []derived
-	for rows.Next() {
-		var id, baseCommit, freshness, pullRef, pullHead string
-		var number int
-		if err := rows.Scan(&id, &baseCommit, &freshness, &number, &pullRef, &pullHead); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan historical pull request session: %w", err)
-		}
-		binding, ok := derivePullRequestSourceBinding(baseCommit, freshness, number, pullRef, pullHead)
-		if !ok {
-			continue
-		}
-		encoded, err := json.Marshal(binding)
-		if err != nil {
-			rows.Close()
-			return fmt.Errorf("encode migrated source binding: %w", err)
-		}
-		updates = append(updates, derived{id: id, binding: string(encoded)})
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("read historical pull request sessions: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close historical pull request sessions: %w", err)
-	}
-	for _, update := range updates {
-		if _, err := tx.Exec(`UPDATE sessions SET source_binding = ? WHERE id = ?`,
-			update.binding, update.id); err != nil {
-			return fmt.Errorf("write migrated source binding: %w", err)
-		}
-	}
-	return nil
-}
-
-// derivePullRequestSourceBinding reconstructs a version-1 binding purely from values the old
-// session already persisted. The primary receipt states the remote, the configured default ref
-// and its pinned head, and the merge base the workspace was created against; the pull-request
-// receipt states the derived ref and the exact head. If any of those disagree with the session's
-// own columns, nothing is proven and the row keeps no binding. The admitted tree is absent
-// because no pre-selector session ever recorded one.
-func derivePullRequestSourceBinding(
-	baseCommit, freshness string,
-	number int,
-	pullRef, pullHead string,
-) (SourceBinding, bool) {
-	if freshness == "" || number < 1 || pullRef != fmt.Sprintf("refs/pull/%d/head", number) {
-		return SourceBinding{}, false
-	}
-	var receipts []RepositoryFreshnessReceipt
-	if err := json.Unmarshal([]byte(freshness), &receipts); err != nil || len(receipts) < 2 {
-		return SourceBinding{}, false
-	}
-	primary, pull := receipts[0], receipts[len(receipts)-1]
-	if primary.Name != "primary" || pull.Name != "pull_request" ||
-		primary.WorkspaceBaseRevision != baseCommit ||
-		primary.RemoteIdentity == "" || primary.RemoteIdentity != pull.RemoteIdentity ||
-		pull.RequestedRevision != pullRef || pull.ResolvedRevision != pullHead ||
-		pull.FetchedAt.IsZero() {
-		return SourceBinding{}, false
-	}
-	selectedRef := pullRef
-	binding := SourceBinding{
-		Version: SourceBindingVersion, Kind: SourcePullRequest,
-		Requested: SourceSelector{
-			Kind: SourcePullRequest, Number: number, ExpectedHeadCommit: pullHead,
-		},
-		RemoteIdentity: primary.RemoteIdentity,
-		DefaultRef:     primary.RequestedRevision, DefaultCommit: primary.ResolvedRevision,
-		SelectedRef: &selectedRef, SelectedCommit: pullHead, BaseCommit: baseCommit,
-		ResolvedAt:        pull.FetchedAt.UTC(),
-		PullRequestNumber: number, PullRequestExpectedHead: pullHead,
-	}
-	if ValidateSourceBinding(binding) != nil {
-		return SourceBinding{}, false
-	}
-	return binding, true
-}
 
 // StoreStatus is what this build does with a session store, decided by its schema version alone.
 // Open acts on it and CheckStore only reports it, so the two cannot disagree about a store.
@@ -410,8 +209,8 @@ func (w schemaWindow) status(version int) StoreStatus {
 }
 
 // refusal is why Open refuses a store's schema, or nil when Open can use it. A too-old store is
-// told which schema converts it, keyed to the state version rather than a release because
-// untagged builds are deployed.
+// told which schema converts it, keyed to the state version because untagged builds are deployed;
+// the release and commit that convert to schema 26 follow as a hint.
 func (w schemaWindow) refusal(version int) error {
 	switch status := w.status(version); {
 	case version < 0:
@@ -421,7 +220,9 @@ func (w schemaWindow) refusal(version int) error {
 			version, w.oldest, w.current)
 	case status == StoreTooOld:
 		return fmt.Errorf("session schema %d is older than this coop build supports (%d to %d); "+
-			"open it once with a coop build that uses session schema %d and converts older stores (commit 29133b0e or earlier), then upgrade",
+			"open it once with a coop build that uses session schema %d and converts older stores "+
+			"(v12.1.0, or any build at or before commit 29133b0e), then upgrade, "+
+			"or start fresh with a new --state folder",
 			version, w.oldest, w.current, w.oldest)
 	}
 	return nil
@@ -444,168 +245,19 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("begin schema migration: %w", err)
 	}
 	defer tx.Rollback()
-	if version < 1 {
-		if _, err := tx.Exec(schemaV1); err != nil {
-			return fmt.Errorf("create schema v1: %w", err)
-		}
-		version = 1
-	}
-	if version < 2 {
-		if _, err := tx.Exec(schemaV2); err != nil {
-			return fmt.Errorf("migrate schema v2: %w", err)
-		}
-		version = 2
-	}
-	if version < 3 {
-		if _, err := tx.Exec(schemaV3); err != nil {
-			return fmt.Errorf("migrate schema v3: %w", err)
-		}
-		version = 3
-	}
-	if version < 4 {
-		if _, err := tx.Exec(schemaV4); err != nil {
-			return fmt.Errorf("migrate schema v4: %w", err)
-		}
-		version = 4
-	}
-	if version < 5 {
-		if _, err := tx.Exec(schemaV5); err != nil {
-			return fmt.Errorf("migrate schema v5: %w", err)
-		}
-		version = 5
-	}
-	if version < 6 {
-		if _, err := tx.Exec(schemaV6); err != nil {
-			return fmt.Errorf("migrate schema v6: %w", err)
-		}
-		version = 6
-	}
-	if version < 7 {
-		if _, err := tx.Exec(schemaV7); err != nil {
-			return fmt.Errorf("migrate schema v7: %w", err)
-		}
-		version = 7
-	}
-	if version < 8 {
-		if _, err := tx.Exec(schemaV8); err != nil {
-			return fmt.Errorf("migrate schema v8: %w", err)
-		}
-		version = 8
-	}
-	if version < 9 {
-		if _, err := tx.Exec(schemaV9); err != nil {
-			return fmt.Errorf("migrate schema v9: %w", err)
-		}
-		version = 9
-	}
-	if version < 10 {
-		if _, err := tx.Exec(schemaV10); err != nil {
-			return fmt.Errorf("migrate schema v10: %w", err)
-		}
-		version = 10
-	}
-	if version < 11 {
-		if _, err := tx.Exec(schemaV11); err != nil {
-			return fmt.Errorf("migrate schema v11: %w", err)
-		}
-		version = 11
-	}
-	if version < 12 {
-		if _, err := tx.Exec(schemaV12); err != nil {
-			return fmt.Errorf("migrate schema v12: %w", err)
-		}
-		version = 12
-	}
-	if version < 13 {
-		if _, err := tx.Exec(schemaV13); err != nil {
-			return fmt.Errorf("migrate schema v13: %w", err)
-		}
-		version = 13
-	}
-	if version < 14 {
-		if _, err := tx.Exec(schemaV14); err != nil {
-			return fmt.Errorf("migrate schema v14: %w", err)
-		}
-		version = 14
-	}
-	if version < 15 {
-		if _, err := tx.Exec(schemaV15); err != nil {
-			return fmt.Errorf("migrate schema v15: %w", err)
-		}
-		version = 15
-	}
-	if version < 16 {
-		if _, err := tx.Exec(schemaV16); err != nil {
-			return fmt.Errorf("migrate schema v16: %w", err)
-		}
-		version = 16
-	}
-	if version < 17 {
-		if _, err := tx.Exec(schemaV17); err != nil {
-			return fmt.Errorf("migrate schema v17: %w", err)
-		}
-		version = 17
-	}
-	if version < 18 {
-		if _, err := tx.Exec(schemaV18); err != nil {
-			return fmt.Errorf("migrate schema v18: %w", err)
-		}
-		version = 18
-	}
-	if version < 19 {
-		if _, err := tx.Exec(schemaV19); err != nil {
-			return fmt.Errorf("migrate schema v19: %w", err)
-		}
-		version = 19
-	}
-	if version < 20 {
-		if _, err := tx.Exec(schemaV20); err != nil {
-			return fmt.Errorf("migrate schema v20: %w", err)
-		}
-		version = 20
-	}
-	if version < 21 {
-		if _, err := tx.Exec(schemaV21); err != nil {
-			return fmt.Errorf("migrate schema v21: %w", err)
-		}
-		version = 21
-	}
-	if version < 22 {
-		if _, err := tx.Exec(schemaV22); err != nil {
-			return fmt.Errorf("migrate schema v22: %w", err)
-		}
-		version = 22
-	}
-	if version < 23 {
-		if _, err := tx.Exec(schemaV23); err != nil {
-			return fmt.Errorf("migrate schema v23: %w", err)
-		}
-		if err := backfillSourceBindings(tx); err != nil {
-			return fmt.Errorf("migrate schema v23: %w", err)
-		}
-		version = 23
-	}
-	if version < 24 {
-		if _, err := tx.Exec(schemaV24); err != nil {
-			return fmt.Errorf("migrate schema v24: %w", err)
-		}
-		version = 24
-	}
-	if version < 25 {
-		if _, err := tx.Exec(schemaV25); err != nil {
-			return fmt.Errorf("migrate schema v25: %w", err)
+	switch version {
+	case 0:
+		if _, err := tx.Exec(currentSchema); err != nil {
+			return fmt.Errorf("create session schema %d: %w", SchemaVersion, err)
 		}
 		if _, err := tx.Exec(`INSERT INTO store_identity (slot, id) VALUES (1, ?)`, randomID("store")); err != nil {
 			return fmt.Errorf("initialize session store identity: %w", err)
 		}
-		version = 25
+	default:
+		// The refusal above lets through only versions this build has a step for.
+		return fmt.Errorf("no conversion from session schema %d", version)
 	}
-	if version < 26 {
-		// Schema 26 changed no table: it only rewrote pending turn costs, and a store that is
-		// still being built has none. Stores below 26 are refused before this point.
-		version = 26
-	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
 		return fmt.Errorf("set schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
