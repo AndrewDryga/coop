@@ -180,6 +180,16 @@ func daemonDown() error {
 	return fmt.Errorf("%w — start it (Docker Desktop, or `systemctl start docker` on Linux) and retry", ErrDaemonUnavailable)
 }
 
+// daemonSelectionNote is the same hint for the filtered launch's own Docker errors, which carry
+// none of the client's output: with DOCKER_HOST or DOCKER_CONTEXT set, a wrong value is the likely
+// cause, and these messages named nothing a person could fix. Empty when neither is set.
+func daemonSelectionNote() string {
+	if selection := DaemonSelection(); selection != "" {
+		return " (" + selection + " is set: it may name a Docker that is not running or does not exist)"
+	}
+	return ""
+}
+
 // DaemonSelection names the environment variables that point Docker away from its default daemon,
 // as NAME="value" joined by " and ", or "" when neither DOCKER_HOST nor DOCKER_CONTEXT is set.
 func DaemonSelection() string {

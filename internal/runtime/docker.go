@@ -341,7 +341,9 @@ func dockerCommandOutput(ctx context.Context, binary string, env []string, timeo
 // output; refused is the one fact read from it.
 type dockerFailure struct{ refused bool }
 
-func (dockerFailure) Error() string { return "Docker operation failed; outcome unknown" }
+func (dockerFailure) Error() string {
+	return "Docker operation failed; outcome unknown" + daemonSelectionNote()
+}
 
 // dockerRefused reports whether a failed client said its request was refused: exit status 125 is
 // the client rejecting its own arguments before it sends anything, and a line opening with "Error
@@ -454,7 +456,7 @@ func (d *Docker) readInfo(ctx context.Context) (DockerInfo, error) {
 		if ctx.Err() != nil {
 			return DockerInfo{}, ctx.Err()
 		}
-		return DockerInfo{}, errors.New("Docker daemon observation failed")
+		return DockerInfo{}, errors.New("Docker daemon observation failed" + daemonSelectionNote())
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))

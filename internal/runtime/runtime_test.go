@@ -1250,3 +1250,18 @@ func TestOwnedContainerCleanupRemovesAnonymousVolumes(t *testing.T) {
 		t.Fatalf("cleanup did not preserve named data while removing anonymous data: %s", data)
 	}
 }
+
+// The filtered launch reports Docker failures in its own words, without the client's output. With
+// DOCKER_CONTEXT or DOCKER_HOST set they name it; a manual re-test found only the open path did.
+func TestFilteredDockerErrorsNameTheDockerSelection(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "")
+	t.Setenv("DOCKER_CONTEXT", "")
+	if got := (dockerFailure{}).Error(); got != "Docker operation failed; outcome unknown" {
+		t.Errorf("plain failure = %q", got)
+	}
+	t.Setenv("DOCKER_CONTEXT", "nope")
+	want := `Docker operation failed; outcome unknown (DOCKER_CONTEXT="nope" is set: it may name a Docker that is not running or does not exist)`
+	if got := (dockerFailure{}).Error(); got != want {
+		t.Errorf("failure with a context set = %q, want %q", got, want)
+	}
+}
