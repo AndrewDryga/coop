@@ -22,6 +22,7 @@ type forkStatus struct {
 	UnverifiedSandboxes          int
 	Reserved                     bool
 	Ready                        bool
+	Drift                        candidateDrift // how the branch moved off its reviewed candidate, when Ready
 	Landing                      bool
 	Ins, Del                     int
 	Dirty                        bool
@@ -111,6 +112,12 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		landing = landing || observed.PendingLand
 		cleanup = cleanup || observed.CleanupPending || executionCleanup > 0
 	}
+	drift := driftNone
+	if ready && hasIdentity && !landing {
+		if candidate, ok, err := tasks.ReadForkCandidate(repo, identity); err == nil && ok {
+			drift = forkCandidateDrift(ws, candidate, forkspace.GitOut(ws, "rev-parse", "HEAD"))
+		}
+	}
 	cost, _ := c.host.forkCost(ws)
 	launchWait, launchWaiting := forkspace.LaunchWaits(repo, name)
 	return forkStatus{
@@ -127,6 +134,7 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		UnverifiedSandboxes: unverifiedSandboxes,
 		Reserved:            reserved,
 		Ready:               ready,
+		Drift:               drift,
 		Landing:             landing,
 		Ins:                 ins,
 		Del:                 del,
@@ -213,6 +221,9 @@ func (s forkStatus) stateCell() string {
 	if s.Landing {
 		return "landing"
 	}
+	if s.Ready && s.Drift != driftNone {
+		return "changed"
+	}
 	if s.Ready {
 		return "ready"
 	}
@@ -246,6 +257,8 @@ func stateWords(state, system string) string {
 		return "merging"
 	case "ready":
 		return "ready to merge"
+	case "changed":
+		return "changed after review"
 	case "failed":
 		return "stopped"
 	case "legacy":
@@ -269,13 +282,24 @@ func (s forkStatus) tasksLine() string {
 	if s.Reviewing > 0 {
 		parts = append(parts, fmt.Sprintf("%d being reviewed", s.Reviewing))
 	}
-	if s.ReadyTasks > 0 {
+	if s.ReadyTasks > 0 && s.Drift != driftNone {
+		parts = append(parts, fmt.Sprintf("%d reviewed", s.ReadyTasks))
+	} else if s.ReadyTasks > 0 {
 		parts = append(parts, fmt.Sprintf("%d ready to merge", s.ReadyTasks))
 	}
 	if s.Blocked > 0 {
 		parts = append(parts, fmt.Sprintf("%d blocked", s.Blocked))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// driftLine says what moved a reviewed fork off its candidate and where to go next; coop fork merge
+// gives the exact commands.
+func (s forkStatus) driftLine() string {
+	if s.Drift == driftAhead {
+		return "Changed: new commits since its review; review them: coop fork " + s.Name + " --loop"
+	}
+	return "Changed: its branch no longer builds on the reviewed commit; coop fork merge " + s.Name + " says how to go on"
 }
 
 // changesLine is the diff against the parent branch, saying an uncommitted tree in words rather

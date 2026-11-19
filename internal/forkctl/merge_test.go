@@ -831,6 +831,92 @@ func TestTaskCandidateMergeConflictLeavesNoLandJournal(t *testing.T) {
 	}
 }
 
+// A reviewed fork whose branch moved after its final review is not "ready to merge": the listing
+// says it changed, and merge names the ways on that work. New commits on top go back to review; a
+// branch that no longer builds on the reviewed commit (a person rebased it) goes back to that commit,
+// or is discarded. Merge used to say only that the candidate was stale, and the listing said ready.
+func TestTaskCandidateMergeNamesTheWayOutOfAChangedFork(t *testing.T) {
+	repo, ws, _, identity, c := prepareForkTaskCandidate(t, "task-changed")
+	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)
+	if err != nil || !ok {
+		t.Fatalf("read candidate: ok=%v err=%v", ok, err)
+	}
+	name := identity.Name
+	status := func() forkStatus {
+		t.Helper()
+		return c.gatherForkStatus(repo, name, tasks.ReadProjectSnapshot(repo, nil))
+	}
+	refusal := func() *ui.UsageError {
+		t.Helper()
+		landed, err := mergeOneForTest(t, c, repo, "", name, false)
+		var block *ui.UsageError
+		if landed || !errors.As(err, &block) {
+			t.Fatalf("merge of a changed fork = (%v, %v), want a refusal block", landed, err)
+		}
+		return block
+	}
+	back := shellLine([]string{"git", "-C", ws, "reset", "--hard", candidate.Head})
+
+	if s := status(); s.stateCell() != "ready" {
+		t.Fatalf("reviewed fork state = %q, want ready", s.stateCell())
+	}
+
+	// New commits on top of the reviewed one.
+	if err := os.WriteFile(filepath.Join(ws, "extra.txt"), []byte("more\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "extra.txt")
+	git(t, ws, "commit", "-qm", "more work")
+	if s := status(); s.stateCell() != "changed" || stateWords(s.stateCell(), "") != "changed after review" ||
+		!strings.Contains(s.driftLine(), "coop fork "+name+" --loop") || s.tasksLine() != "1 reviewed" {
+		t.Fatalf("fork ahead of its candidate: state %q, %q, tasks %q", s.stateCell(), s.driftLine(), s.tasksLine())
+	}
+	block := refusal()
+	if block.Headline != "Fork "+name+" has new commits since its final review" ||
+		!slices.Contains(block.Rows, [2]string{"Review them:", "coop fork " + name + " --loop"}) ||
+		!slices.Contains(block.Rows, [2]string{"Or go back to the reviewed commit:", back}) {
+		t.Fatalf("merge of a fork ahead of its candidate = %+v", block)
+	}
+	if err := RefuseDivergedFork(repo, identity); err != nil {
+		t.Fatalf("a loop may review new commits on top of the candidate: %v", err)
+	}
+
+	// A person rewrites the reviewed commit, so the branch no longer builds on it.
+	git(t, ws, "reset", "-q", "--hard", candidate.Head)
+	git(t, ws, "commit", "-q", "--amend", "-m", "implement canonical task, by hand\n\nCoop-Task: canonical-task")
+	rewritten := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	if s := status(); s.stateCell() != "changed" || !strings.Contains(s.driftLine(), "coop fork merge "+name+" says how to go on") {
+		t.Fatalf("diverged fork: state %q, %q", s.stateCell(), s.driftLine())
+	}
+	wantRows := [][2]string{
+		{"Go back to the reviewed commit:", back},
+		{"Then merge it:", "coop fork merge " + name},
+		{"Or discard its work:", "coop fork rm " + name + " --force"},
+	}
+	block = refusal()
+	if block.Headline != "Fork "+name+" changed after its final review" || !slices.Equal(block.Rows, wantRows) ||
+		!strings.Contains(block.Cause, "Nothing was merged.") || !strings.Contains(block.Cause, rewritten[:12]) {
+		t.Fatalf("merge of a diverged fork = %+v", block)
+	}
+	if got := forkspace.GitOut(ws, "rev-parse", "HEAD"); got != rewritten {
+		t.Fatalf("merge moved the fork's branch to %s", got)
+	}
+	var loopBlock *ui.UsageError
+	if err := RefuseDivergedFork(repo, identity); !errors.As(err, &loopBlock) || !slices.Equal(loopBlock.Rows, wantRows) ||
+		strings.Contains(loopBlock.Cause, "merged") {
+		t.Fatalf("loop refusal on a diverged fork = %v", err)
+	}
+
+	// The way on it names works: back on the reviewed commit, the merge lands.
+	git(t, ws, "reset", "-q", "--hard", candidate.Head)
+	if s := status(); s.stateCell() != "ready" {
+		t.Fatalf("fork back on its candidate: state %q", s.stateCell())
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", name, false); !landed || err != nil {
+		t.Fatalf("merge after going back = (%v, %v)", landed, err)
+	}
+}
+
 func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.T) {
 	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "task-red-gate-crash")
 	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)

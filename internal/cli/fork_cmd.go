@@ -875,6 +875,9 @@ func (a *app) forkCreate(args []string) (code int, err error) {
 		if err := refuseClosedFork(repo, forkIdentity, args); err != nil {
 			return 1, err
 		}
+		if err := forkctl.RefuseDivergedFork(repo, forkIdentity); err != nil {
+			return 1, err
+		}
 		switch {
 		case fa.worker:
 			return a.runForkLoop(repo, ws, forkIdentity, fa.agent, fa.tasks, fa.credential, fa.model, fa.effort, peers, fa.network, fa.stopAfterReview, true)

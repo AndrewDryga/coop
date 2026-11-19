@@ -278,7 +278,7 @@ func BeginForkCandidateReview(repo string, identity forkspace.Identity, head, tr
 			if state.manifest.Rework != nil {
 				return ForkCandidateReview{}, false, fmt.Errorf("fork HEAD no longer descends from its reviewed candidate; preserve the rework, restore the recorded pre-rework history at %s, and keep the published round in the ancestry", state.manifest.Rework.Head)
 			}
-			return ForkCandidateReview{}, false, errors.New("fork HEAD no longer descends from its reviewed candidate; merge or discard it before more work")
+			return ForkCandidateReview{}, false, fmt.Errorf("fork HEAD no longer descends from its reviewed candidate %s; reset the fork's branch to it, or discard the fork's work: coop fork rm %s --force", current.Head, identity.Name)
 		}
 	}
 	candidate := newForkCandidate(identity, head, tree, assignments)
@@ -540,7 +540,7 @@ func SupersedeStaleForkCandidate(repo string, identity forkspace.Identity, head 
 	}
 	workspace := forkspace.Workspace(repo, identity.Name)
 	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", candidate.Head, head); err != nil {
-		return ForkCandidateSupersession{}, errors.New("fork HEAD no longer descends from its reviewed candidate; merge or discard it before more work")
+		return ForkCandidateSupersession{}, fmt.Errorf("fork HEAD no longer descends from its reviewed candidate %s; reset the fork's branch to it, or discard the fork's work: coop fork rm %s --force", candidate.Head, identity.Name)
 	}
 	var transition ForkCandidateSupersession
 	if manifest.Phase == forkCandidateActive {

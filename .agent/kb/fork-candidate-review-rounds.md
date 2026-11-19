@@ -2,7 +2,7 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go]
+sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go]
 updated: 2026-11-19
 ---
 
@@ -49,7 +49,16 @@ clean, retires the journal as a red gate does (`candidateWorkspaceIntact`, inter
 any other failure keeps it for replay. A hand-rebased copy is not the candidate: it needs a new review,
 and the ancestry fence refuses one that does not descend from the published round.
 
+A reviewed fork whose HEAD moved off its active candidate is not landable, so `coop fork ls` shows it
+as `changed` ("changed after review") rather than `ready`. `forkCandidateDrift` tells the two cases
+apart: new commits on top go back to review with the fork's loop; a HEAD that no longer descends is
+refused by merge and, up front, by a loop start (`RefuseDivergedFork`), both naming the only ways on
+today: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
+
 ## Changelog
+- 2026-11-19 — a fork whose branch moved after review showed "ready to merge", merge said only that
+  the candidate was stale, and `--loop -d` printed "Started" then died in its log; all three now say
+  it changed and name the ways on (task 2026-11-19-say-how-to-get-out-when-a-fork-s-branch-no-longe).
 - 2026-11-19 — a candidate whose rebase conflicted kept its `preparing` journal, so the fork stayed
   "merging", refused loop and `rm --force`, and every rerun reset the fork's branch to the candidate
   and hit the same conflict; a clean conflict now retires the journal (task

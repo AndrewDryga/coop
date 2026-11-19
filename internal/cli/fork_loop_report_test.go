@@ -268,3 +268,45 @@ func TestADetachedLoopOnAReadyForkSaysSo(t *testing.T) {
 		t.Errorf("the second loop did work again: %v, %d reviews", ran, reviews)
 	}
 }
+
+// A reviewed fork whose branch a person rewrote (rebased or amended by hand) no longer builds on its
+// reviewed commit, so its loop would stop at the first step. A background start used to print
+// "Started" and exit 0, and the loop then died in its log. It refuses in the terminal now, with the
+// ways on that coop fork merge gives, and starts no worker.
+func TestForkLoopOnADivergedForkRefusesUpFront(t *testing.T) {
+	repo := initRepo(t)
+	seedForkDecisionTask(t, repo, "2026-11-19-fork-diverged-a")
+	a := forkNetworkPreflightApp(t, repo)
+	var ran []string
+	reviews := 0
+	a.forkLoopRun = completingForkPass(t, &ran, &reviews)
+	ws, identity := setUpForkForDecision(t, repo, "moved")
+	if code, out, err := runForkLoopAs(t, a, repo, ws, identity, false); code != 0 || err != nil || !strings.Contains(out, "Fork moved is ready to merge") {
+		t.Fatalf("the first loop = (%d, %v)\n%s", code, err, out)
+	}
+	reviewed := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	git(t, ws, "commit", "-q", "--amend", "--allow-empty", "-m", "rewritten by hand")
+	ran, reviews = nil, 0
+	for _, args := range [][]string{{"moved", "claude", "--loop", "-d"}, {"moved", "claude", "--loop"}} {
+		var code int
+		var err error
+		var out string
+		stdout := captureStdout(t, func() {
+			out = captureStderr(t, func() { code, err = a.forkCreate(args) })
+		})
+		block := asUsage(err)
+		if code != 1 || block == nil || block.Headline != "Fork moved changed after its final review" {
+			t.Fatalf("coop fork %s = (%d, %v)\n%s%s", strings.Join(args, " "), code, err, stdout, out)
+		}
+		if !slices.Contains(block.Rows, [2]string{"Or discard its work:", "coop fork rm moved --force"}) ||
+			!strings.HasSuffix(block.Rows[0][1], "reset --hard "+reviewed) {
+			t.Errorf("coop fork %s rows = %v", strings.Join(args, " "), block.Rows)
+		}
+		if strings.Contains(stdout+out, "Started fork") || pathExists(forkspace.PidPath(repo, "moved")) {
+			t.Errorf("a refused loop started a worker:\n%s%s", stdout, out)
+		}
+	}
+	if len(ran) != 0 || reviews != 0 {
+		t.Errorf("a refused loop ran passes: %v, %d reviews", ran, reviews)
+	}
+}

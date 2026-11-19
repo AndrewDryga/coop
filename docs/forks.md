@@ -379,6 +379,12 @@ reviewed, with no merge left to resume. A copy you rebase by hand would need a n
 change your branch until the commits apply and merge again, or discard the fork's work with
 `coop fork rm <name> --force`, which returns its tasks to the queue.
 
+A fork whose branch moved after its final review shows as "changed after review" in `coop fork ls`,
+and `coop fork merge` refuses it. New commits on top of the reviewed one need another review, which
+the fork's loop gives them. A branch that no longer builds on the reviewed commit, such as one you
+rebased by hand, can neither merge nor be reviewed again: reset the fork's branch to the reviewed
+commit that the refusal names, or discard the fork's work with `coop fork rm <name> --force`.
+
 If a fork can't reach a candidate, for example because its box keeps failing a check your project
 passes, you can bring its commit to your branch yourself, such as with `git cherry-pick`. Then run
 `coop tasks done <id> --from-fork` in your terminal. It needs exactly one commit on your branch with

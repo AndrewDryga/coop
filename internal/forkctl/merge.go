@@ -894,6 +894,9 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			}
 			head, tree := forkspace.GitOut(ws, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
 			if err := tasks.ValidateForkCandidateLocked(repo, candidate, head, tree); err != nil {
+				if drift := forkCandidateDrift(ws, candidate, head); drift != driftNone {
+					return mergeOutcome{}, candidateDriftError(ws, name, candidate, head, drift, true)
+				}
 				return mergeOutcome{}, fmt.Errorf("%s reviewed candidate is stale: %w", name, err)
 			}
 			intent := landIntent{
