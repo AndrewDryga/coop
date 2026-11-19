@@ -68,7 +68,7 @@ names it.
 |---|---|---|---|---|---|
 | Primary snapshot receipt | `<state>/job-sources/<key>/repository-forks/<fork>/.git/coop-primary-snapshot.json` | 1 | 1 | none exist; independent forks have no receipt | none |
 | Companion snapshot receipt | `<state>/companion-snapshots/<key>/receipt.json` | 1 | 1 | none exist | none |
-| Session database schema | `<state>/session.sqlite` | 26 | 26 | 1 to 25 are refused by name when the service opens the store, and `coop sessions check` exits 4; the file is left as it is | a build at or before commit 29133b0e (schema 26) |
+| Session database schema | `<state>/session.sqlite` | 27 | 26 | 26 is converted when the service opens the store (`coop sessions check` exits 3), after which a schema 26 build refuses it; 1 to 25 are refused by name, `coop sessions check` exits 4, and the file is left as it is | 26: any schema 27 build; 1 to 25: a build at or before commit 29133b0e (schema 26) |
 | Turn retry receipts | rows in `<state>/session.sqlite` | 1 | unversioned | read in place | `coop sessions compact` (v10.1.2 and later) |
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |
 | Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | no older version, but a version 1 stream with no create origin can remain from before origins; kept as a dormant generation floor, and `coop sessions check` cannot tell it apart | none |
@@ -116,6 +116,7 @@ a Docker daemon, not a store; v1 retired on 2026-11-04 once Ryker's workers (ima
 `legacyLabelsAreLocal` stays, since network recovery judges a run record naming no host with it.
 
 ## Changelog
+- 2026-11-18 — session schema 27 (indexes on operations(method, state) and events(type), duplicate events_replay dropped) converts 26; the row's Current is 27 and Oldest stays 26 (task 2026-11-17-the-janitor-reclaim-and-storage-report-stop-rere).
 - 2026-11-18 — the session schema ladder became one `currentSchema` that builds new stores; the refusal of an older store also names v12.1.0 and starting fresh with a new `--state` folder (task 2026-10-15-collapse-the-session-database-migrations-into-on).
 - 2026-11-17 — rooted the renewal-journal and pre-v11 login and history rows at `~/.config/coop/agents/<provider>/`, where those folders live (audit D1-15).
 - 2026-11-17 — merged two `sources:` lines into one; the second had dropped old_records.go and the first the two box files.

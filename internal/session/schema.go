@@ -6,8 +6,9 @@ import (
 )
 
 // currentSchema builds a new store at SchemaVersion in one step. Columns keep the order the old
-// step-by-step migrations gave them, so a new store and a converted one have the same shape; the
-// test TestNewStoreSchemaMatchesTheLastConvertedShape holds the two together.
+// step-by-step migrations gave them, so a new store and a converted one have the same shape. A
+// schema change edits this and adds the step that converts the previous schema in migrate; the
+// test TestNewStoreSchemaMatchesAConvertedStore holds the two together.
 //
 // Why some columns sit where they do: usage is columns on the turn, since each turn has exactly one
 // row of it; ACP reports cost as a cumulative session counter, so the session keeps the last one
@@ -133,7 +134,8 @@ CREATE TABLE events (
 );
 
 CREATE INDEX turns_fifo ON turns(session_id, state, ordinal);
-CREATE INDEX events_replay ON events(session_id, sequence);
+CREATE INDEX events_type ON events(type);
+CREATE INDEX operations_method_state ON operations(method, state);
 
 CREATE TABLE turn_artifacts (
     turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
@@ -168,6 +170,15 @@ CREATE TABLE session_owner_bindings (
     session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     store_id TEXT NOT NULL
 );
+`
+
+// Schema 27 indexes the lookups that ran on every janitor tick and restore: operations by method
+// and state, events by type. events_replay goes, since UNIQUE(session_id, sequence) already
+// indexes the same columns.
+const schemaV27 = `
+DROP INDEX events_replay;
+CREATE INDEX events_type ON events(type);
+CREATE INDEX operations_method_state ON operations(method, state);
 `
 
 // StoreStatus is what this build does with a session store, decided by its schema version alone.
@@ -252,6 +263,10 @@ func migrate(db *sql.DB) error {
 		}
 		if _, err := tx.Exec(`INSERT INTO store_identity (slot, id) VALUES (1, ?)`, randomID("store")); err != nil {
 			return fmt.Errorf("initialize session store identity: %w", err)
+		}
+	case 26:
+		if _, err := tx.Exec(schemaV27); err != nil {
+			return fmt.Errorf("convert session schema 26 to 27: %w", err)
 		}
 	default:
 		// The refusal above lets through only versions this build has a step for.

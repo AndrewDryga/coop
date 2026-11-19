@@ -3,6 +3,19 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
+## Unreleased: session store schema 27 has no way back
+
+The worker's session store moves from schema 26 to 27 the first time this build opens it. Schema
+27 only adds two indexes and drops a duplicate one; no session data changes. Once converted, a
+build that uses schema 26 refuses the store as newer than it supports, so the worker cannot be
+rolled back to it.
+
+1. Stop the worker, then run `coop sessions check --state <path>` with the new build. Exit 3 means
+   it will convert the store.
+2. Copy the stopped state folder aside. That copy and the old build are your only way back.
+3. Start the new build. On a store with many events, building the indexes makes the first start
+   take longer.
+
 ## v14.0.0: stricter defaults, changed exit codes and session API answers
 
 - **`coop build` refuses while `COOP_IMAGE` is set.** Unset it to build this project; the override

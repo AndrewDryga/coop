@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SchemaVersion = 26
+	SchemaVersion = 27
 	// OldestSchemaVersion is the oldest store schema Open still converts. A store below it is
 	// refused with the schema that converts it (.agent/kb/rules/one-upgrade-for-old-state.md).
 	// Raise it only once every known store has passed that waypoint, together with the card.

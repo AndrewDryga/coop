@@ -9,8 +9,8 @@ import (
 
 func TestHistoricalSchemaFixturesStayFrozen(t *testing.T) {
 	const want = "216533374394b6b5294c300905f43b1dca9b911f771f7f6c12f5013078340436"
-	if len(legacySchemas) != 25 {
-		t.Fatalf("historical versions=%d, want25", len(legacySchemas))
+	if len(legacySchemas) != 26 || legacySchemas[25] != "" {
+		t.Fatalf("historical versions=%d, want 26 with an empty schema 26", len(legacySchemas))
 	}
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(legacySchemas[24]))); got != "5caf80ce8e079b9cf7d2396db462369c5edb8e83c0c420c76b2caf1add304ea6" {
 		t.Fatalf("historical v25 DDL drifted: %s", got)
@@ -20,7 +20,7 @@ func TestHistoricalSchemaFixturesStayFrozen(t *testing.T) {
 	}
 }
 
-// Historical DDL 1–24 frozen from 260ccd2. Do not replace these with current production constants:
+// Historical DDL 1–24 frozen from 260ccd2, 25 from 23fbdc1b, and 26 added none. Do not replace these with current production constants:
 // migrations must repair independently authored old database bytes, not their own setup output.
 var legacySchemas = []string{
 	`
@@ -223,4 +223,6 @@ CREATE TABLE session_owner_bindings (
     store_id TEXT NOT NULL
 );
 `,
+	// v26 changed no table: it only rewrote pending turn costs.
+	"",
 }

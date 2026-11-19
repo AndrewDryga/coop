@@ -636,11 +636,13 @@ func (s *Store) ListIncompleteOperations(ctx context.Context) ([]Operation, erro
 
 // Artifact ownership is a local journal fact, never the controller's opaque
 // session_ref. Historical records without this fact are deliberately retained.
-func (s *Store) ListSessionArtifactOperationIDs(ctx context.Context, method, sessionID string) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM operations
+const sessionArtifactOperationIDs = `SELECT id FROM operations
 		WHERE method = ?
 		AND CASE WHEN json_valid(result) THEN json_extract(result, '$.session_id') = ? ELSE 0 END
-		ORDER BY created_at, id`, method, sessionID)
+		ORDER BY created_at, id`
+
+func (s *Store) ListSessionArtifactOperationIDs(ctx context.Context, method, sessionID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, sessionArtifactOperationIDs, method, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1309,11 +1311,13 @@ func (s *Store) ListLiveSessionsForRecovery(ctx context.Context, include []strin
 	return sessions, nil
 }
 
+const retiredQuarantinedSessions = `SELECT session_id, payload FROM events WHERE type = ?`
+
 // RetiredQuarantinedSessions retains uncertainty after record-only retirement.
 // That operation deliberately leaves the old host runtime untouched; a restart
 // must not turn its discarded tombstone into evidence of free worker capacity.
 func (s *Store) RetiredQuarantinedSessions(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT session_id, payload FROM events WHERE type = ?", string(EventWorkspaceDiscarded))
+	rows, err := s.db.QueryContext(ctx, retiredQuarantinedSessions, string(EventWorkspaceDiscarded))
 	if err != nil {
 		return nil, err
 	}

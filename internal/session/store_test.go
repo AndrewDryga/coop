@@ -438,6 +438,43 @@ func TestListLiveSessionsForRecoverySkipsDiscardedSessions(t *testing.T) {
 	}
 }
 
+// The restore fence, the artifact lookup and the retired-quarantine scan run on every janitor tick
+// or restore; each must search its index rather than scan every operation or event ever stored.
+func TestJanitorLookupsUseTheirIndexes(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "state"))
+	defer func() { _ = store.Close() }()
+	for _, tc := range []struct {
+		name, query, index string
+		args               []any
+	}{
+		{"pending workspace restore", pendingWorkspaceRestore, "operations_method_state", []any{"op", "session"}},
+		{"session artifact operations", sessionArtifactOperationIDs, "operations_method_state", []any{"Method", "session"}},
+		{"retired quarantined sessions", retiredQuarantinedSessions, "events_type", []any{string(EventWorkspaceDiscarded)}},
+	} {
+		rows, err := store.db.Query("EXPLAIN QUERY PLAN "+tc.query, tc.args...)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(plan, func(step string) bool {
+			return strings.HasPrefix(step, "SEARCH ") && strings.Contains(step, "INDEX "+tc.index+" ")
+		}) {
+			t.Errorf("%s plan = %q, want a search of %s", tc.name, plan, tc.index)
+		}
+	}
+}
+
 // A semantic candidate the agent cut short keeps its stop reason through acceptance, so the
 // accepted turn tells the controller the same thing an ordinary completed turn would.
 func TestSemanticCandidateKeepsItsStopReasonThroughAcceptance(t *testing.T) {

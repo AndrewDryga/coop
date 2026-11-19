@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -73,16 +74,31 @@ func buildLegacyDatabase(t *testing.T, path string, version int) {
 }
 
 // A new store is built from currentSchema in one step, while every store in service reached its
-// shape through the old step-by-step migrations, whose DDL the frozen fixtures still hold. Both must
-// end with the same tables, columns, constraints and indexes, and a new store gets exactly one
-// store identity.
-func TestNewStoreSchemaMatchesTheLastConvertedShape(t *testing.T) {
+// shape through conversion steps; the frozen fixtures hold the schema 26 those stores have. A
+// converted store must end with the same tables, columns, constraints and indexes as a new one,
+// keep its rows and identity, and a new store gets exactly one store identity.
+func TestNewStoreSchemaMatchesAConvertedStore(t *testing.T) {
 	fresh := filepath.Join(t.TempDir(), "fresh")
 	createStore(t, fresh)
-	historical := filepath.Join(t.TempDir(), "historical")
-	// Schema 26 changed no table, so the frozen schema 25 DDL is the schema 26 shape.
-	stoppedHistoricalStore(t, historical, 25)
-	got, want := schemaShape(t, filepath.Join(fresh, databaseName)), schemaShape(t, filepath.Join(historical, databaseName))
+	converted := filepath.Join(t.TempDir(), "converted")
+	stoppedHistoricalStore(t, converted, SchemaVersion-1)
+	store, err := Open(converted)
+	if err != nil {
+		t.Fatalf("convert schema %d: %v", SchemaVersion-1, err)
+	}
+	if store.ID() != "store_0123456789abcdef0123456789abcdef" {
+		t.Fatalf("conversion changed the store identity to %q", store.ID())
+	}
+	if _, err := store.GetSession(context.Background(), "legacy-session"); err != nil {
+		t.Fatalf("converted store lost its session: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := immutableUserVersion(t, filepath.Join(converted, databaseName)); got != SchemaVersion {
+		t.Fatalf("converted schema = %d, want %d", got, SchemaVersion)
+	}
+	got, want := schemaShape(t, filepath.Join(fresh, databaseName)), schemaShape(t, filepath.Join(converted, databaseName))
 	if !slices.Equal(got, want) {
 		t.Errorf("new store schema differs from the converted one:\n got: %q\nwant: %q", got, want)
 	}

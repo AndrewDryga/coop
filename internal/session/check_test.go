@@ -16,12 +16,17 @@ import (
 	"testing"
 )
 
-// Every schema below the oldest one is refused, never converted; a store at the current schema is
-// used as it is.
+// Every schema below the oldest one is refused, never converted; the ones from it up to the current
+// one convert, and a store at the current schema is used as it is.
 func TestSupportedSchemasRefuseEveryHistoricalStore(t *testing.T) {
 	for version := 1; version < OldestSchemaVersion; version++ {
 		if got := supportedSchemas.status(version); got != StoreTooOld {
 			t.Errorf("schema %d status = %v, want StoreTooOld", version, got)
+		}
+	}
+	for version := OldestSchemaVersion; version < SchemaVersion; version++ {
+		if got := supportedSchemas.status(version); got != StoreConverts {
+			t.Errorf("schema %d status = %v, want StoreConverts", version, got)
 		}
 	}
 	for version, want := range map[int]StoreStatus{0: StoreEmpty, SchemaVersion: StoreCurrent, SchemaVersion + 1: StoreTooNew} {
@@ -79,14 +84,12 @@ func TestCheckStoreReportsWithoutWriting(t *testing.T) {
 			}
 		}, supportedSchemas, StoreEmpty, 0},
 		{"current", func(t *testing.T, root string) { createStore(t, root) }, supportedSchemas, StoreCurrent, SchemaVersion},
-		// The window is a fixture: this build converts nothing, but the check reports what a
-		// window with a lower floor would do.
 		{"converts", func(t *testing.T, root string) {
 			stoppedHistoricalStore(t, root, SchemaVersion-1)
-		}, schemaWindow{oldest: SchemaVersion - 1, current: SchemaVersion}, StoreConverts, SchemaVersion - 1},
+		}, supportedSchemas, StoreConverts, SchemaVersion - 1},
 		{"refused by this build", func(t *testing.T, root string) {
-			stoppedHistoricalStore(t, root, SchemaVersion-1)
-		}, supportedSchemas, StoreTooOld, SchemaVersion - 1},
+			stoppedHistoricalStore(t, root, OldestSchemaVersion-1)
+		}, supportedSchemas, StoreTooOld, OldestSchemaVersion - 1},
 		{"too old", func(t *testing.T, root string) {
 			stoppedHistoricalStore(t, root, 24)
 		}, schemaWindow{oldest: 25, current: 26}, StoreTooOld, 24},
