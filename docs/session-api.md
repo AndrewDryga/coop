@@ -1145,6 +1145,9 @@ You can extend the turn budget only up to co:op's global `max_turns` limit. Your
 decide who may authorize an extension and how much to spend. co:op enforces the numeric limit and
 prevents the same request from being applied twice.
 
+Submitting a turn to a session that has used its whole budget returns `409 budget_exhausted`.
+Extend the budget, then submit again with a new key.
+
 ### Changes
 
 ```bash

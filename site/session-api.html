@@ -1263,6 +1263,8 @@ itself never leaves co:op.</p>
 <p>You can extend the turn budget only up to co:op&#39;s global <code>max_turns</code> limit. Your controller must
 decide who may authorize an extension and how much to spend. co:op enforces the numeric limit and
 prevents the same request from being applied twice.</p>
+<p>Submitting a turn to a session that has used its whole budget returns <code>409 budget_exhausted</code>.
+Extend the budget, then submit again with a new key.</p>
 <h3 id="changes">Changes</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Changes code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   http://localhost/v1/sessions/remote_.../changes

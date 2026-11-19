@@ -1614,6 +1614,11 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 	if err := validateRevision(sess, req.ExpectedRevision); err != nil {
 		return Turn{}, s.failAndCommit(tx, op.ID, err)
 	}
+	// The turn that spends the budget also closes the session as exhausted, so say which it was
+	// before the general state refusal: a controller should not have to read the session to learn it.
+	if sess.State == SessionExhausted && sess.TurnsUsed >= sess.MaxTurns {
+		return Turn{}, s.failAndCommit(tx, op.ID, ErrBudgetExhausted)
+	}
 	if sess.State != SessionOpen {
 		return Turn{}, s.failAndCommit(tx, op.ID, &Error{Code: CodeInvalidSessionState, Detail: "session does not accept turns"})
 	}

@@ -2318,6 +2318,11 @@ func TestExtendBudgetReopensAndReplays(t *testing.T) {
 	if got.State != SessionExhausted || got.Revision != 2 {
 		t.Fatalf("exhausted session before extension = %+v", got)
 	}
+	// A submit to the spent session says the budget ran out; it used to say only that the session
+	// does not accept turns, the same answer a discarded session gives.
+	if _, err := store.SubmitTurn(ctx, "turn-over-budget", SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: got.Revision, Prompt: "two"}); CodeOf(err) != CodeBudgetExhausted {
+		t.Fatalf("submit to a spent session = %v; want budget_exhausted", err)
+	}
 	req := ExtendBudgetRequest{SessionID: sess.ID, ExpectedRevision: got.Revision, AdditionalTurns: 2}
 	extended, err := store.ExtendBudget(ctx, "extend", req)
 	if err != nil || extended.State != SessionOpen || extended.MaxTurns != 3 || extended.Revision != 3 {
