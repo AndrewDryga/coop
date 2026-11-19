@@ -23,7 +23,8 @@ type journal struct {
 	publication sync.Mutex
 	dir         string
 	streams     string
-	origins     string
+	origins     string // pending create origins; see createOriginPath for the layout
+	settled     string // settled create origins, create-origins/settled
 }
 
 type journalEntry struct {
@@ -55,10 +56,14 @@ func openJournal(dir string) (*journal, error) {
 	commands := filepath.Join(dir, "commands")
 	streams := filepath.Join(dir, "event-streams")
 	origins := filepath.Join(dir, "create-origins")
-	if err := os.MkdirAll(origins, 0o700); err != nil {
+	settled := filepath.Join(origins, "settled")
+	if err := os.MkdirAll(settled, 0o700); err != nil {
 		return nil, fmt.Errorf("create worker origin journal: %w", err)
 	}
 	if err := os.Chmod(origins, 0o700); err != nil {
+		return nil, fmt.Errorf("protect worker origin journal: %w", err)
+	}
+	if err := os.Chmod(settled, 0o700); err != nil {
 		return nil, fmt.Errorf("protect worker origin journal: %w", err)
 	}
 	if err := os.MkdirAll(commands, 0o700); err != nil {
@@ -76,7 +81,11 @@ func openJournal(dir string) (*journal, error) {
 	if err := os.Chmod(streams, 0o700); err != nil {
 		return nil, fmt.Errorf("protect worker event stream directory: %w", err)
 	}
-	return &journal{dir: commands, streams: streams, origins: origins}, nil
+	j := &journal{dir: commands, streams: streams, origins: origins, settled: settled}
+	if err := j.moveSettledCreateOrigins(); err != nil {
+		return nil, err
+	}
+	return j, nil
 }
 
 func (j *journal) begin(command workerproto.Command) (journalEntry, error) {

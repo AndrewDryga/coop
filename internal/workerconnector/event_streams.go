@@ -149,7 +149,7 @@ func (j *journal) acknowledgeEventsLocked(acknowledgements []workerproto.EventAc
 		}
 		stream.AcknowledgedSequence = acknowledgement.Sequence
 		if stream.TerminalSequence > 0 && acknowledgement.Sequence >= stream.TerminalSequence {
-			origin, err := j.readCreateOrigin(j.createOriginPath(stream.SessionRef))
+			origin, err := j.loadCreateOrigin(stream.SessionRef)
 			if errors.Is(err, os.ErrNotExist) || (err == nil && origin.PlacementGeneration < stream.PlacementGeneration) {
 				// A legacy stream is still the only proof of this generation. Keep its
 				// acknowledged terminal cursor as a dormant floor instead of inventing an origin.

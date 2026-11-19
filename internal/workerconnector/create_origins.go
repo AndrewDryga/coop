@@ -96,7 +96,7 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 	if err != nil || origin.CommandID == "" {
 		return err
 	}
-	current, err := j.readCreateOrigin(j.createOriginPath(origin.SessionRef))
+	current, err := j.loadCreateOrigin(origin.SessionRef)
 	if err == nil {
 		if current.PlacementGeneration > origin.PlacementGeneration {
 			return nil
@@ -124,7 +124,7 @@ func (j *journal) preserveCreateOriginLocked(entry journalEntry) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := j.writeActivityRecord(j.createOriginPath(origin.SessionRef), origin); err != nil {
+	if err := j.writeCreateOriginLocked(origin); err != nil {
 		return err
 	}
 	if origin.CoopSessionID != "" {
@@ -143,8 +143,105 @@ func sameCreateOrigin(left, right createOrigin) bool {
 		left.CommandDigest == right.CommandDigest && left.OperationKey == right.OperationKey && left.OperationID == right.OperationID
 }
 
+// A create origin lives in one of two folders. A pending one stays in create-origins/, which the
+// activity scan lists every poll; once it settles (bound or failed) it moves to
+// create-origins/settled/, which no poll lists. A settled origin is still the generation watermark,
+// so every reader goes through loadCreateOrigin, which looks in both.
+//
+// Coop builds before this layout keep every origin in create-origins/ and never look in settled/:
+// such a build would not see a settled origin, so its watermark would not stop an old command from
+// bringing back a replaced or discarded session. A worker must not go back to one.
 func (j *journal) createOriginPath(sessionRef string) string {
 	return filepath.Join(j.origins, filepath.Base(j.eventStreamPath(sessionRef)))
+}
+
+func (j *journal) settledCreateOriginPath(sessionRef string) string {
+	return filepath.Join(j.settled, filepath.Base(j.eventStreamPath(sessionRef)))
+}
+
+// loadCreateOrigin reads the origin that governs a session. Both folders can hold one: a crash
+// between writing a settled origin and removing its pending file leaves both, and a newer
+// generation's pending create sits beside the older generation's settled one. The higher
+// generation governs; at the same generation the settled one does, since a create only settles.
+func (j *journal) loadCreateOrigin(sessionRef string) (createOrigin, error) {
+	pending, pendingErr := j.readCreateOrigin(j.createOriginPath(sessionRef))
+	settled, settledErr := j.readCreateOrigin(j.settledCreateOriginPath(sessionRef))
+	switch {
+	case pendingErr != nil && !errors.Is(pendingErr, os.ErrNotExist):
+		return createOrigin{}, pendingErr
+	case settledErr != nil && !errors.Is(settledErr, os.ErrNotExist):
+		return createOrigin{}, settledErr
+	case pendingErr != nil:
+		return settled, settledErr
+	case settledErr != nil:
+		return pending, nil
+	}
+	return governingCreateOrigin(pending, settled), nil
+}
+
+func governingCreateOrigin(pending, settled createOrigin) createOrigin {
+	if pending.PlacementGeneration > settled.PlacementGeneration {
+		return pending
+	}
+	return settled
+}
+
+// writeCreateOriginLocked publishes an origin in the folder its state belongs to. Settling writes
+// the settled file first and only then removes the pending one, so a crash in between leaves both
+// (loadCreateOrigin reads the settled one) and never neither.
+func (j *journal) writeCreateOriginLocked(origin createOrigin) error {
+	if origin.State == "pending" {
+		return j.writeActivityRecord(j.createOriginPath(origin.SessionRef), origin)
+	}
+	if err := j.writeActivityRecord(j.settledCreateOriginPath(origin.SessionRef), origin); err != nil {
+		return err
+	}
+	if err := os.Remove(j.createOriginPath(origin.SessionRef)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove settled worker create origin: %w", err)
+	}
+	return nil
+}
+
+// moveSettledCreateOrigins moves the settled origins a build before the settled/ folder left in
+// create-origins/, once, when the journal opens. Each move is a rename within one folder tree, so a
+// crash leaves a record in exactly one place and the next start finishes the rest. A file its
+// settled twin already governs (a pending file left by a crash while settling, an exact copy, an
+// older generation) is removed; a damaged file stays where the scan reports it.
+func (j *journal) moveSettledCreateOrigins() error {
+	return j.withActivityLock(func() error {
+		entries, err := os.ReadDir(j.origins)
+		if err != nil {
+			return fmt.Errorf("list worker create origins: %w", err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			path, settledPath := filepath.Join(j.origins, entry.Name()), filepath.Join(j.settled, entry.Name())
+			origin, err := j.readCreateOrigin(path)
+			if err != nil {
+				continue
+			}
+			settled, err := j.readCreateOrigin(settledPath)
+			switch {
+			case err != nil && !errors.Is(err, os.ErrNotExist):
+				continue
+			case err == nil && origin.PlacementGeneration <= settled.PlacementGeneration:
+				if origin.State != "pending" && origin.PlacementGeneration == settled.PlacementGeneration && origin != settled {
+					continue // two different settled records of one generation: keep both, settled/ governs
+				}
+				err = os.Remove(path)
+			case origin.State == "pending":
+				continue
+			default:
+				err = os.Rename(path, settledPath)
+			}
+			if err != nil {
+				return fmt.Errorf("move settled worker create origin %s: %w", entry.Name(), err)
+			}
+		}
+		return nil
+	})
 }
 
 func (j *journal) readCreateOrigin(path string) (createOrigin, error) {
@@ -165,7 +262,8 @@ func (j *journal) readCreateOrigin(path string) (createOrigin, error) {
 		(origin.OperationID == "" && origin.CoopSessionID == "") ||
 		(origin.OperationID != "" && !reference(origin.OperationID, 256)) ||
 		(origin.CoopSessionID != "" && !reference(origin.CoopSessionID, 1024)) ||
-		(origin.State == "bound" && origin.CoopSessionID == "") || path != j.createOriginPath(origin.SessionRef) {
+		(origin.State == "bound" && origin.CoopSessionID == "") ||
+		(path != j.createOriginPath(origin.SessionRef) && (path != j.settledCreateOriginPath(origin.SessionRef) || origin.State == "pending")) {
 		return createOrigin{}, errors.New("worker create origin is malformed")
 	}
 	return origin, nil
@@ -176,7 +274,7 @@ func (j *journal) bindCreateOrigin(origin createOrigin, sessionID string) error 
 }
 
 func (j *journal) bindCreateOriginLocked(origin createOrigin, sessionID string) error {
-	current, err := j.readCreateOrigin(j.createOriginPath(origin.SessionRef))
+	current, err := j.loadCreateOrigin(origin.SessionRef)
 	if err != nil {
 		return err
 	}
@@ -195,7 +293,7 @@ func (j *journal) bindCreateOriginLocked(origin createOrigin, sessionID string) 
 	// A pending origin suppresses the stream until both are published. On retry,
 	// bindEventStream adopts the exact existing stream without resetting its published cursors.
 	current.State, current.CoopSessionID = "bound", sessionID
-	return j.writeActivityRecord(j.createOriginPath(origin.SessionRef), current)
+	return j.writeCreateOriginLocked(current)
 }
 
 func (e *Executor) resolveCreateOrigin(ctx context.Context, origin createOrigin) error {
@@ -220,12 +318,12 @@ func (e *Executor) resolveCreateOrigin(ctx context.Context, origin createOrigin)
 		return e.journal.bindCreateOrigin(origin, operation.ResourceID)
 	case "failed":
 		return e.journal.withActivityLock(func() error {
-			current, err := e.journal.readCreateOrigin(e.journal.createOriginPath(origin.SessionRef))
+			current, err := e.journal.loadCreateOrigin(origin.SessionRef)
 			if err != nil || !sameCreateOrigin(current, origin) || current.State != "pending" {
 				return errors.New("worker create origin changed before failure")
 			}
 			current.State = "failed"
-			return e.journal.writeActivityRecord(e.journal.createOriginPath(origin.SessionRef), current)
+			return e.journal.writeCreateOriginLocked(current)
 		})
 	case "uncertain":
 		return errCreateOperationUncertain
@@ -244,37 +342,39 @@ type activityTarget struct {
 	stream     *eventStream
 }
 
+// activityTargets lists the pending origins and the event streams, never the settled folder: a
+// stream's settled origin is looked up by its name, so a settled session whose stream is gone
+// costs a poll nothing.
 func (e *Executor) activityTargets() ([]activityTarget, error) {
 	streams, err := e.journal.eventStreams()
 	if err != nil {
 		return nil, err
 	}
 	targets := make(map[string]activityTarget, len(streams))
+	streamNames := make(map[string]string, len(streams))
 	for _, stream := range streams {
 		targets[stream.SessionRef] = activityTarget{sessionRef: stream.SessionRef, stream: &stream}
+		streamNames[filepath.Base(e.journal.createOriginPath(stream.SessionRef))] = stream.SessionRef
 	}
 	files, err := os.ReadDir(e.journal.origins)
 	if err != nil {
 		return nil, err
 	}
 	var issues error
-	listed := make(map[string]bool, len(files))
-	for _, file := range files {
-		if filepath.Ext(file.Name()) != ".json" {
-			continue
+	read := make(map[string]bool, len(files)+len(streams))
+	apply := func(name string, origin createOrigin, err error) {
+		read[name] = true
+		if errors.Is(err, os.ErrNotExist) {
+			return // a stream from before origins is its own generation floor
 		}
-		listed[file.Name()] = true
-		origin, err := e.readListedCreateOrigin(file)
 		if err != nil {
-			issues = errors.Join(issues, fmt.Errorf("worker create origin %s: %w", file.Name(), err))
+			issues = errors.Join(issues, fmt.Errorf("worker create origin %s: %w", name, err))
 			// The filename, not untrusted decoded identity, determines which legacy
 			// stream must be suppressed. Healthy siblings can still narrate their work.
-			for ref := range targets {
-				if filepath.Base(e.journal.createOriginPath(ref)) == file.Name() {
-					delete(targets, ref)
-				}
+			if ref, ok := streamNames[name]; ok {
+				delete(targets, ref)
 			}
-			continue
+			return
 		}
 		target := targets[origin.SessionRef]
 		target.sessionRef = origin.SessionRef
@@ -291,8 +391,30 @@ func (e *Executor) activityTargets() ([]activityTarget, error) {
 		}
 		targets[origin.SessionRef] = target
 	}
+	for _, file := range files {
+		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+			continue
+		}
+		origin, err := e.journal.readCreateOrigin(filepath.Join(e.journal.origins, file.Name()))
+		if err == nil {
+			// A pending file a crash left beside its settled twin yields to it.
+			settled, settledErr := e.readSettledCreateOrigin(file.Name())
+			if settledErr == nil {
+				origin = governingCreateOrigin(origin, settled)
+			} else if !errors.Is(settledErr, os.ErrNotExist) {
+				err = settledErr
+			}
+		}
+		apply(file.Name(), origin, err)
+	}
+	for name := range streamNames {
+		if !read[name] {
+			origin, err := e.readSettledCreateOrigin(name)
+			apply(name, origin, err)
+		}
+	}
 	for name := range e.settledOrigins {
-		if !listed[name] {
+		if !read[name] {
 			delete(e.settledOrigins, name)
 		}
 	}
@@ -315,40 +437,42 @@ func (e *Executor) activityTargets() ([]activityTarget, error) {
 	return result, issues
 }
 
-// settledCreateOrigin is a bound or failed origin as this process last read it, with the file it
-// read it from. A rewrite creates its new file before the old one is removed, so it never takes
-// the old inode; only a third write within the same timestamp tick could.
+// settledCreateOrigin is a settled origin as this process last read it, with the file it read it
+// from. A rewrite creates its new file before the old one is removed, so it never takes the old
+// inode; only a third write within the same timestamp tick could.
 type settledCreateOrigin struct {
 	file   fs.FileInfo
 	origin createOrigin
 }
 
-// readListedCreateOrigin reads one origin the scan listed. A settled origin this process already
-// read comes from memory while its file is the same one: every origin write replaces the file
-// whole (WriteFileAtomic), so the same inode, size and modification time is the same record.
-// Opening and decoding every origin the worker ever created, every second, grew with its history.
-func (e *Executor) readListedCreateOrigin(file fs.DirEntry) (createOrigin, error) {
-	info, err := file.Info()
+// readSettledCreateOrigin reads the settled origin of a live stream or a pending file. One this
+// process already read comes from memory while its file is the same one: every origin write
+// replaces the file whole (WriteFileAtomic), so the same inode, size and modification time is the
+// same record, and a poll costs a stat, not an open.
+func (e *Executor) readSettledCreateOrigin(name string) (createOrigin, error) {
+	path := filepath.Join(e.journal.settled, name)
+	info, err := os.Lstat(path)
 	if err != nil {
+		delete(e.settledOrigins, name)
 		return createOrigin{}, err
 	}
-	if cached, ok := e.settledOrigins[file.Name()]; ok && os.SameFile(cached.file, info) &&
+	if cached, ok := e.settledOrigins[name]; ok && os.SameFile(cached.file, info) &&
 		cached.file.Size() == info.Size() && cached.file.ModTime().Equal(info.ModTime()) {
 		return cached.origin, nil
 	}
-	delete(e.settledOrigins, file.Name())
-	origin, err := e.journal.readCreateOrigin(filepath.Join(e.journal.origins, file.Name()))
-	if err == nil && origin.State != "pending" {
+	delete(e.settledOrigins, name)
+	origin, err := e.journal.readCreateOrigin(path)
+	if err == nil {
 		if e.settledOrigins == nil {
 			e.settledOrigins = make(map[string]settledCreateOrigin)
 		}
-		e.settledOrigins[file.Name()] = settledCreateOrigin{file: info, origin: origin}
+		e.settledOrigins[name] = settledCreateOrigin{file: info, origin: origin}
 	}
 	return origin, err
 }
 
 func (j *journal) eventStreamAuthorized(stream eventStream) bool {
-	origin, err := j.readCreateOrigin(j.createOriginPath(stream.SessionRef))
+	origin, err := j.loadCreateOrigin(stream.SessionRef)
 	return errors.Is(err, os.ErrNotExist) || (err == nil && (origin.PlacementGeneration < stream.PlacementGeneration ||
 		(origin.State == "bound" && origin.PlacementGeneration == stream.PlacementGeneration && origin.CoopSessionID == stream.CoopSessionID)))
 }

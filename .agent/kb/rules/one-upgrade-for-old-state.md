@@ -4,7 +4,7 @@ description: an old on-disk format is read for one upgrade step, then refused wi
 scope: architecture
 sources: [internal/session/records.go, internal/session/schema.go, internal/session/check.go, internal/session/operation_result.go, internal/workerconnector/journal.go, internal/workerconnector/event_streams.go, internal/workerconnector/create_origins.go, internal/forkspace/generation.go, internal/forkspace/reservation.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/owner.go, internal/networkstate/authority.go, internal/networkstate/approval_withdrawal.go, internal/networkstate/old_records.go, internal/networkstate/qualification.go, internal/box/sweep.go, internal/box/native_account.go, internal/box/native_home.go, internal/processidentity/identity.go, internal/cli/session_cmd.go, internal/oneupgrade_test.go, docs/session-api.md, CHANGELOG.md, MIGRATING.md, internal/tasks/pending_review.go, internal/forkspace/state.go, internal/forkspace/immutable_primary.go, internal/sessionsvc/primary_snapshot_check.go]
 check: "go test ./internal -run TestOneUpgradeWaypoints"
-updated: 2026-11-18
+updated: 2026-11-19
 ---
 
 # Read old on-disk state for one upgrade step, then refuse it by name
@@ -72,7 +72,7 @@ names it.
 | Turn retry receipts | rows in `<state>/session.sqlite` | 1 | unversioned | read in place | `coop sessions compact` (v10.1.2 and later) |
 | Worker command receipts | `<state>/connector/commands/` | 1 | 1 | none exist | none |
 | Worker event streams | `<state>/connector/event-streams/` | 1 | 1 | no older version, but a version 1 stream with no create origin can remain from before origins; kept as a dormant generation floor, and `coop sessions check` cannot tell it apart | none |
-| Worker create origins | `<state>/connector/create-origins/` | 1 | 1 | no older version, but a version 1 origin with an empty `operation_id` can remain from a receipt that proved only the session; read in place | none |
+| Worker create origins | `<state>/connector/create-origins/`, settled ones in its `settled/` | 1 | 1 | no older version, but a version 1 origin with an empty `operation_id` can remain from a receipt that proved only the session; read in place. A settled origin left in the flat folder is moved into `settled/` when the journal opens; builds before that layout never read `settled/` | the first build with `settled/` (moves on open) |
 | Fork generation | `~/.local/state/coop/forks/<key>/<name>.generation.json` | 3 | 3 | 1 and 2 are refused by name: the fork is neither unbound nor free, and `coop fork stop` reports the refusal | v12.1.0 (start the stopped fork once) |
 | Fork reservation | `~/.local/state/coop/forks/<key>/reservations/` | 2 | 2 | 1 is refused by name on every reservation read, so the fork name stays blocked | none: recover it offline |
 | Fork review candidate | `~/.local/state/coop/forks/<key>/<name>.<generation>.candidate.json` | 2 | 2 | a bare version 1 file is refused by name, and so is a land whose candidate pointer is gone | v12.1.0 (review or merge the fork once) |
@@ -116,6 +116,7 @@ a Docker daemon, not a store; v1 retired on 2026-11-04 once Ryker's workers (ima
 `legacyLabelsAreLocal` stays, since network recovery judges a run record naming no host with it.
 
 ## Changelog
+- 2026-11-19 — Worker create origins row: settled origins now live in `create-origins/settled/`; the journal moves flat ones on open, and an older build cannot see them (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll).
 - 2026-11-18 — session schema 27 (indexes on operations(method, state) and events(type), duplicate events_replay dropped) converts 26; the row's Current is 27 and Oldest stays 26 (task 2026-11-17-the-janitor-reclaim-and-storage-report-stop-rere).
 - 2026-11-18 — the session schema ladder became one `currentSchema` that builds new stores; the refusal of an older store also names v12.1.0 and starting fresh with a new `--state` folder (task 2026-10-15-collapse-the-session-database-migrations-into-on).
 - 2026-11-17 — rooted the renewal-journal and pre-v11 login and history rows at `~/.config/coop/agents/<provider>/`, where those folders live (audit D1-15).

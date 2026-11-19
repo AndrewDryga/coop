@@ -134,7 +134,7 @@ func (e *Executor) checkPlacement(command workerproto.Command, request workerpro
 	if !needsPlacementFence(request) {
 		return nil
 	}
-	origin, err := e.journal.readCreateOrigin(e.journal.createOriginPath(command.SessionRef))
+	origin, err := e.journal.loadCreateOrigin(command.SessionRef)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

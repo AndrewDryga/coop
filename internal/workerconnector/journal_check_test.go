@@ -33,12 +33,20 @@ func TestCheckJournalSortsRecordsByWhatThisBuildDoesWithThem(t *testing.T) {
 	if err := journal.writeActivityRecord(journal.createOriginPath(origin.SessionRef), origin); err != nil {
 		t.Fatal(err)
 	}
+	// A settled origin lives in settled/ and is counted with the rest.
+	settled := origin
+	settled.SessionRef, settled.State = "settled-session", "failed"
+	if err := journal.writeActivityRecord(journal.settledCreateOriginPath(settled.SessionRef), settled); err != nil {
+		t.Fatal(err)
+	}
 	for path, body := range map[string]string{
 		filepath.Join(journal.dir, "newer.json"):     `{"version":2,"command_id":"from-a-newer-build"}`,
 		filepath.Join(journal.dir, "never.json"):     `{"version":0}`, // never a format: damaged, not old
 		filepath.Join(journal.dir, "receipt.body"):   `not a record`,
 		filepath.Join(journal.streams, "torn.json"):  `{"version":1,"session_ref":`,
 		filepath.Join(journal.origins, "bare.json"):  `{}`,
+		filepath.Join(journal.settled, "newer.json"): `{"version":2}`,
+		filepath.Join(journal.settled, "torn.json"):  `{"version":1,`,
 		filepath.Join(journal.streams, ".scan-temp"): `{"version":9}`,
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -55,8 +63,8 @@ func TestCheckJournalSortsRecordsByWhatThisBuildDoesWithThem(t *testing.T) {
 			Damaged: []string{"never.json: worker command receipt is malformed"}},
 		{Noun: "worker event stream", Version: eventStreamVersion, Current: 1,
 			Damaged: []string{"torn.json: decode worker event stream: unexpected end of JSON input"}},
-		{Noun: "worker create origin", Version: createOriginVersion, Current: 1,
-			Damaged: []string{"bare.json: worker create origin is malformed"}},
+		{Noun: "worker create origin", Version: createOriginVersion, Current: 2, Newer: 1,
+			Damaged: []string{"bare.json: worker create origin is malformed", "settled/torn.json: worker create origin is malformed"}},
 	}
 	if !slices.EqualFunc(checks, want, func(a, b RecordCheck) bool {
 		return a.Noun == b.Noun && a.Version == b.Version && a.Current == b.Current &&

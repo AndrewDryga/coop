@@ -86,7 +86,7 @@ func TestAcknowledgedConflictRetiresOnlyAnExactFailedCreate(t *testing.T) {
 	for _, state := range []string{"failed", "running", "uncertain", "succeeded", "wrong-id", "wrong-method", "resource", "unavailable"} {
 		t.Run(state, func(t *testing.T) {
 			executor, api, conflict, original := conflictingReceipt(t)
-			originPath := executor.journal.createOriginPath(conflict.SessionRef)
+			originPath := executor.journal.settledCreateOriginPath(conflict.SessionRef)
 			origin, err := os.ReadFile(originPath)
 			if err != nil {
 				t.Fatal(err)
@@ -137,7 +137,7 @@ func conflictingReceipt(t *testing.T) (*Executor, *originAPI, workerproto.Comman
 	if err := executor.journal.acknowledgeResults([]string{first.CommandID}); err != nil {
 		t.Fatal(err)
 	}
-	origin, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(first.SessionRef))
+	origin, err := executor.journal.loadCreateOrigin(first.SessionRef)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,12 +188,12 @@ func TestAcknowledgedConflictRejectsOriginChangedDuringLookup(t *testing.T) {
 		if !strings.Contains(request.Path, "key=key-conflict") {
 			t.Fatalf("wrong create key: %s", request.Path)
 		}
-		origin, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(conflict.SessionRef))
+		origin, err := executor.journal.loadCreateOrigin(conflict.SessionRef)
 		if err != nil {
 			t.Fatal(err)
 		}
 		origin.State, origin.CoopSessionID = "bound", "unexpected-session"
-		if err := executor.journal.writeActivityRecord(executor.journal.createOriginPath(conflict.SessionRef), origin); err != nil {
+		if err := executor.journal.writeCreateOriginLocked(origin); err != nil {
 			t.Fatal(err)
 		}
 		return json.RawMessage(fmt.Sprintf(`{"id":%q,"method":"CreateRemoteSession","state":"failed"}`, api.operation.ID)), nil
@@ -286,7 +286,7 @@ func TestAcknowledgedRetirementPreservesOriginAndActivityCustody(t *testing.T) {
 	for _, state := range []string{"pending", "bound", "failed"} {
 		t.Run(state, func(t *testing.T) {
 			executor, api, command, receipt := conflictingReceipt(t)
-			origin, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(command.SessionRef))
+			origin, err := executor.journal.loadCreateOrigin(command.SessionRef)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -294,9 +294,7 @@ func TestAcknowledgedRetirementPreservesOriginAndActivityCustody(t *testing.T) {
 			if state == "bound" {
 				origin.CoopSessionID = "existing-session"
 			}
-			if err := executor.journal.writeActivityRecord(executor.journal.createOriginPath(command.SessionRef), origin); err != nil {
-				t.Fatal(err)
-			}
+			originPath := replaceCreateOrigin(t, executor.journal, origin)
 			stream := eventStream{Version: eventStreamVersion, SessionRef: command.SessionRef,
 				PlacementGeneration: command.PlacementGeneration, CoopSessionID: "existing-session", LastPublishedSequence: 3, AcknowledgedSequence: 2, TerminalSequence: 3}
 			if err := executor.journal.writeEventStream(executor.journal.eventStreamPath(command.SessionRef), stream); err != nil {
@@ -305,7 +303,7 @@ func TestAcknowledgedRetirementPreservesOriginAndActivityCustody(t *testing.T) {
 			if err := executor.journal.advanceEventScan(command.SessionRef); err != nil {
 				t.Fatal(err)
 			}
-			paths := []string{executor.journal.createOriginPath(command.SessionRef), executor.journal.eventStreamPath(command.SessionRef), executor.journal.eventScanPath()}
+			paths := []string{originPath, executor.journal.eventStreamPath(command.SessionRef), executor.journal.eventScanPath()}
 			before := make(map[string][]byte)
 			for _, path := range paths {
 				data, err := os.ReadFile(path)
@@ -351,7 +349,7 @@ func TestAcknowledgedConflictRetiresAfterRealHigherGenerationWithoutLookup(t *te
 	if err := executor.journal.acknowledgeResults([]string{next.CommandID}); err != nil {
 		t.Fatal(err)
 	}
-	origin, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(next.SessionRef))
+	origin, err := executor.journal.loadCreateOrigin(next.SessionRef)
 	if err != nil {
 		t.Fatal(err)
 	}

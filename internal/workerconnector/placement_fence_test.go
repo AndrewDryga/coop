@@ -22,7 +22,7 @@ func TestSupersededPlacementCommandsAreRefusedNotExecuted(t *testing.T) {
 	if _, err := executor.Execute(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	origin, _ := executor.journal.readCreateOrigin(executor.journal.createOriginPath(first.SessionRef))
+	origin, _ := executor.journal.loadCreateOrigin(first.SessionRef)
 	api.operation.State, api.operation.ResourceType, api.operation.ResourceID = "succeeded", "session", "coop-session-1"
 	if err := executor.resolveCreateOrigin(context.Background(), origin); err != nil {
 		t.Fatal(err)
@@ -32,6 +32,15 @@ func TestSupersededPlacementCommandsAreRefusedNotExecuted(t *testing.T) {
 	api.operation = createOperation{ID: "create-2", Method: "CreateRemoteSession", State: "running"}
 	if _, err := executor.Execute(context.Background(), second); err != nil {
 		t.Fatal(err)
+	}
+	// The newer generation settles: its origin leaves the folder polls list and must still fence.
+	newer, _ := executor.journal.loadCreateOrigin(second.SessionRef)
+	api.operation.State, api.operation.ResourceType, api.operation.ResourceID = "succeeded", "session", "coop-session-1"
+	if err := executor.resolveCreateOrigin(context.Background(), newer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(executor.journal.createOriginPath(second.SessionRef)); !os.IsNotExist(err) {
+		t.Fatalf("the settled origin stayed in create-origins/: %v", err)
 	}
 	before := len(api.requests)
 
@@ -77,11 +86,17 @@ func TestGenericPlacementFenceUsesRouteNotQuerySuffix(t *testing.T) {
 }
 
 func TestGenericPlacementFenceFailsClosedOnCorruptAuthority(t *testing.T) {
-	executor, api, command := newOriginFixture(t)
-	if err := os.WriteFile(executor.journal.createOriginPath(command.SessionRef), []byte("corrupt"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := executor.Execute(context.Background(), command); err == nil || len(api.requests) != 0 {
-		t.Fatalf("corrupt placement allowed mutation: %v calls=%d", err, len(api.requests))
+	for _, settled := range []bool{false, true} {
+		executor, api, command := newOriginFixture(t)
+		path := executor.journal.createOriginPath(command.SessionRef)
+		if settled {
+			path = executor.journal.settledCreateOriginPath(command.SessionRef)
+		}
+		if err := os.WriteFile(path, []byte("corrupt"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := executor.Execute(context.Background(), command); err == nil || len(api.requests) != 0 {
+			t.Fatalf("corrupt placement (settled %t) allowed mutation: %v calls=%d", settled, err, len(api.requests))
+		}
 	}
 }

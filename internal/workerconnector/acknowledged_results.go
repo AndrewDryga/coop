@@ -110,7 +110,7 @@ func (e *Executor) retireConflictingCreate(ctx context.Context, entry journalEnt
 	var before createOrigin
 	err = e.journal.withActivityLock(func() error {
 		var readErr error
-		before, readErr = e.journal.readCreateOrigin(e.journal.createOriginPath(origin.SessionRef))
+		before, readErr = e.journal.loadCreateOrigin(origin.SessionRef)
 		if readErr != nil {
 			return readErr
 		}
@@ -140,7 +140,7 @@ func (e *Executor) retireConflictingCreate(ctx context.Context, entry journalEnt
 		return fmt.Errorf("worker create %s has no terminal resource proof", entry.CommandID)
 	}
 	return e.journal.withActivityLock(func() error {
-		current, err := e.journal.readCreateOrigin(e.journal.createOriginPath(origin.SessionRef))
+		current, err := e.journal.loadCreateOrigin(origin.SessionRef)
 		if err != nil {
 			return err
 		}

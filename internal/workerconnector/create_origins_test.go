@@ -50,6 +50,25 @@ func newOriginFixture(t *testing.T) (*Executor, *originAPI, workerproto.Command)
 	return executor, api, createCommand(now.Add(time.Hour))
 }
 
+// replaceCreateOrigin makes origin the only record of its session, in the folder its state
+// belongs to, and returns that file.
+func replaceCreateOrigin(t *testing.T, j *journal, origin createOrigin) string {
+	t.Helper()
+	pending, settled := j.createOriginPath(origin.SessionRef), j.settledCreateOriginPath(origin.SessionRef)
+	for _, path := range []string{pending, settled} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+	}
+	if err := j.writeCreateOriginLocked(origin); err != nil {
+		t.Fatal(err)
+	}
+	if origin.State == "pending" {
+		return pending
+	}
+	return settled
+}
+
 func originReceipt(t *testing.T, executor *Executor, command workerproto.Command, resource string) journalEntry {
 	t.Helper()
 	entry, err := executor.journal.begin(command)
@@ -137,7 +156,7 @@ func TestMissingCreateOriginWaitsWithoutRewritingCustodyOrStarvingActivity(t *te
 	if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
 		t.Fatal(err)
 	}
-	origin, err := executor.journal.readCreateOrigin(path)
+	origin, err := executor.journal.loadCreateOrigin(command.SessionRef)
 	if err != nil || origin.PlacementGeneration != 2 || origin.CoopSessionID != "coop-session-1" {
 		t.Fatalf("new generation did not bind: %+v, %v", origin, err)
 	}
@@ -263,7 +282,7 @@ func TestCreateOriginsFenceGenerationsAndNeverResurrectDiscardedStreams(t *testi
 	if _, err := executor.Execute(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	old, _ := executor.journal.readCreateOrigin(executor.journal.createOriginPath(first.SessionRef))
+	old, _ := executor.journal.loadCreateOrigin(first.SessionRef)
 	api.operation.State, api.operation.ResourceType, api.operation.ResourceID = "succeeded", "session", "coop-session-1"
 	if err := executor.resolveCreateOrigin(context.Background(), old); err != nil {
 		t.Fatal(err)
@@ -287,7 +306,7 @@ func TestCreateOriginsFenceGenerationsAndNeverResurrectDiscardedStreams(t *testi
 	if _, err := executor.Execute(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	current, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(first.SessionRef))
+	current, err := executor.journal.loadCreateOrigin(first.SessionRef)
 	if err != nil || current.PlacementGeneration != 2 || current.State != "failed" {
 		t.Fatalf("lower replay lost failed watermark: %+v, %v", current, err)
 	}
@@ -378,7 +397,7 @@ func TestLegacyCreateReceiptMigratesBeforeAcknowledgementWithoutResettingCursors
 	if err := executor.journal.acknowledgeResults([]string{command.CommandID}); err != nil {
 		t.Fatal(err)
 	}
-	origin, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(command.SessionRef))
+	origin, err := executor.journal.loadCreateOrigin(command.SessionRef)
 	if err != nil || origin.State != "bound" || origin.CoopSessionID != stream.CoopSessionID {
 		t.Fatalf("legacy origin was not preserved: %+v, %v", origin, err)
 	}
@@ -509,63 +528,281 @@ func TestUncertainCreateLookupsBackOffQuietly(t *testing.T) {
 	if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
 		t.Fatal(err)
 	}
-	if origin, err := executor.journal.readCreateOrigin(executor.journal.createOriginPath(command.SessionRef)); err != nil || origin.State != "bound" {
+	if origin, err := executor.journal.loadCreateOrigin(command.SessionRef); err != nil || origin.State != "bound" {
 		t.Fatalf("settled create did not bind: %+v, %v", origin, err)
+	}
+	// Binding moved it out of the folder every poll lists.
+	if _, err := os.Stat(executor.journal.createOriginPath(command.SessionRef)); !os.IsNotExist(err) {
+		t.Fatalf("a bound create stayed in create-origins/: %v", err)
 	}
 }
 
-// Every poll opened and decoded every create origin the worker ever made. A settled one this
-// process has read is now taken from memory while its file is unchanged.
-func TestPollDoesNotReopenSettledCreateOrigins(t *testing.T) {
+// Every poll opened and decoded every create origin the worker ever made, one file per session it
+// ever created. A settled origin now lives in a folder no poll lists, so after a restart a poll
+// opens none of them; the settled origin of a live stream is read once, then only checked by stat.
+func TestPollOpensNoSettledCreateOrigin(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a file whatever its mode")
 	}
-	executor, _, command := newOriginFixture(t)
-	var paths []string
-	for index := range 200 {
+	executor, api, command := newOriginFixture(t)
+	settledOrigin := func(index int, state string) createOrigin {
 		origin := createOrigin{
 			Version: createOriginVersion, WorkerID: "worker-a", SessionRef: fmt.Sprintf("settled-%03d", index),
 			PlacementGeneration: 1, CommandID: fmt.Sprintf("command-%03d", index), CommandDigest: strings.Repeat("a", 64),
-			OperationKey: fmt.Sprintf("key-%03d", index), OperationID: fmt.Sprintf("create-%03d", index), State: "failed",
+			OperationKey: fmt.Sprintf("key-%03d", index), OperationID: fmt.Sprintf("create-%03d", index), State: state,
 		}
-		path := executor.journal.createOriginPath(origin.SessionRef)
-		if err := executor.journal.writeActivityRecord(path, origin); err != nil {
+		if state == "bound" {
+			origin.CoopSessionID = "coop-session-1"
+		}
+		return origin
+	}
+	// The layout before settled/: every origin in create-origins/. Three sessions are still live.
+	var live []string
+	for index := range 203 {
+		origin := settledOrigin(index, "failed")
+		if index >= 200 {
+			origin = settledOrigin(index, "bound")
+			live = append(live, origin.SessionRef)
+			stream := eventStream{Version: eventStreamVersion, SessionRef: origin.SessionRef, PlacementGeneration: 1,
+				CoopSessionID: "coop-session-1", AcknowledgedSequence: 1, LastPublishedSequence: 1}
+			if err := executor.journal.writeEventStream(executor.journal.eventStreamPath(origin.SessionRef), stream); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := executor.journal.writeActivityRecord(executor.journal.createOriginPath(origin.SessionRef), origin); err != nil {
 			t.Fatal(err)
 		}
-		paths = append(paths, path)
 	}
-	if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
-		t.Fatal(err)
-	}
-	// An unreadable file fails any open, so a poll that opened one would report it.
-	for _, path := range paths {
-		if err := os.Chmod(path, 0); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Cleanup(func() {
-		for _, path := range paths {
-			_ = os.Chmod(path, 0o600)
-		}
-	})
-	for range 3 {
-		if _, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil {
-			t.Fatalf("a poll reopened settled origins: %v", err)
-		}
-	}
-	// A pending origin, and a settled file replaced by a newer pending one, are read.
 	if _, err := executor.Execute(context.Background(), command); err != nil {
 		t.Fatal(err)
 	}
+	restarted, err := NewExecutor(ExecutorConfig{API: api, JournalDir: filepath.Dir(executor.journal.origins), Now: executor.now, WorkerID: "worker-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An unreadable file fails any open, so a poll that opened one would report it.
+	unreadable := func(refs ...string) {
+		for _, ref := range refs {
+			for _, path := range []string{restarted.journal.createOriginPath(ref), restarted.journal.settledCreateOriginPath(ref)} {
+				if err := os.Chmod(path, 0); err == nil {
+					t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+				}
+			}
+		}
+	}
+	for index := range 200 {
+		unreadable(settledOrigin(index, "failed").SessionRef)
+	}
+	if _, err := restarted.collectActivity(context.Background(), maximumPollBytes); err != nil {
+		t.Fatalf("a poll opened settled origins: %v", err)
+	}
+	unreadable(live...)
+	for range 3 {
+		targets, err := restarted.activityTargets()
+		if err != nil || len(targets) != 4 {
+			t.Fatalf("targets = %+v, %v; want the pending create and the three live streams", targets, err)
+		}
+	}
+	listed, err := os.ReadDir(restarted.journal.origins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range listed {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			names = append(names, entry.Name())
+		}
+	}
+	if pending := filepath.Base(restarted.journal.createOriginPath(command.SessionRef)); len(names) != 1 || names[0] != pending {
+		t.Fatalf("create-origins/ lists %v, want only the pending create %s", names, pending)
+	}
+	// A settled session's newer pending create is scanned, and its settled file stays the watermark.
 	replaced := createOrigin{
 		Version: createOriginVersion, WorkerID: "worker-a", SessionRef: "settled-000", PlacementGeneration: 2,
 		CommandID: "command-new", CommandDigest: strings.Repeat("b", 64), OperationKey: "key-new", OperationID: "create-new", State: "pending",
 	}
-	if err := executor.journal.writeActivityRecord(paths[0], replaced); err != nil {
+	if err := restarted.journal.writeCreateOriginLocked(replaced); err != nil {
 		t.Fatal(err)
 	}
-	targets, err := executor.activityTargets()
-	if err != nil || len(targets) != 2 || targets[0].origin == nil || targets[1].origin == nil {
-		t.Fatalf("targets = %+v, %v; want the two pending creates", targets, err)
+	if err := os.Chmod(restarted.journal.settledCreateOriginPath("settled-000"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := restarted.activityTargets()
+	if err != nil || len(targets) != 5 {
+		t.Fatalf("targets = %+v, %v; want the newer pending create too", targets, err)
+	}
+	if current, err := restarted.journal.loadCreateOrigin("settled-000"); err != nil || current != replaced {
+		t.Fatalf("governing origin = %+v, %v; want the newer pending create", current, err)
+	}
+}
+
+// The move from the flat layout runs at every start and must survive a crash at any point: a
+// record is renamed, never copied, so it is in one folder or the other, and a pending file a crash
+// left beside its settled twin goes. A second start changes nothing.
+func TestOpeningAJournalMovesSettledOriginsOnceAndSafely(t *testing.T) {
+	dir := t.TempDir()
+	journal, err := openJournal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := func(ref string, generation int, state string) createOrigin {
+		value := createOrigin{
+			Version: createOriginVersion, WorkerID: "worker-a", SessionRef: ref, PlacementGeneration: generation,
+			CommandID: fmt.Sprintf("%s-%d", ref, generation), CommandDigest: strings.Repeat("a", 64),
+			OperationKey: fmt.Sprintf("key-%s-%d", ref, generation), OperationID: fmt.Sprintf("op-%s-%d", ref, generation), State: state,
+		}
+		if state == "bound" {
+			value.CoopSessionID = "session-" + ref
+		}
+		return value
+	}
+	at := func(value createOrigin) *createOrigin { return &value }
+	type layout struct{ pending, settled *createOrigin }
+	cases := map[string]struct {
+		before, after layout
+		governs       createOrigin
+	}{
+		"flat-settled": {layout{pending: at(origin("flat-settled", 1, "failed"))},
+			layout{settled: at(origin("flat-settled", 1, "failed"))}, origin("flat-settled", 1, "failed")},
+		"flat-pending": {layout{pending: at(origin("flat-pending", 1, "pending"))},
+			layout{pending: at(origin("flat-pending", 1, "pending"))}, origin("flat-pending", 1, "pending")},
+		"crash-while-settling": {layout{pending: at(origin("crash-while-settling", 2, "pending")), settled: at(origin("crash-while-settling", 2, "bound"))},
+			layout{settled: at(origin("crash-while-settling", 2, "bound"))}, origin("crash-while-settling", 2, "bound")},
+		"in-both": {layout{pending: at(origin("in-both", 1, "bound")), settled: at(origin("in-both", 1, "bound"))},
+			layout{settled: at(origin("in-both", 1, "bound"))}, origin("in-both", 1, "bound")},
+		"newer-pending": {layout{pending: at(origin("newer-pending", 3, "pending")), settled: at(origin("newer-pending", 2, "failed"))},
+			layout{pending: at(origin("newer-pending", 3, "pending")), settled: at(origin("newer-pending", 2, "failed"))}, origin("newer-pending", 3, "pending")},
+		"newer-flat-settled": {layout{pending: at(origin("newer-flat-settled", 3, "bound")), settled: at(origin("newer-flat-settled", 2, "failed"))},
+			layout{settled: at(origin("newer-flat-settled", 3, "bound"))}, origin("newer-flat-settled", 3, "bound")},
+		"older-flat-settled": {layout{pending: at(origin("older-flat-settled", 1, "failed")), settled: at(origin("older-flat-settled", 2, "bound"))},
+			layout{settled: at(origin("older-flat-settled", 2, "bound"))}, origin("older-flat-settled", 2, "bound")},
+		"same-generation-conflict": {layout{pending: at(origin("same-generation-conflict", 2, "failed")), settled: at(origin("same-generation-conflict", 2, "bound"))},
+			layout{pending: at(origin("same-generation-conflict", 2, "failed")), settled: at(origin("same-generation-conflict", 2, "bound"))}, origin("same-generation-conflict", 2, "bound")},
+	}
+	for _, c := range cases {
+		ref := c.governs.SessionRef
+		for _, place := range []struct {
+			path  string
+			value *createOrigin
+		}{{journal.createOriginPath(ref), c.before.pending}, {journal.settledCreateOriginPath(ref), c.before.settled}} {
+			if place.value == nil {
+				continue
+			}
+			if err := journal.writeActivityRecord(place.path, *place.value); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	damaged := filepath.Join(journal.origins, strings.Repeat("d", 64)+".json")
+	if err := os.WriteFile(damaged, []byte("torn"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for start := range 2 {
+		reopened, err := openJournal(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, c := range cases {
+			ref := c.governs.SessionRef
+			for _, place := range []struct {
+				path string
+				want *createOrigin
+			}{{reopened.createOriginPath(ref), c.after.pending}, {reopened.settledCreateOriginPath(ref), c.after.settled}} {
+				got, err := reopened.readCreateOrigin(place.path)
+				switch {
+				case place.want == nil && !os.IsNotExist(err):
+					t.Errorf("start %d, %s: %s = %+v, %v; want no file", start, name, place.path, got, err)
+				case place.want != nil && (err != nil || got != *place.want):
+					t.Errorf("start %d, %s: %s = %+v, %v; want %+v", start, name, place.path, got, err, *place.want)
+				}
+			}
+			if got, err := reopened.loadCreateOrigin(ref); err != nil || got != c.governs {
+				t.Errorf("start %d, %s: governing origin = %+v, %v; want %+v", start, name, got, err, c.governs)
+			}
+		}
+		if _, err := os.Stat(damaged); err != nil {
+			t.Fatalf("start %d moved or removed a damaged origin: %v", start, err)
+		}
+	}
+}
+
+// A settled origin that no poll lists still decides what its session's stream may do: a stream
+// below a settled generation, or bound to another session, is neither narrated nor published.
+func TestSettledOriginsStillGuardTheirStreams(t *testing.T) {
+	executor, api, _ := newOriginFixture(t)
+	settled := func(ref string, generation int, state, sessionID string) {
+		t.Helper()
+		replaceCreateOrigin(t, executor.journal, createOrigin{
+			Version: createOriginVersion, WorkerID: "worker-a", SessionRef: ref, PlacementGeneration: generation,
+			CommandID: "create-" + ref, CommandDigest: strings.Repeat("a", 64), OperationKey: "key-" + ref,
+			OperationID: "op-" + ref, State: state, CoopSessionID: sessionID,
+		})
+	}
+	streams := map[string]eventStream{}
+	for _, ref := range []string{"live", "replaced", "rebound"} {
+		stream := eventStream{Version: eventStreamVersion, SessionRef: ref, PlacementGeneration: 1, CoopSessionID: "coop-session-1"}
+		if err := executor.journal.writeEventStream(executor.journal.eventStreamPath(ref), stream); err != nil {
+			t.Fatal(err)
+		}
+		streams[ref] = stream
+	}
+	settled("live", 1, "bound", "coop-session-1")
+	settled("replaced", 2, "failed", "")
+	settled("rebound", 1, "bound", "coop-session-2")
+	batches, err := executor.collectActivity(context.Background(), maximumPollBytes)
+	if err != nil || len(batches) != 1 || batches[0].SessionRef != "live" || len(api.afters) != 1 {
+		t.Fatalf("batches = %+v, %v after %d event reads; want only the live session narrated", batches, err, len(api.afters))
+	}
+	for _, ref := range []string{"replaced", "rebound"} {
+		if err := executor.journal.publishEventStream(streams[ref], 1, 0); err == nil {
+			t.Fatalf("%s: a stream its settled origin forbids was published", ref)
+		}
+		if err := executor.journal.acknowledgeEvents([]workerproto.EventAcknowledgement{{SessionRef: ref, PlacementGeneration: 1}}); err == nil {
+			t.Fatalf("%s: a stream its settled origin forbids was acknowledged", ref)
+		}
+	}
+}
+
+// A crash between writing a settled origin and removing its pending file leaves both. The settled
+// one governs: the pending one is not looked up again, and a late bind or failure cannot rewrite it.
+func TestPendingFileLeftBesideItsSettledOriginYieldsToIt(t *testing.T) {
+	executor, api, command := newOriginFixture(t)
+	if _, err := executor.Execute(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := executor.journal.loadCreateOrigin(command.SessionRef)
+	if err != nil || pending.State != "pending" {
+		t.Fatalf("origin = %+v, %v; want pending", pending, err)
+	}
+	api.operation.State, api.operation.ResourceType, api.operation.ResourceID = "succeeded", "session", "coop-session-1"
+	if err := executor.resolveCreateOrigin(context.Background(), pending); err != nil {
+		t.Fatal(err)
+	}
+	// Put the pending file back, as a crash before its removal would have left it.
+	if err := executor.journal.writeActivityRecord(executor.journal.createOriginPath(command.SessionRef), pending); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := os.ReadFile(executor.journal.settledCreateOriginPath(command.SessionRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.requests = nil
+	if batches, err := executor.collectActivity(context.Background(), maximumPollBytes); err != nil || len(batches) != 1 {
+		t.Fatalf("batches = %+v, %v; want the bound session narrated", batches, err)
+	}
+	for _, request := range api.requests {
+		if strings.HasPrefix(request.Path, "/v1/operations?") {
+			t.Fatalf("a settled create was looked up again: %s", request.Path)
+		}
+	}
+	if err := executor.journal.bindCreateOrigin(pending, "coop-session-9"); err != nil {
+		t.Fatalf("a late bind of a settled create = %v; want a quiet no-op", err)
+	}
+	api.operation = createOperation{ID: pending.OperationID, Method: "CreateRemoteSession", State: "failed"}
+	if err := executor.resolveCreateOrigin(context.Background(), pending); err == nil {
+		t.Fatal("a late failure of a bound create was accepted")
+	}
+	if after, err := os.ReadFile(executor.journal.settledCreateOriginPath(command.SessionRef)); err != nil || string(after) != string(bound) {
+		t.Fatalf("the settled origin was rewritten: %s, %v", after, err)
 	}
 }

@@ -20,7 +20,7 @@ func TestDiscardedCreateRetiresOnlyWithExactTerminalProof(t *testing.T) {
 	for _, scenario := range []string{"discarded", "active", "closed", "missing", "wrong-session", "wrong-job", "wrong-digest", "wrong-external", "missing-queue", "missing-bytes", "queued", "queued-bytes", "bad-request-digest", "bad-request-task", "active-turn", "wrong-operation", "original-running", "origin-race", "receipt-race"} {
 		t.Run(scenario, func(t *testing.T) {
 			executor, _, conflict, _ := conflictingReceipt(t)
-			originPath := executor.journal.createOriginPath(conflict.SessionRef)
+			originPath := executor.journal.settledCreateOriginPath(conflict.SessionRef)
 			original, err := os.ReadFile(originPath)
 			if err != nil {
 				t.Fatal(err)
