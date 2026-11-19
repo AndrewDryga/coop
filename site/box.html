@@ -328,8 +328,9 @@ them. Hiding a file from the box does not prevent committing or pushing it.</li>
 a clean result. If it can&#39;t open a folder, the default scan still passes but names the folder
 in a warning, since files Git does not track there were not checked; <code>--include-ignored</code> fails.</li>
 <li>It also lists changed files that can affect what runs on your machine, such as commit hooks,
-editor or agent settings, Compose files and the Makefile. Review them before running anything.
-This separate report never changes the exit code.</li>
+editor or agent settings, Compose files and the Makefile. With <code>--include-ignored</code> it also lists
+such files that Git ignores, like <code>.claude/settings.local.json</code>. Review them before running
+anything. This separate report never changes the exit code.</li>
 </ul>
 <p>To make this check ignore a finding you&#39;ve reviewed, add the printed entry to <code>.coopsecretsignore</code>
 at the project root and explain why. The entry identifies that exact finding without storing the
@@ -546,15 +547,19 @@ sharing service data or ports. They still share the source files, so edits are v
 stacks&#39; mounts.</p>
 <h3 id="starting-and-stopping">Starting and stopping</h3>
 <p>When services are ready, <code>coop up</code> prints a message such as <code>✓ Services ready: db, redis</code>, using the
-actual service names in Compose order, followed by any URLs it published. If it can&#39;t read the
-service list from Compose, it starts nothing.</p>
+actual service names in Compose order, followed by each URL it published and the service and
+container port it reaches, such as <code>http://localhost:43517 → web port 8080</code>. If it can&#39;t read the
+service list from Compose, it starts nothing. If a service exits or fails its healthcheck, <code>coop up</code>
+names it as your Compose file does and shows the last lines it printed.</p>
 <p><code>coop down --delete-volumes</code> lists each of this project&#39;s volumes and its contents, then asks before
 permanently deleting anything. The default answer is No, and <code>-y</code>/<code>--yes</code> confirms without a prompt.
 Having no terminal never counts as consent. An <code>external: true</code> volume or a project file mounted
 from the host is never deleted.</p>
 <p>The next <code>coop up</code> or box launch applies changes to the Compose file, including stopping services
 you removed, and <code>coop down</code> also stops those services. Each workspace gets a Compose project name
-derived from its path, so repositories with the same folder name stay separate.</p>
+derived from its path, so repositories with the same folder name stay separate. If the Compose file
+was deleted or no longer passes co:op&#39;s checks, <code>coop down</code> says so and removes the project&#39;s
+containers by that name instead. It runs nothing from the file.</p>
 <p>Agents can change data in services they can reach, so use disposable development databases.</p>
 <p>Each project&#39;s <code>~/.cache</code> is a volume of its own that keeps downloads between runs, so one
 project&#39;s box cannot change the modules another project&#39;s box uses. Forks share their project&#39;s
@@ -648,9 +653,12 @@ the app running inside the box. Give the service an <code>expose:</code> port in
 <p>co:op assigns a stable host port for each development workspace or loop run, so concurrent stacks
 have separate ports. The host port listens only on loopback. Inside the box,
 <code>https://localhost:&lt;port&gt;</code> reaches the same Keycloak service, so both sides use the same issuer URL
-without <code>host.docker.internal</code> or broader network access.</p>
+without <code>host.docker.internal</code> or broader network access. The box&#39;s command starts only after
+these <code>localhost</code> ports accept connections; if one is still closed after about five seconds, the
+box says which service on stderr and starts anyway.</p>
 <p>The box receives <code>COOP_SERVICE_KEYCLOAK_URL=https://localhost:&lt;port&gt;</code>, using the scheme from the
-label. Host tools can read all workspace service URLs from <code>coop fork ls --json</code>.</p>
+label. Host tools can read every workspace&#39;s service URLs from the <code>services</code> field of
+<code>coop fork ls --json</code>, keyed by <code>&lt;service&gt;:&lt;port&gt;</code>.</p>
 <p>The scheme is the label&#39;s. A service with no label gets <code>postgres://</code> for a <code>postgres</code> image,
 <code>redis://</code> for a <code>redis</code> image and <code>http://</code> for any other. co:op never wraps a service&#39;s traffic in
 TLS, so <code>https</code> means the service serves TLS itself, and only its label can say so.</p>

@@ -609,7 +609,9 @@ successfully but leaves final review pending. See <a href="loop.html#exit-codes"
 views are:</p>
 <ul>
 <li><code>coop tasks watch --json</code> is the standard snapshot of the project&#39;s tasks and activity.</li>
-<li><code>coop fork ls --json</code> lists workspace URLs and fork status.</li>
+<li><code>coop fork ls --json</code> lists each workspace (<code>name</code>, <code>path</code>), its published URLs (<code>serve</code>, keyed
+by box port, and <code>services</code>, keyed by <code>&lt;service&gt;:&lt;port&gt;</code>, each present only when the workspace
+publishes one), and each fork&#39;s <code>status</code>.</li>
 </ul>
 <p><code>coop context</code>, the <code>coop net</code> views, <code>coop sessions doctor</code> and <code>coop sessions quiescence</code> also accept
 <code>--json</code>.

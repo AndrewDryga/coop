@@ -168,11 +168,11 @@ task without a new commit.</p>
 </tr>
 <tr>
 <td><code>1</code></td>
-<td>A failure, an unverified final pass, or work still left to do.</td>
+<td>A failure, an unverified final pass, or work still left to do. A preset or <code>.agent/loop.yaml</code> that does not load is a run that could not start, so it exits <code>1</code>.</td>
 </tr>
 <tr>
 <td><code>2</code></td>
-<td>A usage error.</td>
+<td>A usage error, such as an unknown option or target, or a preset name nothing defines.</td>
 </tr>
 <tr>
 <td><code>3</code></td>

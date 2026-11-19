@@ -321,7 +321,9 @@ directory.</p>
 <li>discard the exact set of changes prepared for review</li>
 <li>discard pending task proposals from the fork</li>
 </ul>
-<p>Blocked tasks and proposals already imported into the project&#39;s queue stay there. Check
+<p>Blocked tasks and proposals already imported into the project&#39;s queue stay there. A returned or
+blocked task loses the ticks on its subtasks, since the work they stand for goes with the fork, and
+its log names the subtasks that were unticked. Check
 <code>coop fork ls</code> and <code>coop fork review</code> before discarding a fork. <a href="#land-it">Land it</a> explains the
 different effect of <code>--force</code> on <code>coop fork merge</code>.</p>
 </section><section class="doc-section reference-section" id="review"><h2>Review</h2>
@@ -466,6 +468,10 @@ candidate again, rebases it and runs the configured checks, then updates the par
 only the tasks recorded in that candidate. A journal lets co:op resume these steps after an
 interruption. A <code>Coop-Task</code> trailer helps with consistency checks and search, but it cannot complete
 a task on its own.</p>
+<p>If the candidate&#39;s commits conflict with your branch, nothing merges and the fork keeps them as
+reviewed, with no merge left to resume. A copy you rebase by hand would need a new review, so
+change your branch until the commits apply and merge again, or discard the fork&#39;s work with
+<code>coop fork rm &lt;name&gt; --force</code>, which returns its tasks to the queue.</p>
 <p>If a fork can&#39;t reach a candidate, for example because its box keeps failing a check your project
 passes, you can bring its commit to your branch yourself, such as with <code>git cherry-pick</code>. Then run
 <code>coop tasks done &lt;id&gt; --from-fork</code> in your terminal. It needs exactly one commit on your branch with

@@ -766,7 +766,7 @@ Usage: coop tasks park <id> ["<reason>"] [--tasks <path>]...
 
   Moves the task to the backlog with its folder and log, so nothing picks it
   up or returns it to todo on its own. Your reason is saved in the task's log.
-  For a blocked task this answers its decision with "not now"; the decision
+  A blocked task's decision is left unanswered and moves with it, so it
   stays open. Release a task in progress before you park it.
   coop backlog promote brings it back, blocked while its decision is open.
 
@@ -1085,8 +1085,10 @@ NETWORK ACCESS
 EXIT STATUS
   0    review and enabled final checks passed, or the task limit was reached
   1    the run failed or could not start, final checks failed, or work remains,
-       including work another agent holds
-  2    rejected input, such as an unknown option, target or preset
+       including work another agent holds; a preset or .agent/loop.yaml that
+       does not load is a run that could not start
+  2    rejected input, such as an unknown option or target, or a preset name
+       nothing defines
   3    stopped for a decision
   130  interrupted before the final verdict
 
@@ -1538,7 +1540,8 @@ coop down: stop this project's services
 Usage: coop down [--delete-volumes] [--yes]
 
   Stops and removes this project's Compose containers and networks.
-  Uses .agent/compose.yml, or the configured Compose path.
+  Uses .agent/compose.yml, or the configured Compose path. When that file
+  is missing or fails validation, stops the containers by their project label.
 
 OPTIONS
   --delete-volumes  also permanently delete service volumes and their data
@@ -1713,8 +1716,9 @@ OPTIONS
 
   Without --run, finds the newest matching block in this project's runs.
   Shows a rule you can copy when the record proves the remote address and port.
-  A blocked DNS lookup records no port, so it shows TLS on port 443 as the
-  likely fix.
+  A host:port, such as example.com:8443, shows only blocks on that port.
+  A blocked DNS lookup records no port, so it shows TLS on the port you
+  named, or on 443, as the likely fix.
   An exact event ID can replace the host when --run is supplied.
 
 EXAMPLES
@@ -2143,8 +2147,9 @@ Usage:
 
   Before restarting a worker, drain new submissions at the controller, then
   run this to see whether queued or running work remains. It reads the
-  running service's data, including its write-ahead log, and never migrates
-  it. Zero counts still need a graceful service shutdown to finish cleanup.
+  running service's data, including its write-ahead log, or a stopped
+  service's data as it is, and never migrates it. Zero counts still need a
+  graceful service shutdown to finish cleanup.
 
 OPTIONS
   --state <path>  read this session-data directory

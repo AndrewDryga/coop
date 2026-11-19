@@ -4,6 +4,42 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fixes from a manual test round of every major feature (2026-11-19).** Three testers ran the
+  real CLI against real Docker and real agents; these are the defects they found.
+  - **Services.** A box's command now starts only after its `localhost` service ports accept
+    connections, so an app that connects to its database at startup is no longer refused at
+    random (it failed about one start in three). `coop down` stops a project's services even
+    when `.agent/compose.yml` was deleted or no longer passes co:op's checks, without running
+    anything from that file. When a service fails to start, `coop up` names it as your Compose
+    file does and shows the last lines it printed. `coop up` says which service and container
+    port each printed URL reaches.
+  - **Forks.** When a reviewed fork's commits conflict with your branch, `coop fork merge` leaves
+    the fork as it was instead of stuck in "merging", and says how to go on. Answering no at the
+    merge prompt exits 1. When `coop fork rm --force` discards a fork's work, the tasks it returns
+    to the queue have their subtasks unticked, with a log note, so they no longer look finished.
+  - **Session service.** Cancelling a running turn ends it `cancelled` and answers success; it
+    used to answer `operation_uncertain` with "ACP child did not stop". A turn running when the
+    service is stopped cleanly is recorded `interrupted` on the next start, as after a crash,
+    instead of failed with `acp_cancelled`. Restoring a checkpoint into a session with another
+    task answers `400` with the reason instead of `500`. `coop sessions quiescence` reads a
+    cleanly stopped store. A missing turn artifact says "output artifact not found". Reading the
+    changes of a discarded session says it was discarded. A discard refused for uncommitted or
+    unmerged work says which accept flag the plan lacks. `coop sessions check` no longer shows
+    SQLite's error number next to a damaged file, and `coop sessions doctor` names the command
+    that starts the service.
+  - **Network and secrets.** `coop check-secrets --include-ignored` also lists Git-ignored files
+    that run commands on your machine, such as `.claude/settings.local.json`. `coop net blocked
+    <host>` suggests a rule when a host was blocked on port 80 and another port, and
+    `<host>:<port>` shows only that port. An IPv6 address with a port prints as `[address]:port`.
+    The loop prints one lookup hint for each blocked-traffic block, not two. Closing an editor
+    session no longer logs "network gateway did not become ready" for warm boxes it stopped.
+  - **Command line.** A mistyped option is called an unknown option, not an unknown command or
+    an invalid fork name. `coop claude`, `codex`, `gemini` and `grok` refuse `-p` with no prompt
+    before a box starts. When Docker can't be reached and `DOCKER_CONTEXT` or `DOCKER_HOST` is
+    set, co:op names that variable as the likely cause. `coop init` sets up every agent that has
+    a signed-in account, not only those whose default account is signed in, and says when it
+    kept your own `AGENTS.md`.
+
 - **Session store schema 27: a worker cannot be rolled back after it upgrades.** The store gains
   indexes for the lookups the worker's janitor runs every minute, so their cost no longer grows
   with every session the worker has ever run. The first start converts the store in place (a

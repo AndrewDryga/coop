@@ -277,8 +277,9 @@ procedure. Don&#39;t delete the identity or journal as a routine reconnect fix.<
 <p>Before you restart or replace a worker, stop new submissions at the controller, then run
 <code>coop sessions quiescence</code> to see whether queued or running work remains:</p>
 <ul>
-<li>It reads every committed turn and operation, including the running service&#39;s write-ahead log,
-so it needs that service&#39;s existing database, WAL and index files.</li>
+<li>It reads every committed turn and operation, including the running service&#39;s write-ahead log
+and its index. A cleanly stopped service leaves neither, and the command reads its database as
+it is, so it also tells you whether a stopped worker still has queued turns.</li>
 <li>It never migrates session data. When you inspect the data from a new container image, mount the
 data read-only. That also stops SQLite from creating sidecar files if the service stops during the
 inspection.</li>
@@ -545,8 +546,11 @@ session discard removes the workspace&#39;s volumes and network.</p>
 <p>The daemon repeats cleanup at startup after a crash or upgrade, and a background check retries
 idle-runtime cleanup every minute without interfering with an active turn. A turn that completed
 successfully stays successful if cleanup fails, and the background cleaner retries and logs the
-error. If the turn itself failed, its error includes the cleanup failure too.</p>
-<p>On restart:</p>
+error. A turn that failed only at cleanup fails with <code>session_cleanup_error</code>. If the turn had
+already failed, its <code>error_code</code> and <code>error_detail</code> describe that first failure, and the cleanup
+failure appears only in the daemon log next to it.</p>
+<p>A clean stop (SIGTERM) ends a running turn&#39;s process and box the same way, but leaves the turn
+itself for the next start to settle, as after a crash. On restart:</p>
 <ul>
 <li>Queued turns that were never sent to the provider remain in the queue.</li>
 <li>A turn waiting for your validation keeps its unpublished candidate, and you can still accept or
@@ -955,7 +959,8 @@ intact and no checkpoint bundle is published; correct the content before request
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
 large untracked files, a missing or changed bound task, or a restore that must finish first.
 Restore answers <code>400 invalid_request</code> for a malformed descriptor or a bundle it must not apply
-(submodule changes, an unused LFS object, a file that would replace fork authority). It also
+(submodule changes, an unused LFS object, a file that would replace fork authority, a task offer
+other than the session&#39;s task). It also
 answers <code>400 invalid_request</code> when <code>Content-Length</code> is missing or differs from the descriptor&#39;s
 size, and <code>415</code> when the content type differs from the descriptor&#39;s. A worker fault stays
 <code>500 internal_error</code>.</p>
@@ -966,7 +971,8 @@ read its own store, so retry that one.</p>
 <p>To capture a checkpoint, the session must be idle, writable and bound to a task. You can capture an
 open, exhausted or closed session, but not a discarded one. Capture keeps a closed session closed
 and can&#39;t restart model execution. To restore a checkpoint, create an unused replacement session
-with the same authorized base and task offer. Both requests require an idempotency key. Restore uses
+with the same authorized base, and with the checkpoint&#39;s task offer (its bound task&#39;s <code>offer_ref</code>)
+as the create request&#39;s <code>task</code>. Both requests require an idempotency key. Restore uses
 the content type <code>application/vnd.coop.workspace-checkpoint.v2+tar</code>, and its Content-Length must
 match the descriptor.</p>
 <p>A v2 checkpoint streams Git objects with their types and verified LFS files. It includes new
@@ -1062,7 +1068,9 @@ you accept it. A turn the agent ends with an error fails with <code>acp_agent_er
 means the turn was really cancelled.</p>
 <p>A completed turn includes <code>usage</code> when the adapter reports it. The fields are <code>input_tokens</code>,
 <code>cached_input_tokens</code>, <code>output_tokens</code>, <code>reasoning_tokens</code> and, when available, the provider&#39;s
-<code>cost_usd</code>. Check <code>cost_recorded</code> to distinguish a reported zero cost from a missing cost.</p>
+<code>cost_usd</code>. Check <code>cost_recorded</code> to distinguish a reported zero cost from a missing cost: it is
+<code>true</code> only when the provider reported a cost, and it is left out otherwise. A <code>usage</code> object
+without <code>cost_recorded</code>, as Codex turns report it, means no cost was recorded, not a free turn.</p>
 <p>ACP reports the cumulative cost of the provider session, and co:op calculates this turn&#39;s share
 before returning it, including after daemon restarts or adapter-process resets. Fresh and cached
 input tokens are reported separately because providers charge different rates for them, and
@@ -1073,7 +1081,9 @@ free work.</p>
 turn&#39;s <code>.coop-output/&lt;turn_id&gt;</code> directory. Each record has an opaque ID, a safe filename, the
 media type, a SHA-256 digest and the exact byte count, but not the image itself. Download it
 through the raw endpoint, which returns the saved file with matching <code>Content-Type</code>,
-<code>Content-Length</code> and <code>ETag</code> headers. The saved file can&#39;t change.</p>
+<code>Content-Length</code> and <code>ETag</code> headers. The saved file can&#39;t change. An artifact ID the turn doesn&#39;t
+have answers <code>404 turn_not_found</code> with the detail <code>output artifact not found</code>; a missing turn
+keeps the detail <code>turn not found</code>.</p>
 <p>co:op captures image blocks and embedded image resources from ACP tool updates in output order,
 naming them <code>generated-1.&lt;ext&gt;</code>, <code>generated-2.&lt;ext&gt;</code> and so on. Image bytes don&#39;t count toward
 the text transcript limit.</p>
@@ -1089,8 +1099,11 @@ more than 8 MiB in total.</p>
 become repository changes. The container sees the path <code>.coop-output/...</code>, but its files are
 stored in co:op&#39;s private session state on the host, never in the session&#39;s checkout. Text
 attachments are kept there under <code>.coop-output/.inputs/</code> so later turns can reread them.</p>
-<p>Cancellation first asks ACP to cancel the turn. co:op then stops the turn&#39;s process group and
-removes its box. This doesn&#39;t undo actions already taken in external systems.</p>
+<p>Cancellation first asks ACP to cancel the turn. co:op then closes the turn&#39;s ACP process and gives
+it up to five seconds to stop and remove its box, kills whatever is still running, and removes the
+box. The cancel answers with the <code>cancelled</code> turn once that cleanup is proven; a process that could
+not be stopped leaves the cancel <code>operation_uncertain</code>. This doesn&#39;t undo actions already taken in
+external systems.</p>
 <h3 id="events">Events</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Events code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   &#39;http://localhost/v1/sessions/remote_.../events?after=41&amp;limit=100&#39;
@@ -1265,6 +1278,11 @@ decide who may authorize an extension and how much to spend. co:op enforces the 
 prevents the same request from being applied twice.</p>
 <p>Submitting a turn to a session that has used its whole budget returns <code>409 budget_exhausted</code>.
 Extend the budget, then submit again with a new key.</p>
+<p>The budget counts turns that ran, not turns waiting in the queue. A submit is accepted while
+<code>turns_used</code> is below <code>max_turns</code>, even if the turns already queued would use up the rest. When the
+last budgeted turn finishes, the session becomes exhausted and each turn still in the queue ends in
+state <code>budget_exhausted</code> with error code <code>budget_exhausted</code>, without running. To keep them, extend
+the budget before the last budgeted turn finishes.</p>
 <h3 id="changes">Changes</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Changes code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   http://localhost/v1/sessions/remote_.../changes
@@ -1290,7 +1308,8 @@ complete patch.</p>
 <p>The JSON response encodes <code>patch</code>, <code>path_bytes</code> and <code>old_path_bytes</code> as base64. <code>patch_bytes</code> is an
 integer giving the complete patch&#39;s size. A valid UTF-8 filename also appears in <code>path</code>. Filenames
 containing arbitrary bytes are preserved in <code>path_bytes</code>. If Git fails, the endpoint returns an
-error, never an empty change list.</p>
+error, never an empty change list. A discarded session has no workspace left, so reading its
+changes returns <code>409 invalid_session_state</code> with a detail that says the session was discarded.</p>
 <h3 id="network">Network</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Network code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network
 curl --unix-socket &#34;$SOCKET&#34; http://localhost/v1/sessions/remote_.../network/connections
@@ -1645,7 +1664,8 @@ and the workspace&#39;s inode, branch, head, status digest and running, dirty an
 The inode helps detect a replaced directory, but doesn&#39;t prove ownership on its own.</p>
 <p>By default, co:op refuses to discard uncommitted or unmerged work. If your controller has separate
 permission to destroy that work, set <code>accept_dirty</code>, <code>accept_unmerged</code> or both when creating
-the plan.</p>
+the plan. The plan itself still succeeds without them and reports <code>dirty</code> and <code>unmerged</code>; it is the
+discard that refuses.</p>
 <p>Execute that exact plan:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Close and discard code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \
   -H &#39;Content-Type: application/json&#39; \
@@ -1660,6 +1680,15 @@ private ACP state, and saves a record that the session was discarded.</p>
 <p>A <code>plan_operation_id</code> that names some other kind of operation returns <code>400 invalid_request</code>. A plan
 that didn&#39;t finish, or that belongs to another session, returns <code>409 discard_plan_stale</code>: make a new
 plan. Neither attempted anything, so neither is <code>operation_uncertain</code>.</p>
+<p>Every discard refusal that deletes nothing returns <code>409 discard_plan_stale</code>, and you recover from
+each one by making a new plan. The detail tells the cases apart:</p>
+<ul>
+<li>If the workspace still matches the plan but the plan lacks the acknowledgement its work needs,
+the detail names the missing flag, for example <code>discard plan lacks accept_unmerged: ...</code>. Make a
+new plan with that flag only if your controller may destroy that work.</li>
+<li>If the workspace or session changed since the plan, the detail is
+<code>discard plan no longer matches workspace state</code>. Inspect the session again before you plan.</li>
+</ul>
 <p>At startup, the daemon blocks sessions whose workspace ownership it can&#39;t verify. This includes
 old session records without a store-owner binding, v1 reservations, and sessions whose fork record
 or workspace is missing. It also blocks a stored session this build no longer reads: one with no
@@ -1723,6 +1752,10 @@ to connect the client error, saved operation and supervisor log without opening 
 <tr>
 <td><code>404</code></td>
 <td>Session, turn or operation not found</td>
+</tr>
+<tr>
+<td><code>405</code></td>
+<td><code>method_<wbr/>not_<wbr/>allowed</code>: the path exists but not for this method, such as a <code>GET</code> on a path that only takes <code>POST</code></td>
 </tr>
 <tr>
 <td><code>409</code></td>

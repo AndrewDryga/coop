@@ -669,7 +669,9 @@ changed.</p>
 </section><section class="doc-section reference-section" id="instructions"><h2>Instructions</h2>
 <p><code>coop init</code> sets up shared instructions for all agents. It links <code>CLAUDE.md</code> and <code>GEMINI.md</code> to
 one <code>AGENTS.md</code> and gives every agent the same project skills source. An existing instruction file
-stays unchanged if it&#39;s a regular file, not a symlink.</p>
+stays unchanged if it&#39;s a regular file, not a symlink. When you first run <code>coop init</code> in a repo that
+already has its own <code>AGENTS.md</code>, it says it kept the file, because that file doesn&#39;t have co:op&#39;s
+agent contract.</p>
 <h3 id="instructions-that-follow-you">Instructions that follow you</h3>
 <p>Put guidance for all your repositories in <code>~/.config/coop/agents/INSTRUCTIONS.md</code>. Keep
 project-specific rules in that repo&#39;s <code>AGENTS.md</code>. Inside the box, co:op makes the shared file
@@ -705,7 +707,7 @@ instead of the shared file. Edit that file for a local change, or the shared <co
 repositories with no local override.</p>
 <h3 id="skills-and-the-agent-folder">Skills and the .agent/ folder</h3>
 <p><code>coop init</code> creates the agent directories (<code>.claude/</code>, <code>.codex/</code>, <code>.gemini/</code>, <code>.grok/</code>) only for
-agents you&#39;re signed in to. You can choose them explicitly with <code>--agents claude,codex</code>, or use
+agents you&#39;re signed in to on any account. You can choose them explicitly with <code>--agents claude,codex</code>, or use
 <code>all</code>.</p>
 <p>You can delete an agent&#39;s directory from a repo that doesn&#39;t use it. If you later run that
 agent in a box, co:op copies the workflow skills from <code>.agent/skills</code> into <code>~/.&lt;agent&gt;/skills</code>
