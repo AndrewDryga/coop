@@ -1102,6 +1102,18 @@ func requireSessionWorkspace(bound session.Session) error {
 	return &session.Error{Code: session.CodeInvalidSessionState, Detail: "session has no workspace"}
 }
 
+// refuseDiscardedSessionChanges names the discard when a client reads a discarded session's
+// changes. Its workspace and generation record are gone, so the authority check would refuse
+// anyway, but with an internal reason ("generation changed") that hides what happened.
+func refuseDiscardedSessionChanges(sess session.Session) error {
+	if sess.State != session.SessionDiscarded {
+		return nil
+	}
+	return &session.Error{
+		Code: session.CodeInvalidSessionState, Detail: "session was discarded; its workspace and changes no longer exist",
+	}
+}
+
 // requireSessionForkAuthority is the runtime/destructive-operation fence for a persisted session.
 // Fully unbound store-only sessions remain supported, but a bound legacy session cannot touch a
 // workspace until an exact host reservation proves which generation it owns.
@@ -2670,6 +2682,9 @@ func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceCh
 	if err := requireSessionWorkspace(sess); err != nil {
 		return WorkspaceChanges{}, err
 	}
+	if err := refuseDiscardedSessionChanges(sess); err != nil {
+		return WorkspaceChanges{}, err
+	}
 	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
 		return WorkspaceChanges{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
@@ -2702,6 +2717,9 @@ func (s *Service) GetChangesPage(
 		return WorkspaceChanges{}, err
 	}
 	if err := requireSessionWorkspace(sess); err != nil {
+		return WorkspaceChanges{}, err
+	}
+	if err := refuseDiscardedSessionChanges(sess); err != nil {
 		return WorkspaceChanges{}, err
 	}
 	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {

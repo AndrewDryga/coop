@@ -1187,7 +1187,8 @@ complete patch.
 The JSON response encodes `patch`, `path_bytes` and `old_path_bytes` as base64. `patch_bytes` is an
 integer giving the complete patch's size. A valid UTF-8 filename also appears in `path`. Filenames
 containing arbitrary bytes are preserved in `path_bytes`. If Git fails, the endpoint returns an
-error, never an empty change list.
+error, never an empty change list. A discarded session has no workspace left, so reading its
+changes returns `409 invalid_session_state` with a detail that says the session was discarded.
 
 ### Network
 

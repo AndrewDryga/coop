@@ -1180,6 +1180,19 @@ func TestSessionHTTPRouteWiring(t *testing.T) {
 	if discardResponse.Code != http.StatusOK {
 		t.Fatalf("discard status = %d body=%s", discardResponse.Code, discardResponse.Body.String())
 	}
+	// A discarded session's workspace is gone: reading its changes names the discard, not the
+	// internal generation check that would otherwise refuse first.
+	for _, path := range []string{"/changes", "/changes?patch_offset=0&patch_limit=32"} {
+		discarded := get("/v1/sessions/" + sessionID + path)
+		var body sessionHTTPErrorResponse
+		if err := json.Unmarshal(discarded.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if discarded.Code != http.StatusConflict || body.Error.Code != string(session.CodeInvalidSessionState) ||
+			body.Error.Detail != "session was discarded; its workspace and changes no longer exist" {
+			t.Fatalf("changes%s after discard = %d %+v", path, discarded.Code, body.Error)
+		}
+	}
 }
 
 func TestSessionHTTPGeneratedArtifactIsSeparateFromTurnJSON(t *testing.T) {
