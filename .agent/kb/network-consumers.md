@@ -90,9 +90,11 @@ reuse that exact snapshot. Repository settings cannot change its reach. Then:
   inventory it could not read WHOLE fails the turn too (`sessionTurnRunner.sessionNetworkOutcome`):
   the record it skipped is exactly where a mismatching run would hide.
 - A filtered child owns a gateway, its volumes and its receipt, so it gets a 30 s stop window
-  instead of the ordinary 250 ms (`sessionACPFilteredStopGrace` in sessionsvc/acp.go). Killing it
-  fast leaves two running containers and an open receipt until recovery settles them — the next
-  filtered launch does, child or not, through `runBox` (`cli/boxsweep.go`).
+  instead of the ordinary 5 s (`sessionACPFilteredStopGrace` / `sessionACPStopGrace` in
+  sessionsvc/acp.go). Killing it fast leaves two running containers and an open receipt until
+  recovery settles them — the next filtered launch does, child or not, through `runBox`
+  (`cli/boxsweep.go`). Even an open child needs its window: it is the `coop fork acp` proxy, whose
+  box child runs in a process group of its own and holds the child's stderr.
 
 The API adds four reads under `GET /v1/sessions/{id}/network`: the live summary, `/connections`
 (the newest run's bounded rows), `/explanations/{event}` (one retained refusal) and `/receipt`
@@ -205,6 +207,9 @@ daemon's StartedAt evidence; the open path's plain client exit): the recorded ho
 number — never Ctrl-C inferred from 130.
 
 ## Changelog
+- 2026-11-19 — a session's open child gets a 5 s stop window too (`sessionACPStopGrace`); the old 250 ms
+  killed the proxy before it stopped its own box child, so every cancel ended "ACP child did not stop"
+  (task 2026-11-19-cancel-a-running-session-turn-with-a-settled-rec).
 - 2026-11-19 — `blocked <host>` still drafts the TLS rule for a non-80 port when port 80 was refused
   too, titles a multi-port refusal by name alone, and `<host>:<port>` narrows to that port
   (task 2026-11-19-suggest-a-rule-in-coop-net-blocked-when-one-host).

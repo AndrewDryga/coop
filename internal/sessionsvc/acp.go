@@ -43,6 +43,11 @@ const (
 	sessionACPArtifactLimit   = 1 << 20
 	sessionACPTermGrace       = 250 * time.Millisecond
 	sessionACPKillGrace       = 750 * time.Millisecond
+	// Every child is the `coop fork acp` proxy, which starts its box child in a process group of
+	// its own (holding this child's stderr) and, on EOF, stops that group and removes the box.
+	// Killing the proxy's group cannot reach the nested one, and cmd.Wait then waits on the stderr
+	// it still holds, so the proxy gets this long to stop itself — about a `docker rm` plus slack.
+	sessionACPStopGrace = 5 * time.Second
 	// A filtered child owns a gateway, its volumes and its own receipt; the exact owner is the
 	// only process allowed to seal and remove them. Killing it in a quarter second would leave
 	// two running containers and a receipt nothing can ever finalize, so it gets a bounded
@@ -2206,6 +2211,7 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		process.mcpHandoff = mcpHandoff
 		process.cwd = workdir
 		process.outputRoot = outputRoot
+		process.stopGrace = sessionACPStopGrace
 		if bound.NetworkMode == string(egress.Filtered) {
 			process.stopGrace = sessionACPFilteredStopGrace
 		}
@@ -2376,10 +2382,9 @@ type sessionACPProcess struct {
 	embeddedContextCapable bool
 	stderr                 *sessionACPStderr
 	exited                 atomic.Bool
-	// stopGrace is how long this child may take to stop itself. Zero is the
-	// ordinary child, unless a queued cancellation needs a short EOF drain.
-	// A filtered child owns a gateway only it can seal and
-	// remove, so it gets a bounded chance to do that before it is killed.
+	// stopGrace is how long this child may take to stop itself after its
+	// input closes, before it is signalled. A launched child gets at least
+	// sessionACPStopGrace, a filtered one sessionACPFilteredStopGrace.
 	stopGrace time.Duration
 }
 

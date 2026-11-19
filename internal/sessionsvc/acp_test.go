@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -3745,6 +3746,17 @@ func TestSessionACPChildHelper(t *testing.T) {
 		_, _ = os.Stderr.WriteString("image \"coop-box\" not built - run 'coop build'\n")
 		os.Exit(7)
 	}
+	if scenario == "nested-box-hang" {
+		// The real child is the `coop fork acp` proxy: it starts its box child in a process group
+		// of its own, holding this process's stderr, and on EOF or SIGTERM it stops that group and
+		// removes the box itself, which takes about a `docker rm`. A kill of this process's group
+		// cannot reach the nested one.
+		teardown := startNestedSessionBox(filepath.Join(filepath.Dir(logPath), "nested.pid"))
+		defer teardown()
+		terminated := make(chan os.Signal, 1)
+		signal.Notify(terminated, syscall.SIGTERM)
+		go func() { <-terminated; teardown(); os.Exit(0) }()
+	}
 	reader := bufio.NewScanner(os.Stdin)
 	reader.Buffer(make([]byte, 1024), sessionACPFrameLimit)
 	writer := bufio.NewWriter(os.Stdout)
@@ -4041,7 +4053,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 			case "stderr":
 				_, _ = os.Stderr.WriteString(strings.Repeat("e", 1<<20))
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
-			case "hang":
+			case "hang", "nested-box-hang":
 				continue
 			case "hang-delayed-read":
 				// Deliberately consume cancellation after the old 10 ms shutdown delay,
@@ -4068,6 +4080,90 @@ func TestSessionACPChildHelper(t *testing.T) {
 				send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"stopReason": "end_turn"}})
 			}
 		}
+	}
+}
+
+// startNestedSessionBox starts the fake proxy's box child: a long sleep in its own process group
+// that inherits stderr, its pid written to pidPath. The returned teardown stops it the way the
+// proxy does, after a delay standing in for the box removal.
+func startNestedSessionBox(pidPath string) func() {
+	nested := exec.Command("sleep", "60")
+	nested.Stderr = os.Stderr
+	nested.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if nested.Start() != nil || os.WriteFile(pidPath, []byte(fmt.Sprint(nested.Process.Pid)), 0o600) != nil {
+		os.Exit(2)
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			time.Sleep(1500 * time.Millisecond)
+			_ = syscall.Kill(-nested.Process.Pid, syscall.SIGKILL)
+			_ = nested.Wait()
+		})
+	}
+}
+
+// Cancelling a running turn lets the child stop the box it started in a process group of its
+// own. Killing the child at once (the old quarter-second grace) left that group running with the
+// child's stderr open, so every cancel of a real Codex turn ended "ACP child did not stop", the
+// turn failed acp_cancelled and the cancel request answered operation_uncertain.
+func TestSessionCancelLetsTheChildStopItsOwnBox(t *testing.T) {
+	fixture := newSessionACPFixture(t, "nested-box-hang")
+	pidPath := filepath.Join(filepath.Dir(fixture.childLog), "nested.pid")
+	readPID := func() int {
+		data, err := os.ReadFile(pidPath)
+		if err != nil {
+			return 0
+		}
+		var pid int
+		_, _ = fmt.Sscan(string(data), &pid)
+		return pid
+	}
+	t.Cleanup(func() {
+		if pid := readPID(); pid > 0 {
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		}
+	})
+	turn := fixture.submit(t, "run a long tool")
+	req := session.CancelTurnRequest{SessionID: fixture.session.ID, TurnID: turn.ID, ExpectedRevision: fixture.session.Revision}
+	op, _, err := fixture.store.ReserveOperation(context.Background(), "CancelTurn", "cancel", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.MarkOperationRunning(context.Background(), op.ID, intent); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(contextWithTurnDeadline(t))
+	defer cancel()
+	ctx = context.WithValue(ctx, sessionCancelRequestContextKey{}, func() (string, session.CancelTurnRequest, bool) { return "cancel", req, true })
+	done := make(chan error, 1)
+	go func() { _, err := fixture.runner.Run(ctx, fixture.session, turn); done <- err }()
+	waitForSessionTest(t, func() bool {
+		data, err := os.ReadFile(fixture.childLog)
+		return err == nil && bytes.Contains(data, []byte(`"method":"session/prompt"`)) && readPID() > 0
+	})
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("cancelled turn: %v", err)
+		}
+	case <-time.After(wait.Deadline):
+		t.Fatal("runner did not settle cancellation")
+	}
+	got, err := fixture.store.GetTurn(context.Background(), fixture.session.ID, turn.ID)
+	if err != nil || got.State != session.TurnCancelled {
+		t.Fatalf("cancelled turn = %+v %v", got, err)
+	}
+	if latest, err := fixture.store.GetOperationByID(context.Background(), op.ID); err != nil || latest.State != session.OperationSucceeded {
+		t.Fatalf("cancel operation = %+v %v", latest, err)
+	}
+	if err := syscall.Kill(-readPID(), 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("the child's box group is still running: %v", err)
 	}
 }
 

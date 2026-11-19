@@ -952,8 +952,11 @@ become repository changes. The container sees the path `.coop-output/...`, but i
 stored in co:op's private session state on the host, never in the session's checkout. Text
 attachments are kept there under `.coop-output/.inputs/` so later turns can reread them.
 
-Cancellation first asks ACP to cancel the turn. co:op then stops the turn's process group and
-removes its box. This doesn't undo actions already taken in external systems.
+Cancellation first asks ACP to cancel the turn. co:op then closes the turn's ACP process and gives
+it up to five seconds to stop and remove its box, kills whatever is still running, and removes the
+box. The cancel answers with the `cancelled` turn once that cleanup is proven; a process that could
+not be stopped leaves the cancel `operation_uncertain`. This doesn't undo actions already taken in
+external systems.
 
 ### Events
 
