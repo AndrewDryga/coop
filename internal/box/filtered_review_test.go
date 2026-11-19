@@ -457,6 +457,13 @@ func TestFilteredReadinessPreservesCallerCancellation(t *testing.T) {
 		if !errors.Is(err, want) {
 			t.Fatal("readiness hid caller cancellation", err)
 		}
+		// A stop is only an interruption, which an editor child keeps quiet (a warm box its session
+		// stopped printed "✗ network gateway did not become ready"); running out of time is a
+		// gateway that did not start, and says so.
+		gatewayFailure := strings.Contains(err.Error(), "network gateway did not become ready")
+		if Interrupted(err) == expired || gatewayFailure != expired {
+			t.Fatalf("expired=%v: readiness error %q, Interrupted=%v", expired, err, Interrupted(err))
+		}
 	}
 }
 

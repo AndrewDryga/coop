@@ -307,8 +307,8 @@ func (f *filteredExecution) ready(ctx context.Context) error {
 	return f.accept(ctx, snapshot)
 }
 
-func (f *filteredExecution) waitReady(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, filteredControlTimeout)
+func (f *filteredExecution) waitReady(caller context.Context) error {
+	ctx, cancel := context.WithTimeout(caller, filteredControlTimeout)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -321,6 +321,11 @@ func (f *filteredExecution) waitReady(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
+			// A caller that stopped the run (an editor session retiring a warm box) cut the wait
+			// short: that is an interruption, not a gateway that failed to start.
+			if errors.Is(caller.Err(), context.Canceled) {
+				return setupCanceled{step: "the network gateway was ready", cause: caller.Err()}
+			}
 			return errors.Join(errors.New("network gateway did not become ready; no agent started"), ctx.Err())
 		case <-ticker.C:
 		}
