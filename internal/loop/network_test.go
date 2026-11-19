@@ -125,6 +125,11 @@ func TestNetworkLogPrintsBetweenIterationsNotDuringOne(t *testing.T) {
 			t.Errorf("iteration block %q is missing %q", out, want)
 		}
 	}
+	// One pointer per block: the named lookup, never a second command beside it that opens the
+	// same explanation by its evidence id.
+	if n := strings.Count(out, "coop net blocked "); n != 1 || strings.Contains(out, "ev-9") {
+		t.Errorf("iteration block offers %d lookups, want only the named one:\n%s", n, out)
+	}
 	if log.runID() != "run-1" {
 		t.Errorf("stage telemetry run id = %q, want run-1", log.runID())
 	}
@@ -337,6 +342,14 @@ func TestNetworkLogSeparatesCoopsOwnGatewayAndOffersNoUnrunnableLookup(t *testin
 	if strings.Contains(out, "Explain:") {
 		t.Errorf("the block offers a lookup with no name to look up:\n%s", out)
 	}
+	// With no name to look up, the retained evidence id is the one pointer the block offers.
+	withheld := newNetworkLog()
+	withheld.setStage("Task attempt 4")
+	withheld.record(box.NetworkReport{RunID: "run-4", Event: "ev-4",
+		Denials: []box.NetworkDenial{{Destination: "name withheld", Basis: "tls", Count: 1}}})
+	if got := captureStderr(t, withheld.finishIteration); !strings.Contains(got, "To see why: coop net blocked ev-4 --run run-4") {
+		t.Errorf("a block whose refusal has no name offers no pointer at all:\n%s", got)
+	}
 	// A report that is ONLY the gateway's own refusals still prints — and still is
 	// not traffic.
 	quiet := newNetworkLog()
@@ -388,7 +401,6 @@ func TestNetworkLogSaysASlowSignInReadIsNotABlockedAddress(t *testing.T) {
 		"⚠ Task attempt 2 could not reach 1 remote address",
 		"b.example · TLS · blocked 2 times",
 		"Explain: coop net blocked b.example --run run-2",
-		"To see why: coop net blocked ev-2 --run run-2",
 		"⚠ Task attempt 2: " + held,
 		"chatgpt.com · 3 requests",
 	} {

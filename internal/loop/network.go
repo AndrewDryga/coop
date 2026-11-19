@@ -151,9 +151,10 @@ func printNetworkIteration(r box.NetworkReport, stage string) {
 			blocked = append(blocked, denial)
 		}
 	}
+	explain := explainRow(r.RunID, blocked)
 	if total := len(blocked) + r.Omitted; total > 0 {
 		ui.Alert(fmt.Sprintf("%s could not reach %s", stage, ui.Count(total, "remote address", "remote addresses")),
-			strings.Join(networkDenialList(blocked, r.Omitted, denialRow), "\n"), explainRow(r.RunID, blocked)...)
+			strings.Join(networkDenialList(blocked, r.Omitted, denialRow), "\n"), explain...)
 	}
 	if r.Gateway > 0 {
 		// Not somewhere the box could not reach: something in it addressed Coop's own
@@ -169,7 +170,9 @@ func printNetworkIteration(r box.NetworkReport, stage string) {
 	for _, alert := range r.Alerts {
 		ui.Alert("The network filter raised an alert", alert)
 	}
-	if r.Event != "" {
+	// One pointer per block: the evidence id is the fallback for a refusal whose destination the
+	// evidence never named. Beside the named lookup it opens the same explanation a second way.
+	if r.Event != "" && len(explain) == 0 {
 		ui.Detail("To see why: coop net blocked %s --run %s", r.Event, r.RunID)
 	}
 	if len(slow) > 0 {
