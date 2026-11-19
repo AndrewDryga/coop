@@ -2,8 +2,8 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go]
-updated: 2026-11-05
+sources: [internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go]
+updated: 2026-11-19
 ---
 
 A task fork's land authority is one exact candidate ID, HEAD, tree, assignment set and projection
@@ -42,7 +42,18 @@ authorized publishing attempt is. Any land or discard intent fences new review w
 merge, the zero-ahead decision happens under the same lifecycle lock after land-journal replay: a
 fork is skipped only when it has neither commits nor active candidate/task bookkeeping.
 
+A land journal in `preparing` restores the candidate before it rebases, which is right after a crash
+mid-rebase but would also throw away anything a person committed in the fork. So a rebase git refuses
+(a conflict, or signing) and Coop aborts back onto the exact candidate commit, tree and branch,
+clean, retires the journal as a red gate does (`candidateWorkspaceIntact`, internal/forkctl/land.go);
+any other failure keeps it for replay. A hand-rebased copy is not the candidate: it needs a new review,
+and the ancestry fence refuses one that does not descend from the published round.
+
 ## Changelog
+- 2026-11-19 — a candidate whose rebase conflicted kept its `preparing` journal, so the fork stayed
+  "merging", refused loop and `rm --force`, and every rerun reset the fork's branch to the candidate
+  and hit the same conflict; a clean conflict now retires the journal (task
+  2026-11-19-let-a-fork-merge-be-retried-after-its-conflict-i).
 - 2026-11-05 — documented candidate rework/replay, records-only completion, dispute blocking and
   the retained audit-history fences; verified against candidate, scheduler and projection paths.
 - 2026-11-04 — the version 1 candidate adoption and the land recovery that rebuilt round one are

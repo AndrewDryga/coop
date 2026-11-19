@@ -1015,13 +1015,21 @@ func (c *Control) rebaseForkOntoParent(repo, ws, name string) error {
 	}
 	if rebaseErr != nil {
 		_ = forkspace.GitRun(ws, "rebase", "--abort")
-		return fmt.Errorf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (%s && git rebase %s %s), then re-run", name, gitBranch(repo), shellLine([]string{"cd", ws}), head, name)
+		return &rebaseFailedError{name: name, branch: gitBranch(repo), ws: ws, onto: head}
 	}
 	// The fork stands on head now, so the parent's commits up to it are no changes of the fork's, even
 	// if the checks below fail and leave it rebased. Only a display (coop fork ls) reads the base, so
 	// failing to move it never fails a merge.
 	_ = forkspace.SetWorkspaceBase(ws, head)
 	return nil
+}
+
+// rebaseFailedError is a rebase onto the parent that git refused (a conflict, or signing) and that
+// was aborted. Its advice fits a fork without a reviewed candidate; a task land gives its own.
+type rebaseFailedError struct{ name, branch, ws, onto string }
+
+func (e *rebaseFailedError) Error() string {
+	return fmt.Sprintf("%s: rebase onto %s failed (conflicts or signing) — fix it in the fork (%s && git rebase %s %s), then re-run", e.name, e.branch, shellLine([]string{"cd", e.ws}), e.onto, e.name)
 }
 
 // leftoverRebaseState returns the state directory of an unfinished rebase in ws, or "". Git keeps it

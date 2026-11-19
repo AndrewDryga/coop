@@ -775,6 +775,62 @@ func TestTaskCandidateMergeRecoversWhenParentMovesDuringGate(t *testing.T) {
 	}
 }
 
+// A reviewed candidate whose rebase conflicts stopped before anything landed: the rebase is aborted
+// and the fork is back on its reviewed commit. The land journal goes with it, as after a red gate, so
+// the fork is not left "merging" and a later merge never resets the fork's branch to replay it.
+func TestTaskCandidateMergeConflictLeavesNoLandJournal(t *testing.T) {
+	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "task-conflict")
+	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)
+	if err != nil || !ok {
+		t.Fatalf("read candidate: ok=%v err=%v", ok, err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "feature.txt"), []byte("parent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "feature.txt")
+	git(t, repo, "commit", "-qm", "parent edits feature")
+	parent := forkspace.GitOut(repo, "rev-parse", "HEAD")
+
+	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "nothing merged") || !strings.Contains(err.Error(), "coop fork rm "+identity.Name+" --force") {
+		t.Fatalf("conflicting merge = (%v, %v)", landed, err)
+	}
+	if strings.Contains(err.Error(), "git rebase") {
+		t.Errorf("a reviewed candidate's conflict names a rebase whose result no merge accepts: %v", err)
+	}
+	if pending, err := ForkHasPendingLand(repo, identity); err != nil || pending {
+		t.Fatalf("land journal after a clean conflict: pending=%v err=%v", pending, err)
+	}
+	if got := forkspace.GitOut(ws, "rev-parse", "HEAD"); got != candidate.Head {
+		t.Fatalf("fork HEAD after the conflict = %s, want the reviewed %s", got, candidate.Head)
+	}
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != parent {
+		t.Fatalf("parent moved: %s, want %s", got, parent)
+	}
+	if _, ok, err := tasks.ReadForkCandidate(repo, identity); err != nil || !ok {
+		t.Fatalf("reviewed candidate lost: ok=%v err=%v", ok, err)
+	}
+	if item, _ := mustCurrentTask(t, root, "canonical-task"); item.State != tasks.StateInProgress {
+		t.Fatalf("canonical task after a conflict = %s", item.State)
+	}
+
+	// The person rewrites the fork's commit onto the parent. The merge refuses that unreviewed commit
+	// and leaves it where it is.
+	git(t, ws, "fetch", "-q", repo, "HEAD")
+	git(t, ws, "reset", "-q", "--hard", "FETCH_HEAD")
+	if err := os.WriteFile(filepath.Join(ws, "feature.txt"), []byte("resolved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "commit", "-qam", "implement canonical task\n\nCoop-Task: canonical-task")
+	resolved := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil {
+		t.Fatalf("merge of an unreviewed rewrite = (%v, %v)", landed, err)
+	}
+	if got := forkspace.GitOut(ws, "rev-parse", "HEAD"); got != resolved {
+		t.Fatalf("merge reset the fork's branch to %s; the person's %s is gone", got, resolved)
+	}
+}
+
 func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.T) {
 	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "task-red-gate-crash")
 	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)

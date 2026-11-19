@@ -372,6 +372,11 @@ only the tasks recorded in that candidate. A journal lets co:op resume these ste
 interruption. A `Coop-Task` trailer helps with consistency checks and search, but it cannot complete
 a task on its own.
 
+If the candidate's commits conflict with your branch, nothing merges and the fork keeps them as
+reviewed, with no merge left to resume. A copy you rebase by hand would need a new review, so
+change your branch until the commits apply and merge again, or discard the fork's work with
+`coop fork rm <name> --force`, which returns its tasks to the queue.
+
 If a fork can't reach a candidate, for example because its box keeps failing a check your project
 passes, you can bring its commit to your branch yourself, such as with `git cherry-pick`. Then run
 `coop tasks done <id> --from-fork` in your terminal. It needs exactly one commit on your branch with

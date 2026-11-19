@@ -13,6 +13,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 const (
@@ -183,6 +184,17 @@ func restoreCandidateWorkspace(repo, ws, name string, candidate tasks.ForkCandid
 	return nil
 }
 
+// candidateWorkspaceIntact reports that an aborted rebase left the fork exactly on its reviewed
+// candidate: on its own branch, at the candidate's commit and tree, with nothing uncommitted and no
+// rebase state left behind.
+func candidateWorkspaceIntact(ws, name string, candidate tasks.ForkCandidate) bool {
+	return leftoverRebaseState(ws) == "" && untrustedRebaseState(ws) == "" &&
+		forkspace.GitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD") == name &&
+		forkspace.GitOut(ws, "rev-parse", "HEAD") == candidate.Head &&
+		forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}") == candidate.Tree &&
+		!gitDirty(ws)
+}
+
 func resetLandAfterParentAdvance(repo, ws, name string, intent landIntent, parentHead string) (landIntent, error) {
 	if !forkspace.ValidObjectID(parentHead) {
 		return intent, errors.New("parent has no exact HEAD for land retry")
@@ -236,13 +248,26 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 				return intent, false, err
 			}
 		}
-		if forkspace.GitOut(ws, "rev-parse", "HEAD") != intent.Candidate.Head {
+		if head := forkspace.GitOut(ws, "rev-parse", "HEAD"); head != intent.Candidate.Head {
+			if forkspace.ValidObjectID(head) {
+				ui.Warn("fork %s is at %s, not its reviewed commit; Coop puts the reviewed commit back to finish the merge, and the fork's reflog keeps %s", name, head, head[:12])
+			}
 			if err := restoreCandidateWorkspace(repo, ws, name, intent.Candidate); err != nil {
 				return intent, false, err
 			}
 		}
 		if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
-			return intent, false, err
+			var failed *rebaseFailedError
+			if !errors.As(err, &failed) || !candidateWorkspaceIntact(ws, name, intent.Candidate) {
+				return intent, false, err
+			}
+			// Git refused the rebase and it was aborted: nothing landed and the fork is back on its
+			// reviewed commit, so the journal has nothing to replay. Retire it, as after a red gate, or a
+			// rerun would only replay the same conflict and leave the fork "merging" for good.
+			if err := removeLandIntent(repo, intent); err != nil {
+				return intent, false, errors.Join(err, failed)
+			}
+			return intent, false, fmt.Errorf("%s: its reviewed commits do not rebase onto %s (conflicts or signing); nothing merged. Rebased by hand they would need a new review, so fix the signing or change %s until they apply, then merge again, or discard the fork's work and return its tasks to the queue: coop fork rm %s --force", name, failed.branch, failed.branch, name)
 		}
 		intent.RebasedHead = forkspace.GitOut(ws, "rev-parse", "HEAD")
 		intent.RebasedTree = forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")
