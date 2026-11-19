@@ -1805,6 +1805,9 @@ func (s *Service) beginCreateOperation(
 	if _, err := jobEgressRules(job); err != nil {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: err.Error()}
 	}
+	if err := refuseJobProviderRules(job); err != nil {
+		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: err.Error()}
+	}
 	if _, err := jobTargets(job); err != nil {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: err.Error()}
 	}

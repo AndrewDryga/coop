@@ -88,24 +88,29 @@ incomplete tree.
 A job's `egress.mode` is `open`, `none` or `filtered`. Only a filtered job may list `egress.rules`,
 and only a filtered job may set `export_destinations`. The rules are the ones
 [`coop net`](networking.md#supported-today) enforces, written as JSON. Each rule's `to` names
-exactly one `domain`, `cidr` or `provider`:
+exactly one `domain` or `cidr`:
 
 ```json
 {"mode": "filtered", "export_destinations": false, "rules": [
+  {"to": {"cidr": "203.0.113.7/32"}, "protocol": "icmp", "types": ["8"]},
   {"to": {"cidr": "203.0.113.7/32"}, "protocol": "tcp", "ports": [5432]},
   {"to": {"domain": "example.com"}, "protocol": "tls", "ports": [443]}
 ]}
 ```
 
-A `domain` takes `protocol: "tls"` and its `ports`; a `cidr` takes `tcp` or `udp` with `ports`, or
-`icmp` with `types`. A `provider` takes only optional `features`.
+A `domain` takes `protocol: "tls"` and its `ports`. A `cidr` takes `tcp` or `udp` with `ports`, or
+`icmp` with `types`. ICMP types are JSON strings; `"8"`, an echo request, is the one a filtered box
+supports. Don't list a `provider` selector: this release has no optional provider features, and
+each job target's own provider endpoints are allowed without a rule. A job that lists one is refused
+when it is created.
 
 co:op accepts the rules only in canonical form, so one job digest always means one set of rules.
 Write domains in lowercase and an address as a `cidr` (one IPv4 address is `/32`, and `ip` is never
-canonical). Sort ports, ICMP types (as numbers, `8` for an echo request) and features, without
-repeats. List each rule once, ordered by the bytes of its compact JSON encoding, with keys in the
-order shown. A wrong rule is refused with `400 invalid_request`; the detail names the rule by its
-position and says what is wrong, or which rule is out of canonical form.
+canonical). Sort ports and ICMP types, without repeats. List each rule once, ordered by the bytes of
+its compact JSON encoding, with keys in the order shown. A wrong rule is refused with
+`400 invalid_request`. The detail names the rule by its position and says what is wrong with it.
+For a rule out of canonical form it gives the rule's canonical spelling, the earlier rule it
+repeats, or the rule it belongs before.
 
 ### Workspace storage
 

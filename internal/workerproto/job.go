@@ -425,10 +425,13 @@ func (s JobSpec) Validate() error {
 			return err
 		}
 	}
-	if !s.Egress.valid() || !s.Limits.valid() || !s.Resources.Valid() ||
+	if err := s.Egress.validate(); err != nil {
+		return err
+	}
+	if !s.Limits.valid() || !s.Resources.Valid() ||
 		!validJobEnvironment(s.Environment) || !validJobEnvironment(s.Check.Environment) ||
 		!validJobCheck(s.Check) {
-		return errors.New("invalid job egress, limits, environment, check or resources")
+		return errors.New("invalid job limits, environment, check or resources")
 	}
 	return nil
 }
@@ -545,28 +548,36 @@ func (s JobSource) StagingKey() (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func (e JobEgress) valid() bool {
-	if !slices.Contains([]string{"open", "none", "filtered"}, e.Mode) || len(e.Rules) > 128 {
-		return false
+// validate names the rule and what is wrong with it: the controller wrote the rules, and a bare
+// "invalid" left it guessing which one.
+func (e JobEgress) validate() error {
+	if !slices.Contains([]string{"open", "none", "filtered"}, e.Mode) {
+		return errors.New("job egress mode must be open, none or filtered")
+	}
+	if len(e.Rules) > 128 {
+		return errors.New("job egress rules exceed 128 entries")
 	}
 	if e.Mode != "filtered" && len(e.Rules) != 0 {
-		return false
+		return fmt.Errorf("job egress rules need mode filtered, not %s", e.Mode)
 	}
 	if e.Mode != "filtered" && e.ExportDestinations {
-		return false
+		return fmt.Errorf("job egress export_destinations needs mode filtered, not %s", e.Mode)
 	}
-	for _, rule := range e.Rules {
+	for index, rule := range e.Rules {
 		selectors := 0
 		for _, value := range []string{rule.To.Domain, rule.To.IP, rule.To.CIDR, rule.To.Provider} {
 			if value != "" {
 				selectors++
 			}
 		}
-		if selectors != 1 || len(rule.To.Features) > 128 || len(rule.Ports) > 128 || len(rule.Types) > 128 || len(rule.Codes) > 128 {
-			return false
+		if selectors != 1 {
+			return fmt.Errorf("job egress rule %d: to must name exactly one domain, cidr or provider", index+1)
+		}
+		if len(rule.To.Features) > 128 || len(rule.Ports) > 128 || len(rule.Types) > 128 || len(rule.Codes) > 128 {
+			return fmt.Errorf("job egress rule %d: features, ports, types and codes take at most 128 entries each", index+1)
 		}
 	}
-	return true
+	return nil
 }
 
 func (l JobLimits) valid() bool {

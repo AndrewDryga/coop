@@ -41,6 +41,35 @@ func validJobSpec() JobSpec {
 
 func ptrString(value string) *string { return &value }
 
+// 2026-11-19: a rule with two selectors, or rules on an open job, were refused as "invalid job
+// egress, limits, environment, check or resources", naming neither the rule nor the problem.
+func TestJobEgressRefusalNamesTheRuleAndTheProblem(t *testing.T) {
+	tls := JobRule{To: JobDestination{Domain: "example.com"}, Protocol: "tls", Ports: []int{443}}
+	twoSelectors := tls
+	twoSelectors.To.CIDR = "203.0.113.7/32"
+	for name, tc := range map[string]struct {
+		egress JobEgress
+		want   string
+	}{
+		"two selectors":  {JobEgress{Mode: "filtered", Rules: []JobRule{tls, twoSelectors}}, "job egress rule 2: to must name exactly one"},
+		"no selector":    {JobEgress{Mode: "filtered", Rules: []JobRule{{Protocol: "tls"}}}, "job egress rule 1: to must name exactly one"},
+		"rules on open":  {JobEgress{Mode: "open", Rules: []JobRule{tls}}, "job egress rules need mode filtered, not open"},
+		"export on none": {JobEgress{Mode: "none", Rules: []JobRule{}, ExportDestinations: true}, "export_destinations needs mode filtered"},
+		"unknown mode":   {JobEgress{Mode: "closed", Rules: []JobRule{}}, "job egress mode must be open, none or filtered"},
+	} {
+		spec := validJobSpec()
+		spec.Egress = tc.egress
+		if err := spec.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want it to say %q", name, err, tc.want)
+		}
+	}
+	spec := validJobSpec()
+	spec.Egress = JobEgress{Mode: "filtered", Rules: []JobRule{tls}}
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("one-selector filtered rule refused: %v", err)
+	}
+}
+
 func TestJobExactCommitRequiresExplicitNullSelectedRef(t *testing.T) {
 	spec := validJobSpec()
 	spec.Source.Binding.Kind = session.SourceCommit

@@ -221,16 +221,12 @@ func jobEgressRules(job workerproto.JobSpec) ([]egress.Rule, error) {
 		return nil, fmt.Errorf("job egress rules are invalid: %w", err) // names the rule and what is wrong with it
 	}
 	if len(rules) != 0 && !reflect.DeepEqual(normalized, rules) {
-		for index := range rules {
-			if index >= len(normalized) || !reflect.DeepEqual(normalized[index], rules[index]) {
-				return nil, fmt.Errorf("job egress rule %d is not canonical: send each rule in its normalized form, sorted, without duplicates", index+1)
-			}
-		}
+		return nil, noncanonicalJobEgressRule(rules)
 	}
-	for _, rule := range normalized {
+	for index, rule := range normalized {
 		if rule.To.Provider == "" {
 			if err := egress.SupportedRule(rule); err != nil {
-				return nil, fmt.Errorf("unsupported job egress rule: %w", err)
+				return nil, fmt.Errorf("unsupported job egress rule %d: %w", index+1, err)
 			}
 		}
 	}
@@ -238,6 +234,47 @@ func jobEgressRules(job workerproto.JobSpec) ([]egress.Rule, error) {
 		return nil, nil
 	}
 	return normalized, nil
+}
+
+// noncanonicalJobEgressRule names the first rule that keeps a valid list out of canonical form and
+// says what the canonical form wants of it: its own normalized spelling, a single copy, or its place
+// in the byte order of the rules' compact JSON.
+func noncanonicalJobEgressRule(rules []egress.Rule) error {
+	keys := make([]string, len(rules))
+	for index, rule := range rules {
+		single, err := egress.NormalizeRules([]egress.Rule{rule})
+		if err != nil || len(single) != 1 {
+			return fmt.Errorf("job egress rule %d is not canonical", index+1)
+		}
+		if !reflect.DeepEqual(single[0], rule) {
+			written, _ := json.Marshal(single[0])
+			return fmt.Errorf("job egress rule %d is not canonical; write it as %s", index+1, written)
+		}
+		written, _ := json.Marshal(rule)
+		keys[index] = string(written)
+		for earlier := range index {
+			if keys[earlier] == keys[index] {
+				return fmt.Errorf("job egress rule %d repeats rule %d; list each rule once", index+1, earlier+1)
+			}
+		}
+		if index > 0 && keys[index] < keys[index-1] {
+			return fmt.Errorf("job egress rule %d is out of order: rules are sorted by the bytes of their compact JSON, so it goes before rule %d", index+1, index)
+		}
+	}
+	return errors.New("job egress rules are not canonical")
+}
+
+// refuseJobProviderRules refuses a provider selector when a job is created. This release has no
+// optional provider features, so such a rule grants nothing, or fails at launch as if the worker's
+// network were broken. A project's own provider rule is refused in the same words
+// (box.approvalRefusal). Only creation refuses it, so a session saved with one still runs.
+func refuseJobProviderRules(job workerproto.JobSpec) error {
+	for index, rule := range job.Egress.Rules {
+		if rule.To.Provider != "" {
+			return fmt.Errorf("job egress rule %d: this release has no optional provider features to approve — an agent's core endpoints are allowed automatically, so drop the provider rule", index+1)
+		}
+	}
+	return nil
 }
 
 // The connector publishes this receipt only after fetching the frozen source.

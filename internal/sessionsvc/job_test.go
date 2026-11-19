@@ -358,7 +358,18 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	provider := emptyWorkerJob()
+	provider.Egress = workerproto.JobEgress{Mode: "filtered", Rules: []workerproto.JobRule{{To: workerproto.JobDestination{Provider: "codex"}}}}
+	providerDocument, err := json.Marshal(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerDigest, err := provider.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, req := range map[string]CreateRemoteSessionRequest{
+		"provider rule":    {Task: provider.JobRef, Job: providerDocument, ExpectedJobDigest: providerDigest},
 		"missing job":      {Task: job.JobRef, ExpectedJobDigest: digest},
 		"wrong digest":     {Task: job.JobRef, Job: document, ExpectedJobDigest: "bad"},
 		"missing task":     {Job: document, ExpectedJobDigest: digest},
@@ -366,8 +377,12 @@ func TestControllerJobRejectsMissingAndMismatchedAuthorityBeforeJournal(t *testi
 		"invalid target":   {Task: badTarget.JobRef, Job: badTargetDocument, ExpectedJobDigest: badTargetDigest},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := service.CreateRemoteSessionAsync(context.Background(), name, req); session.CodeOf(err) != session.CodeInvalidRequest {
+			_, err := service.CreateRemoteSessionAsync(context.Background(), name, req)
+			if session.CodeOf(err) != session.CodeInvalidRequest {
 				t.Fatalf("invalid job request = %v, want invalid request", err)
+			}
+			if name == "provider rule" && !strings.Contains(err.Error(), "job egress rule 1: this release has no optional provider features") {
+				t.Fatalf("provider rule refusal = %v, want it to name the rule", err)
 			}
 			if _, err := service.store.GetOperation(context.Background(), name); !errors.Is(err, session.ErrOperationNotFound) {
 				t.Fatalf("invalid job request was journaled: %v", err)
@@ -536,10 +551,10 @@ func TestJobEgressRuleRefusalNamesTheRuleAndTheProblem(t *testing.T) {
 	}{
 		"no protocol":  {[]workerproto.JobRule{example, {To: workerproto.JobDestination{Domain: "example.org"}}}, "egress rule 2: protocol must be"},
 		"tls no ports": {[]workerproto.JobRule{{To: workerproto.JobDestination{Domain: "example.com"}, Protocol: "tls"}}, "egress rule 1: "},
-		"unsorted":     {[]workerproto.JobRule{example, other}, "job egress rule 1 is not canonical"},
-		"duplicate":    {[]workerproto.JobRule{other, example, example}, "job egress rule 3 is not canonical"},
+		"unsorted":     {[]workerproto.JobRule{example, other}, "job egress rule 2 is out of order: rules are sorted by the bytes of their compact JSON, so it goes before rule 1"},
+		"duplicate":    {[]workerproto.JobRule{other, example, example}, "job egress rule 3 repeats rule 2"},
 		"not lowercase": {[]workerproto.JobRule{{To: workerproto.JobDestination{Domain: "Example.com"}, Protocol: "tls", Ports: []int{443}}},
-			"job egress rule 1 is not canonical"},
+			`job egress rule 1 is not canonical; write it as {"to":{"domain":"example.com"},"protocol":"tls","ports":[443]}`},
 	} {
 		job := emptyWorkerJob()
 		job.Egress = workerproto.JobEgress{Mode: "filtered", Rules: tc.rules}
@@ -559,10 +574,23 @@ func TestJobEgressRuleRefusalNamesTheRuleAndTheProblem(t *testing.T) {
 	address.To = workerproto.JobDestination{IP: "203.0.113.7"}
 	echo := ping
 	echo.Types = []string{"echo-request"}
-	for _, rule := range []workerproto.JobRule{address, echo} {
-		job.Egress.Rules = []workerproto.JobRule{rule}
-		if _, err := jobEgressRules(job); err == nil || !strings.Contains(err.Error(), "job egress rule 1 is not canonical") {
-			t.Errorf("rule %+v = %v, want it refused as not canonical", rule, err)
+	for rule, want := range map[*workerproto.JobRule]string{
+		&address: `write it as {"to":{"cidr":"203.0.113.7/32"},"protocol":"tcp","ports":[5432]}`,
+		&echo:    `write it as {"to":{"cidr":"203.0.113.7/32"},"protocol":"icmp","types":["8"]}`,
+	} {
+		job.Egress.Rules = []workerproto.JobRule{*rule}
+		if _, err := jobEgressRules(job); err == nil || !strings.Contains(err.Error(), "job egress rule 1 is not canonical; "+want) {
+			t.Errorf("rule %+v = %v, want it to say %q", *rule, err, want)
 		}
+	}
+	// A provider selector grants nothing in this release, and at launch it failed as a 503
+	// network_unavailable, which reads as a worker outage. Creation refuses it, naming the rule.
+	job.Egress.Rules = []workerproto.JobRule{example, {To: workerproto.JobDestination{Provider: "codex"}}}
+	if err := refuseJobProviderRules(job); err == nil || !strings.Contains(err.Error(), "job egress rule 2: this release has no optional provider features") {
+		t.Errorf("provider rule = %v, want it refused at creation", err)
+	}
+	job.Egress.Rules = []workerproto.JobRule{example}
+	if err := refuseJobProviderRules(job); err != nil {
+		t.Errorf("rule without a provider = %v", err)
 	}
 }
