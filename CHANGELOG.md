@@ -4,15 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
-## 15.1.0
-
-- **Controllers can assign named presets to reviews and coding jobs.** Export an approved global
-  recipe with `coop presets NAME --export-job`. Each job keeps the selected prompts and accounts.
-  Read-only reviews can consult peers. Turn history reports which peers answered or failed.
 - **Security: an isolated fork's merge lands exactly the reviewed change.** When your branch
   already had one of an isolated fork's commits, git skipped that commit and the merge could land
   a line nobody reviewed. `coop fork merge` now compares what would land with what was reviewed
-  and refuses a difference, before it asks you to confirm. 15.0.0 and earlier are affected.
+  and refuses a difference, before it asks you to confirm. 15.1.0 and earlier are affected.
 - **A new isolated fork has no Git remote pointing at your checkout.** A `git fetch` inside it
   cannot reach your repository. An existing isolated fork keeps its remote; `docs/forks.md` names
   the command that removes it.
@@ -50,6 +45,12 @@
   answers `publication_branch_has_closed_pull_request` and names that pull request.
 - **A worker backs off when the controller cannot answer a source grant.** It asks again after
   5 seconds, then 10, then every 15, instead of about once a second.
+
+## 15.1.0
+
+- **Controllers can assign named presets to reviews and coding jobs.** Export an approved global
+  recipe with `coop presets NAME --export-job`. Each job keeps the selected prompts and accounts.
+  Read-only reviews can consult peers. Turn history reports which peers answered or failed.
 - **A fork rebased by hand reaches its review without a wasted round.** After you rebase a fork
   yourself, `coop fork <name> --loop` runs one check-only pass, which runs the checks and changes
   nothing, and then the review. Before, the first review failed as stale.
