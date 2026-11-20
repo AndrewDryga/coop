@@ -78,17 +78,25 @@ func landedAsReviewed(ws, name, branch string, intent landIntent) *landRefusal {
 	if err != nil {
 		return unverifiable(err)
 	}
-	if reviewed == landed {
-		return nil
-	}
-	// A skipped commit bound to a task leaves that task without a commit of its own. A rebase pass
-	// would skip it again, or keep it empty, which review rightly fails, so this stops for a person.
-	problems, err := tasks.RebaseBindingProblems(ws, parent, candidate.Head, intent.RebasedHead)
+	// A skipped commit bound to a task leaves that task without a commit of its own, even when the
+	// line edits still match (the parent has both a change and its undoing). A rebase pass would skip
+	// it again, or keep it empty, which review rightly fails, so this stops for a person. A rebase
+	// only drops commits, so the bindings need reading only when it dropped some.
+	dropped, err := rebaseDroppedCommits(ws, parent, intent.RebasedHead, base, candidate.Head)
 	if err != nil {
 		return unverifiable(err)
 	}
-	if len(problems) > 0 {
-		return &landRefusal{again: true, cause: tasks.RebaseCauseSkipped, err: skippedCommitError(ws, name, branch, strings.Join(problems, " "), " Nothing was merged.", "")}
+	if dropped {
+		problems, err := tasks.RebaseBindingProblems(ws, parent, candidate.Head, intent.RebasedHead)
+		if err != nil {
+			return unverifiable(err)
+		}
+		if len(problems) > 0 {
+			return &landRefusal{again: true, cause: tasks.RebaseCauseSkipped, err: skippedCommitError(ws, name, branch, strings.Join(problems, " "), " Nothing was merged.", "")}
+		}
+	}
+	if reviewed == landed {
+		return nil
 	}
 	return &landRefusal{again: true, cause: tasks.RebaseCauseChanged, err: ui.CommandFailed("Fork "+name+"'s reviewed change would land changed on "+parentBranchWords(branch),
 		"Rebased onto "+parentBranchWords(branch)+", its commits would not land exactly the reviewed change, for example because "+
@@ -97,6 +105,28 @@ func landedAsReviewed(ws, name, branch string, intent landIntent) *landRefusal {
 		[2]string{"Rebase and review:", "coop fork " + name + " --loop"},
 		[2]string{"Then merge it:", "coop fork merge " + name},
 		[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})}
+}
+
+// rebaseDroppedCommits says the rebase of base..head onto parent, which made rebased, left fewer
+// commits than it started with. A count git cannot give is an error, never "none dropped": the
+// caller refuses rather than skip the binding check.
+func rebaseDroppedCommits(ws, parent, rebased, base, head string) (bool, error) {
+	count := func(from, to string) (string, error) {
+		out, err := forkspace.GitOutErr(ws, "rev-list", "--count", from+".."+to)
+		if err == nil && out == "" {
+			err = fmt.Errorf("git rev-list --count %s..%s printed nothing", from, to)
+		}
+		return out, err
+	}
+	after, err := count(parent, rebased)
+	if err != nil {
+		return false, err
+	}
+	before, err := count(base, head)
+	if err != nil {
+		return false, err
+	}
+	return after != before, nil
 }
 
 // skippedCommitError is the one refusal of reviewed commits one of which the parent branch already

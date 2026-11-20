@@ -43,6 +43,7 @@ type sharedFilePasses struct {
 	reportChecks            bool
 	checkCommits            bool
 	checkDirties            bool                // the check pass leaves a tracked file changed, as a gate that writes one does
+	checkStopsRebase        bool                // the check pass leaves a rebase in progress
 	work                    func(ws, id string) // replaces a work pass's commit when set
 	reviewWantsRebaseChecks bool
 	rebases                 []loop.RebaseSpec
@@ -79,6 +80,10 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 			}
 			git(t, spec.Repo, "add", "fix.txt")
 			git(t, spec.Repo, "commit", "-qm", "Fix what the check found")
+		}
+		if p.checkStopsRebase {
+			// Starts a rebase that stops at once, so the pass ends with git mid-rebase.
+			_ = gitCommand(spec.Repo, "rebase", "-q", "-x", "false", "HEAD~1").Run()
 		}
 		if p.checkDirties {
 			if err := os.WriteFile(filepath.Join(spec.Repo, "shared.txt"), []byte("gate output\n"), 0o644); err != nil {
@@ -773,6 +778,28 @@ func TestForkRebaseCheckPassThatDirtiesTrackedFilesSaysWhy(t *testing.T) {
 	}
 	if len(f.passes.reviews) != 2 {
 		t.Fatalf("a dirty check pass reached review (%d reviews)", len(f.passes.reviews))
+	}
+}
+
+// A check pass that leaves git mid-rebase gets advice that works there: abort the rebase first,
+// since git will not switch branches during one. Following it puts back the rebased commit.
+func TestForkRebaseCheckPassLeftMidRebaseNamesTheAbort(t *testing.T) {
+	f := setUpConflictingForks(t)
+	if !rebaseKeepingEveryLine(t, f.ws, f.parent) {
+		t.FailNow()
+	}
+	rebased := forkspace.GitOut(f.ws, "rev-parse", "HEAD")
+	f.passes.checkStopsRebase = true
+	code, out, err := f.loop(t)
+	wantBack := "git -C " + shellWord(f.ws) + " rebase --abort && git -C " + shellWord(f.ws) + " checkout -f -B beta " + rebased
+	if code == 0 || err == nil || !strings.Contains(err.Error(), wantBack) {
+		t.Fatalf("loop whose check pass stopped mid-rebase = (%d, %v); want %q\n%s", code, err, wantBack, out)
+	}
+	git(t, f.ws, "rebase", "--abort")
+	git(t, f.ws, "checkout", "-q", "-f", "-B", "beta", rebased)
+	f.passes.checkStopsRebase, f.passes.reportChecks = false, true
+	if code, out, err := f.loop(t); code != 0 || err != nil {
+		t.Fatalf("loop after following the advice = (%d, %v)\n%s", code, err, out)
 	}
 }
 

@@ -410,7 +410,9 @@ diff, the one the review read, does not show. A fork's loop therefore refuses to
 commits that include a merge commit and names the `git rebase` that straightens them; `coop fork
 merge` and `coop fork ls` say the same, and while a conflict waits for its rebase the loop says it
 before any agent runs. A reviewed round that has one anyway is not merged: for an ordinary fork,
-`coop fork merge` sends it to the same rebase and review as a conflict.
+`coop fork merge` names the `git rebase` onto your branch that straightens it. No agent runs for it;
+once you have run that rebase, the fork's loop checks and reviews the result like any rebase you
+made by hand.
 
 A merge also checks that it lands exactly what was reviewed. When your branch has moved, the
 rebased commits must make the same line changes as the reviewed ones. When they don't, for example
@@ -418,7 +420,8 @@ because your branch already has part of the change, the fork goes to the same re
 after a conflict, and `coop fork ls` shows it as "changed after review". A rebase skips a commit
 whose change your branch already has. When that commit is one a task's `Coop-Task` trailer binds,
 the task would be left without a commit of its own, and no rebase or review can give it one back. So
-the merge stops at once and says so, and the loop then runs no agent for it. When a conflict came
+the merge stops at once and says so, even when the rest of the change would land exactly as
+reviewed, and the loop then runs no agent for it. When a conflict came
 first, the loop's rebase pass is what finds it: that one run ends with the same answer, and the loop
 runs no agent after it. Discard the fork's work with `coop fork rm <name> --force`, which returns its
 tasks to the queue, or remove your branch's commit with that change from its history and merge

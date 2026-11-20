@@ -39,9 +39,12 @@ func mergeCommitsCause(merges []string) string {
 
 // refuseReviewedMergeCommits stops the land of an ordinary fork's reviewed candidate that holds a
 // merge commit the parent's HEAD does not have, a round reviewed before Coop refused them at review.
-// It records a rebase request, as a conflict does, so the fork's loop rebases the commits into a
-// straight line onto the branch and the result is reviewed in full. The caller holds the lifecycle
-// lock and has fetched the fork's commits into the parent.
+// It records a rebase request with the merges cause: no agent pass straightens a merge (one that
+// keeps it only ends in the same refusal), so the refusal names the git rebase onto the branch's
+// commit that a person runs, and the fork's loop then checks and reviews the straight line in full,
+// as after any rebase made by hand. The caller holds the lifecycle lock and has fetched the fork's
+// commits into the parent; the parent's commit is fetched into the fork here so the rebase it names
+// can run.
 func (c *Control) refuseReviewedMergeCommits(repo, name string, candidate tasks.ForkCandidate) error {
 	merges, err := tasks.MergeCommitsOutside(repo, "HEAD", candidate.Head)
 	if err != nil {
@@ -50,16 +53,15 @@ func (c *Control) refuseReviewedMergeCommits(repo, name string, candidate tasks.
 	if len(merges) == 0 {
 		return nil
 	}
-	branch := gitBranch(repo)
-	if err := tasks.RequestForkCandidateRebaseLocked(repo, candidate, forkspace.GitOut(repo, "rev-parse", "HEAD"), branch, tasks.RebaseCauseConflict); err != nil {
+	ws := forkspace.Workspace(repo, name)
+	onto := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if err := forkspace.GitRun(ws, "fetch", "--quiet", repo, "HEAD"); err != nil {
+		return fmt.Errorf("%s: fetching the parent into the fork: %w", name, err)
+	}
+	if err := tasks.RequestForkCandidateRebaseLocked(repo, candidate, onto, gitBranch(repo), tasks.RebaseCauseMerges); err != nil {
 		return err
 	}
-	return ui.CommandFailed("Fork "+name+"'s reviewed commits include a merge commit",
-		mergeCommitsCause(merges)+" Nothing was merged. The fork's loop rebases them into a straight line onto "+
-			parentBranchWords(branch)+", and the result is reviewed again before it can merge.",
-		[2]string{"Rebase and review:", "coop fork " + name + " --loop"},
-		[2]string{"Then merge it:", "coop fork merge " + name},
-		[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})
+	return MergeCommitsError(ws, name, onto, merges, " Nothing was merged.")
 }
 
 // isolatedUnpublishedBase is the source commit above which an isolated fork's work is not published

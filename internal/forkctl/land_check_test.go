@@ -199,6 +199,49 @@ func TestLandStopsWhenTheBranchAlreadyHasATaskCommit(t *testing.T) {
 	}
 }
 
+// Reviewed A (removes the line, bound to the task), A' (puts it back, no trailer) and C (adds g.txt),
+// on a branch that made A's change and then A”s. The rebase skips both, and the line edits still
+// match the reviewed change (g.txt alone), but the task would land with no commit of its own. The
+// land refuses it as the other skipped-commit case, rather than marking the task done without one.
+func TestLandRefusesASkippedTaskCommitEvenWhenTheEditsMatch(t *testing.T) {
+	setReadme := func(t *testing.T, dir, content, message string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, dir, "commit", "-qam", message)
+	}
+	original := ""
+	history := func(t *testing.T, ws, id string) {
+		data, err := os.ReadFile(filepath.Join(ws, "README.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		original = string(data)
+		setReadme(t, ws, "", "remove the line\n\nCoop-Task: "+id)
+		setReadme(t, ws, original, "put the line back")
+		if err := os.WriteFile(filepath.Join(ws, "g.txt"), []byte("g\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "add", "g.txt")
+		git(t, ws, "commit", "-qm", "add g")
+	}
+	repo, _, _, identity, c := prepareForkTaskCandidateHistory(t, "task-skipped-match", false, history, nil)
+	setReadme(t, repo, "", "main removes the line")
+	setReadme(t, repo, original, "main puts it back")
+	parent := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") || !strings.Contains(err.Error(), "is on 0 commit(s)") {
+		t.Fatalf("merge whose rebase skips the task's commit with matching edits = (%v, %v)", landed, err)
+	}
+	if forkspace.GitOut(repo, "rev-parse", "HEAD") != parent {
+		t.Fatal("the parent moved")
+	}
+	if rebase, ok, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || !ok || rebase.Cause != tasks.RebaseCauseSkipped {
+		t.Fatalf("request = %+v, %v, %v; want a skipped commit's", rebase, ok, err)
+	}
+}
+
 // A binding problem from another cause (here a task commit doubled) is not a skipped commit just
 // because some other commit, one without a trailer, matches a parent commit's patch: the skipped
 // commits that count are the ones whose own task lost a commit.
@@ -257,6 +300,26 @@ func TestForkLsShowsAShallowFork(t *testing.T) {
 	s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil))
 	if s.stateCell() != "changed" || s.driftLine() != "Changed: its repository is shallow; coop fork merge "+identity.Name+" names the file to remove" {
 		t.Fatalf("shallow fork: state %q, %q", s.stateCell(), s.driftLine())
+	}
+}
+
+// The count that decides whether the bindings are read fails closed: a count git cannot give is an
+// error the land refuses on, never "nothing dropped", which would skip the binding check.
+func TestRebaseDroppedCommitsFailsClosed(t *testing.T) {
+	_, ws, _, _, _ := prepareForkTaskCandidate(t, "task-count")
+	head := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	base := forkspace.GitOut(ws, "rev-parse", "HEAD~1")
+	if dropped, err := rebaseDroppedCommits(ws, base, head, base, head); err != nil || dropped {
+		t.Fatalf("same commits = %v, %v; want none dropped", dropped, err)
+	}
+	if dropped, err := rebaseDroppedCommits(ws, head, head, base, head); err != nil || !dropped {
+		t.Fatalf("a rebase that left no commit = %v, %v; want dropped", dropped, err)
+	}
+	missing := strings.Repeat("e", 40)
+	for _, args := range [][4]string{{base, missing, base, head}, {base, head, base, missing}, {missing, missing, missing, missing}} {
+		if dropped, err := rebaseDroppedCommits(ws, args[0], args[1], args[2], args[3]); err == nil {
+			t.Errorf("count over a missing commit %v = %v with no error; want a refusal", args, dropped)
+		}
 	}
 }
 

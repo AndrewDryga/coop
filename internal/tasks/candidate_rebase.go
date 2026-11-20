@@ -32,6 +32,10 @@ const (
 	// skips that commit and its task loses its commit. No rebase keeps it, so the loop refuses before
 	// any agent runs and a person decides.
 	RebaseCauseSkipped = "skipped"
+	// RebaseCauseMerges: the reviewed round, reviewed before Coop refused merge commits at review,
+	// holds one. The loop runs no agent for it: a person straightens the commits onto the parent
+	// commit with git rebase, and the loop checks and reviews the result.
+	RebaseCauseMerges = "merges"
 )
 
 // forkCandidateRebase records that a reviewed round's merge conflicted with the parent branch, so the
@@ -77,7 +81,7 @@ func validRebaseRequest(rebase forkCandidateRebase, identity forkspace.Identity)
 	return rebase.Version == forkCandidateRebaseVersion && rebase.Fork == identity && validAssignmentID(rebase.CandidateID) &&
 		rebase.Onto != "" && validCommitID(rebase.Onto) &&
 		rebase.Branch != "" && ValidTaskText(rebase.Branch, false, forkCandidateBranchLimit) && !rebase.CreatedAt.IsZero() &&
-		(rebase.Cause == RebaseCauseConflict || rebase.Cause == RebaseCauseChanged || rebase.Cause == RebaseCauseSkipped) &&
+		(rebase.Cause == RebaseCauseConflict || rebase.Cause == RebaseCauseChanged || rebase.Cause == RebaseCauseSkipped || rebase.Cause == RebaseCauseMerges) &&
 		(rebase.Verification == "") == (rebase.VerifiedTree == "") && validCommitID(rebase.VerifiedTree) &&
 		(rebase.Verification == "" || ValidTaskText(rebase.Verification, true, forkRebaseVerificationLimit))
 }

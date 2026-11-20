@@ -49,9 +49,14 @@ func TestReviewedCandidateWithAMergeCommitIsNotLanded(t *testing.T) {
 	parent := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	var block *ui.UsageError
 	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
-	if landed || !errors.As(err, &block) || block.Headline != "Fork "+identity.Name+"'s reviewed commits include a merge commit" ||
-		!strings.Contains(err.Error(), "coop fork "+identity.Name+" --loop") {
-		t.Fatalf("merge of a candidate with a merge commit = (%v, %v)", landed, err)
+	if landed || !errors.As(err, &block) || block.Headline != "Fork "+identity.Name+"'s commits include a merge commit" ||
+		!strings.Contains(err.Error(), " rebase "+parent+" && coop fork "+identity.Name+" --loop") || !strings.Contains(err.Error(), "Nothing was merged.") {
+		t.Fatalf("merge of a candidate with a merge commit = (%v, %v); want the git rebase a person runs", landed, err)
+	}
+	// No agent straightens a merge, so ls names the same rebase rather than a conflict for the loop.
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "changed" ||
+		s.driftLine() != "Changed: its commits include a merge commit; coop fork merge "+identity.Name+" names the git rebase that straightens them" {
+		t.Fatalf("fork after the refusal: state %q, %q", s.stateCell(), s.driftLine())
 	}
 	if _, err := os.Stat(filepath.Join(repo, "e.txt")); !errors.Is(err, os.ErrNotExist) || forkspace.GitOut(repo, "rev-parse", "HEAD") != parent {
 		t.Fatalf("content no review saw reached the parent (e.txt: %v)", err)
@@ -60,8 +65,8 @@ func TestReviewedCandidateWithAMergeCommitIsNotLanded(t *testing.T) {
 		t.Fatalf("land journal after the refusal = %v, %v", pending, err)
 	}
 	rebase, ok, err := tasks.ReadForkCandidateRebase(repo, identity)
-	if err != nil || !ok || rebase.Onto != parent {
-		t.Fatalf("rebase request = %+v, %v, %v; want one onto %s", rebase, ok, err, parent)
+	if err != nil || !ok || rebase.Onto != parent || rebase.Cause != tasks.RebaseCauseMerges {
+		t.Fatalf("rebase request = %+v, %v, %v; want a merge commit's onto %s", rebase, ok, err, parent)
 	}
 	// The parent did not move, so onto is already in the candidate's history: only the merge makes
 	// the rebase unfinished, and a loop that took it as finished would merge, be refused, and repeat.

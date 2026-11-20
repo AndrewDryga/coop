@@ -2001,8 +2001,13 @@ func (a *app) checkForkRebaseTree(repo, ws, name string, candidate tasks.ForkCan
 			// rerun would end the same way, so say what to change.
 			cause = "The check pass left tracked files of " + name + " changed, which a gate that writes to files git tracks does. Coop keeps checks only of the exact, clean rebased tree, so every run ends here until the gate writes its output only to ignored paths (or the agent stops editing)."
 		}
+		back := "git -C " + shellWord(ws) + " checkout -f -B " + shellWord(name) + " " + head
+		if forkctl.RebaseInProgress(ws) {
+			// git refuses to switch branches in the middle of a rebase.
+			back = "git -C " + shellWord(ws) + " rebase --abort && " + back
+		}
 		return 1, ui.CommandFailed("Fork "+name+" changed during its rebase check", cause+" Nothing was reviewed or merged.",
-			[2]string{"Go back to the rebased commit:", "git -C " + shellWord(ws) + " checkout -f -B " + shellWord(name) + " " + head},
+			[2]string{"Go back to the rebased commit:", back},
 			[2]string{"Then check and review it:", spec.Continue},
 			[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})
 	}

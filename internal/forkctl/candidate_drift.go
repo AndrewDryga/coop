@@ -46,6 +46,8 @@ func forkCandidateDrift(ws, name string, candidate tasks.ForkCandidate, head str
 			return driftNone
 		case rebase.Cause == tasks.RebaseCauseChanged:
 			return driftChanged
+		case rebase.Cause == tasks.RebaseCauseMerges:
+			return driftMerges // a person straightens it; no agent pass does
 		}
 		return driftConflicts
 	}
@@ -289,6 +291,12 @@ const (
 	// RebaseShallow: the fork's repository is shallow, so nothing it says can be checked.
 	RebaseShallow
 )
+
+// RebaseInProgress says git has a rebase in progress in the fork, in its own git dir (where a box or
+// a person runs one) or Coop's view of it, so advice that moves its branch must abort it first.
+func RebaseInProgress(ws string) bool {
+	return untrustedRebaseState(ws) != "" || leftoverRebaseState(ws) != ""
+}
 
 // CheckRebase reports how far the fork's rebase onto the parent commit onto got, whoever ran it.
 func CheckRebase(ws, name, onto string) RebaseResult {

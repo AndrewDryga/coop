@@ -101,7 +101,10 @@ Every refusal is `forkctl.MergeCommitsError` with the `git rebase` onto the revi
 `onto` while a request is open): from the loop before supersession, from the rebase pass before any
 agent runs and after one that kept a merge (another agent run would only keep it again), and from
 merge and ls (`driftMerges`). The rebase prompt says rebase, never merge. A round reviewed before this check is refused at merge: an ordinary fork gets a rebase
-request, as a conflict does (`refuseReviewedMergeCommits`); an isolated one can only be discarded.
+request with the `merges` cause (`refuseReviewedMergeCommits`, which fetches the parent's commit into
+the fork and names the `git rebase` onto it; ls shows `driftMerges`), since no agent pass straightens
+a merge; once a person ran it, the loop's check pass and a full review follow. An isolated one can
+only be discarded.
 The land then checks it lands exactly the reviewed change (`landedAsReviewed`, land_check.go).
 "The parent did not move" is decided from raw objects (`tasks.InRawHistory`); then the rebased tree
 must be the reviewed tree. When it moved, the rebased change from the parent must make the same line
@@ -109,7 +112,9 @@ edits (`lineEdits`: `git diff -U0`, no line numbers or blob names) as the review
 the candidate's straight line of commits starts (`tasks.ForkCommitsBase`, raw); a mismatch retires
 the journal and records a rebase request with a cause (`tasks.RebaseCause*`, `cause` in the request
 file, omitted for a conflict). When the rebased commits lost a Coop-Task binding
-(`RebaseBindingProblems` over the land's own rebased head) the parent already has a task's commit:
+(`RebaseBindingProblems` over the land's own rebased head, read only when the rebase dropped
+commits, and checked before the line edits, since the parent having a change and its undoing leaves
+them matching) the parent already has a task's commit:
 a rebase pass could only skip it again or keep it empty, which review fails, so the cause is
 `skipped` and merge, loop (before any agent, `SkippedCommitError`) and ls (`driftSkipped`) all stop
 with "discard, or remove the branch's commit with that change from its history and merge again". A
@@ -147,6 +152,11 @@ descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork
 ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
 
 ## Changelog
+- 2026-11-19 — a reviewed round with a merge commit read as "conflicts" and promised a loop that runs
+  no agent; it now has the `merges` cause and names the git rebase. A skipped task commit whose
+  edits still matched landed with its task commit-less; it is now refused as the other skipped case.
+  The check pass's go-back advice names `git rebase --abort` when a rebase is in progress (task
+  2026-11-19-tidy-three-leftovers-on-the-fork-rebase-path-mer).
 - 2026-11-19 — a hand rebase had no REBASE CHECK lines, so its first review failed as stale and a
   rework run followed; a skipped task commit sent the loop into an empty-commit rework that ended in
   a decision; ls said "conflicts" for a changed land and showed nothing for a shallow fork; "Commit
