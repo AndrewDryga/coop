@@ -1546,6 +1546,19 @@ The worker sends Git and LFS data directly from the saved candidate to GitHub, a
 draft PR or updates the exact existing PR owned by the App. If a person has already marked that
 PR ready for review, co:op preserves that choice.
 
+A first publish settles as `published` only with a GitHub App installation token and the `actor_id`
+of that App's bot user, because the worker accepts a PR it opened only when the bot is its author.
+A refusal in this mode doesn't always mean nothing was written. The worker looks for the PR
+first. When there is none, it pushes the branch and looks again before it opens one, because an
+earlier attempt may have opened it, so `publication_existing_pull_request_changed` can arrive
+after the push. The worker checks the PR GitHub returns after it opened the draft PR or updated
+its title and body, so `publication_pull_request_mismatch` can arrive after both writes. A retry
+after a lost response can likewise end in a refusal, such as `publication_authorization_revoked`,
+after an earlier attempt pushed. The branch and PR stay on GitHub. A personal token, or an `actor_id` that isn't the App's bot, gives exactly this
+result. Fix the grant, then check GitHub before you publish again: a later publish to the same
+branch is refused with `publication_existing_pull_request_changed` while a PR the App doesn't own
+exists for it, even a closed one, so close that PR and publish to a new branch.
+
 To update an existing PR owned by a person, send `mode: "existing_pull_request"`, its exact
 number, branch, base branch and `expected_head`. This requires a review whose `parent_head`
 equals both that expected head and the job's selected commit, with a passed check and a publishable
@@ -1558,10 +1571,11 @@ required bounded strings in the request but are unused in this mode.
 A confirmed push has a receipt even when the subsequent PR read fails or observes changed
 metadata. GitHub's PR view can lag a push by a few seconds, so the worker reads the PR again for
 up to 15 seconds before it reports `published_target_unverified`; it reports `published` only
-after it sees the pushed commit on the PR. These results carry `target_observation` alongside the original branch, commit and PR
-identity. Its state is `changed_after_push` or `unverified_after_push`, with the bounded observed
-refs, repository IDs, head and PR state when available. A controller must report the warning and
-must not treat this as permission to resolve review threads or continue automatic edits.
+after it sees the pushed commit on the PR. These results carry `target_observation` alongside the
+original branch, commit and PR identity. Its state is `changed_after_push` or
+`unverified_after_push`, with the bounded observed refs, repository IDs, head and PR state when
+available. A controller must report the warning and must not treat this as permission to resolve
+review threads or continue automatic edits.
 
 The worker journals an attempted push before Git runs and retains confirmed results independently
 of command acknowledgements. A confirmed result replays without new credentials. If an earlier
