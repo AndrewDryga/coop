@@ -875,7 +875,12 @@ or GitHub token in this document.</p>
 then downloads Git and LFS data directly from GitHub and verifies the complete working tree.
 Repository files such as <code>.gitmodules</code> and <code>.lfsconfig</code> can&#39;t redirect those authenticated requests.
 The job fails if history or LFS files are missing, submodule commit references don&#39;t match, or
-there isn&#39;t enough disk space. A job with <code>source: null</code> uses an isolated empty workspace.</p>
+there isn&#39;t enough disk space. When GitHub answers that a commit or ref the job names doesn&#39;t
+exist, the worker tries 3 times in all, with a fresh grant each time, because a commit pushed a
+moment ago can be missing for a short while. Then the create command fails with <code>invalid_command</code>
+and the detail &#34;a commit or ref the job names is not on GitHub&#34;. A network or GitHub server error
+is tried again for as long as the command is delivered. A job with <code>source: null</code> uses an isolated
+empty workspace.</p>
 <h4 id="session-endpoints">Session endpoints</h4>
 <p>The public session response identifies the fixed repository source, <code>job_ref</code>, <code>job_digest</code>, model
 target, execution mode, project exposure settings, saved network settings and repository freshness.
@@ -1652,6 +1657,18 @@ approval format. A <code>403</code> permanently refuses this operation. Temporar
 <p>The worker sends Git and LFS data directly from the saved candidate to GitHub, and creates a
 draft PR or updates the exact existing PR owned by the App. If a person has already marked that
 PR ready for review, co:op preserves that choice.</p>
+<p>A first publish settles as <code>published</code> only with a GitHub App installation token and the <code>actor_id</code>
+of that App&#39;s bot user, because the worker accepts a PR it opened only when the bot is its author.
+A refusal in this mode doesn&#39;t always mean nothing was written. The worker looks for the PR
+first. When there is none, it pushes the branch and looks again before it opens one, because an
+earlier attempt may have opened it, so <code>publication_existing_pull_request_changed</code> can arrive
+after the push. The worker checks the PR GitHub returns after it opened the draft PR or updated
+its title and body, so <code>publication_pull_request_mismatch</code> can arrive after both writes. A retry
+after a lost response can likewise end in a refusal, such as <code>publication_authorization_revoked</code>,
+after an earlier attempt pushed. The branch and PR stay on GitHub. A personal token, or an <code>actor_id</code> that isn&#39;t the App&#39;s bot, gives exactly this
+result. Fix the grant, then check GitHub before you publish again: a later publish to the same
+branch is refused with <code>publication_existing_pull_request_changed</code> while a PR the App doesn&#39;t own
+exists for it, even a closed one, so close that PR and publish to a new branch.</p>
 <p>To update an existing PR owned by a person, send <code>mode: &#34;existing_pull_request&#34;</code>, its exact
 number, branch, base branch and <code>expected_head</code>. This requires a review whose <code>parent_head</code>
 equals both that expected head and the job&#39;s selected commit, with a passed check and a publishable
@@ -1661,10 +1678,13 @@ with an explicit lease for that exact old commit. A newer or deleted branch is n
 This mode never creates a PR or changes its title, body or draft state; <code>title</code> and <code>body</code> remain
 required bounded strings in the request but are unused in this mode.</p>
 <p>A confirmed push has a receipt even when the subsequent PR read fails or observes changed
-metadata. These results carry <code>target_observation</code> alongside the original branch, commit and PR
-identity. Its state is <code>changed_after_push</code> or <code>unverified_after_push</code>, with the bounded observed
-refs, repository IDs, head and PR state when available. A controller must report the warning and
-must not treat this as permission to resolve review threads or continue automatic edits.</p>
+metadata. GitHub&#39;s PR view can lag a push by a few seconds, so the worker reads the PR again for
+up to 15 seconds before it reports <code>published_target_unverified</code>; it reports <code>published</code> only
+after it sees the pushed commit on the PR. These results carry <code>target_observation</code> alongside the
+original branch, commit and PR identity. Its state is <code>changed_after_push</code> or
+<code>unverified_after_push</code>, with the bounded observed refs, repository IDs, head and PR state when
+available. A controller must report the warning and must not treat this as permission to resolve
+review threads or continue automatic edits.</p>
 <p>The worker journals an attempted push before Git runs and retains confirmed results independently
 of command acknowledgements. A confirmed result replays without new credentials. If an earlier
 attempt has no confirmed result and permission is then revoked or the branch changes, the terminal

@@ -190,9 +190,12 @@ coop fork research                 # the host remembers isolation
 coop fork review research --stat
 coop fork merge research --yes
 </code></pre></div>
-<p>An isolated fork keeps its own Git metadata and object files. co:op prevents the box from mounting
-your parent checkout or its Git storage, including through another path, a service or a volume
-that co:op inspects. The agent can still create commits and branches and run rebase inside the
+<p>An isolated fork keeps its own Git metadata and object files. It starts as a copy of your
+repository&#39;s branches as they were when you created it, so the agent can read their history. co:op
+copies nothing your repository commits after that into it, not when a merge conflicts and not when
+one lands. co:op prevents
+the box from mounting your parent checkout or its Git storage, including through another path, a
+service or a volume that co:op inspects. The agent can still create commits and branches and run rebase inside the
 fork.</p>
 <p>Isolation stays enabled when you reopen the fork, run a detached loop or connect through ACP. You
 can&#39;t convert an existing ordinary fork, so you must create a new isolated one. Ordinary forks and
@@ -483,7 +486,12 @@ commits it had. The rebased work goes through the same full candidate review as 
 earlier review saw it, and the reviewer gets the checks the pass ran. Only that reviewed commit can
 merge. If the loop stops before the review, run <code>coop fork &lt;name&gt; --loop</code> again: a finished rebase
 goes straight to review, and an unfinished one, even one stopped in the middle, is redone, so never
-reset the fork by hand. If the rebase leaves none of the fork&#39;s commits because your branch already
+reset the fork by hand. You can also rebase the fork yourself, for example when co:op names the
+<code>git rebase</code> that straightens a merge commit. Then no pass reported checks on your result, so the
+loop first runs one check-only pass: its agent runs your merge gate and <code>git diff --check</code> on the
+rebased commits, changes nothing, and the reviewer gets what it reports. If that pass changes the
+fork, co:op stops before the review. A merge gate that writes to tracked files does that every time,
+so have it write its output only to ignored paths. If the rebase leaves none of the fork&#39;s commits because your branch already
 has the work, there is nothing to review or merge, and the loop says so: discard the fork&#39;s work
 with <code>coop fork rm &lt;name&gt; --force</code>, which returns its tasks to the queue, and decide there what they
 still need. If it left none because the rebase dropped them, co:op says which changes are missing:
@@ -494,15 +502,34 @@ on top of your branch, so a merge commit among them could bring back a change th
 diff, the one the review read, does not show. A fork&#39;s loop therefore refuses to start a review of
 commits that include a merge commit and names the <code>git rebase</code> that straightens them; <code>coop fork merge</code> and <code>coop fork ls</code> say the same, and while a conflict waits for its rebase the loop says it
 before any agent runs. A reviewed round that has one anyway is not merged: for an ordinary fork,
-<code>coop fork merge</code> sends it to the same rebase and review as a conflict.</p>
+<code>coop fork merge</code> names the <code>git rebase</code> onto your branch that straightens it. No agent runs for it;
+once you have run that rebase, the fork&#39;s loop checks and reviews the result like any rebase you
+made by hand.</p>
 <p>A merge also checks that it lands exactly what was reviewed. When your branch has moved, the
-rebased commits must make the same line changes as the reviewed ones; a rebase skips a commit your
-branch already has, which can change what the rest do, and then the fork goes to the same rebase and
-review as after a conflict. A fork whose repository is shallow is refused until its <code>.git/shallow</code>
-file is removed, since git would then misread its history.</p>
-<p>This path is for ordinary forks. An <code>--isolated</code> fork never shares history with your branch, so
-co:op cannot rebase it there; when its commits conflict, change your branch until they apply, or
-discard its work with <code>coop fork rm &lt;name&gt; --force</code> and let a new fork redo it.</p>
+rebased commits must make the same line changes as the reviewed ones. When they don&#39;t, for example
+because your branch already has part of the change, the fork goes to the same rebase and review as
+after a conflict, and <code>coop fork ls</code> shows it as &#34;changed after review&#34;. A rebase skips a commit
+whose change your branch already has. When that commit is one a task&#39;s <code>Coop-Task</code> trailer binds,
+the task would be left without a commit of its own, and no rebase or review can give it one back. So
+the merge stops at once and says so, even when the rest of the change would land exactly as
+reviewed, and the loop then runs no agent for it. When a conflict came
+first, the loop&#39;s rebase pass is what finds it: that one run ends with the same answer, and the loop
+runs no agent after it. Discard the fork&#39;s work with <code>coop fork rm &lt;name&gt; --force</code>, which returns its
+tasks to the queue, or remove your branch&#39;s commit with that change from its history and merge
+again. Reverting it is not enough: a rebase skips a commit whose change appears anywhere in your
+branch&#39;s history since the fork started, even if a later commit undid it. Once a merge gets past
+this check, the refusal is gone, even if your merge gate then fails.</p>
+<p>A fork whose repository is shallow is refused until its <code>.git/shallow</code> file is removed, since git
+would then misread its history; until then <code>coop fork ls</code> shows a reviewed one as &#34;changed after
+review&#34;.</p>
+<p>This path is for ordinary forks. An <code>--isolated</code> fork holds your repository&#39;s branches only as they
+were when it was created, and co:op copies none of your branch&#39;s later commits into it, so it cannot
+rebase the fork onto your branch for its agent. When its reviewed commits conflict with your branch, <code>coop fork ls</code>
+shows it as &#34;conflicts with your branch&#34; and the merge names two ways out: change your branch until
+the fork&#39;s commits apply and merge again, or discard its work with <code>coop fork rm &lt;name&gt; --force</code>
+and start a new isolated fork from your current branch. Don&#39;t cherry-pick its commits into your
+checkout by hand, since that skips the checks co:op runs on an isolated fork&#39;s commits, and don&#39;t
+redo untrusted work in an ordinary fork, which gives the agent your checkout&#39;s Git storage.</p>
 <p>A fork whose branch moved after its final review shows as &#34;changed after review&#34; in <code>coop fork ls</code>,
 and <code>coop fork merge</code> refuses it. New commits on top of the reviewed one need another review, which
 the fork&#39;s loop gives them. Any other branch that no longer builds on the reviewed commit, such as

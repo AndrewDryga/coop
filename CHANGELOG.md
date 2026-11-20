@@ -4,6 +4,26 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A fork rebased by hand reaches its review without a wasted round.** After you rebase a fork
+  yourself, `coop fork <name> --loop` runs one check-only pass, which runs the checks and changes
+  nothing, and then the review. Before, the first review failed as stale.
+- **A fork whose task commit your branch already has stops at once.** `coop fork merge`,
+  `coop fork ls` and the loop give the same plain answer with the ways out, and no agent runs.
+  Removing that commit from your branch's history lets the fork merge; a revert is not enough. A
+  merge also no longer completes a task whose commit a rebase skipped.
+- **A reviewed fork that holds a merge commit gets the exact `git rebase` to run.** After it, the
+  loop checks and reviews the result. `coop fork ls` no longer shows a changed land as a
+  conflict or a shallow fork as ready. A request written for these cases is not readable by
+  15.0.0, which matters only if you downgrade with one open.
+- **A conflicted isolated fork says what you can do.** `coop fork merge` names the two ways out
+  and `coop fork ls` shows the conflict. The docs now state what an isolated fork holds: your
+  repository's branches as they were when you created it, and nothing committed later.
+- **Updating a person's pull request reports `published`.** GitHub takes a few seconds to show a
+  pushed commit on the pull request, and the worker used to answer `published_target_unverified`
+  almost every time. It now waits up to 15 seconds for GitHub to show it.
+- **A job whose commit or branch is missing on GitHub is refused after three tries.** Before, the
+  worker asked the controller for a new token every few seconds and never answered.
+- **The session API docs say which publish refusals can follow a push or an opened pull request.**
 - **`coop tasks done --force` closes a task that two published commits are bound to.** A task
   binds one commit, and the refusal asked you to drop the second commit's trailer, which a
   published commit cannot do. A person's `--force` now closes it, the task's log names the
