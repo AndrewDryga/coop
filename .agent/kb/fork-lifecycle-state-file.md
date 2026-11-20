@@ -2,8 +2,8 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go, internal/forkctl/rm.go, internal/forkctl/worktree_clean.go, internal/forkspace/discard_stage.go, internal/ui/confirm.go]
-updated: 2026-11-17
+sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go, internal/forkctl/rm.go, internal/forkctl/worktree_clean.go, internal/forkspace/discard_stage.go, internal/ui/confirm.go, internal/forkspace/gone_records.go, internal/forkctl/gone_records.go]
+updated: 2026-11-19
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
 folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
@@ -205,6 +205,24 @@ to a process or a container, or prints, it is supervision.
   land, discard, lock and log records are `0600`; opening an existing lock or log also tightens its
   mode. A fork's anchor is a hard link, so a fork needs the forks folder and the private folder on
   one disk (`requireOneDisk` refuses otherwise, naming both).
+- No record stores the project's path, so a project deleted without `coop fork rm` keeps its
+  records folder forever. Every execution makes `executions/` (a workspace reservation makes
+  `reservations/`) and removes only its own file, so most leftovers are folders with no file at all:
+  on 2026-11-19 this Mac held 3665 folders (3.0 MB), 3554 of them without a single file, 49 provably
+  of deleted /private/tmp projects (1.2 MB) and 58 whose project no record names (mostly lock files
+  only). `coop fork rm --gone` (`forkspace.GoneForkRecords`/`RemoveGoneForkRecords`,
+  internal/forkspace/gone_records.go) is the person's command for them: it counts a folder that holds
+  no file and has not changed for a day, or one where a record names a path whose SHA-256 is the
+  folder's name (or that path's `-forks` folder, from a fork's workspace) when neither the path nor
+  its forks folder exists while its parent folder does, holds other entries and is on the same
+  device as the folder above it (`projectGone`; no list of mount places: a missing parent may be an
+  unconnected disk, an empty one a bare mount point, another device a mount root). That keeps 48 of
+  the 49 measured /private/tmp folders, whose whole scratch parent was deleted. It needs a terminal
+  even with `--yes` (`goneStdinIsTerminal`), lists, asks, and re-checks each folder at removal: an
+  empty folder goes deepest first by plain rmdir, so a file made meanwhile stops it; a gone
+  project's folder is kept if any of its `.lock` files is held (a non-blocking flock, released at
+  once) before `os.Root.RemoveAll`. Lock files are never read and a folder with only them is kept:
+  removing a lock file another process holds would split its lock.
 - Builds up to v11.3.0 kept the records in `<repo>-forks/.coop`, which a box could write. Builds
   from v12.0.0 to v12.1.0 moved them into the private folder on first use. This build does not move
   them: `RequireNoOldForkRecords` (internal/forkspace/state.go) refuses the project, by name, when
@@ -273,6 +291,9 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-19 — records of deleted projects were kept forever; measured, and `coop fork rm --gone`
+  added as the person's command that lists and removes them (task
+  2026-11-19-clean-up-fork-records-whose-repository-is-gone).
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-06 — stop settles the fork's filtered runs after its label reap (`settleForkRuns` →
   `box.RecoverWorkspaceRuns`), once the worker is proved gone: a killed worker's guard, controller,

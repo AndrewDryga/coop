@@ -153,7 +153,8 @@ variables:
 - Service approvals, the files co:op hides from services, and the records it uses to clean up after
   a run that stopped without cleaning up. An approval you give in one shell applies in every other.
 - Fork records, and the locks that stop two launches from starting a project's services at once.
-  Locks kept in two places couldn't stop anything.
+  Locks kept in two places couldn't stop anything. `coop fork rm --gone` removes the records of
+  repositories that no longer exist.
 - [Task leases](loop.md#task-locks-and-claims), so two loops never work the same task.
 - The [worker's](session-api.md) session store and its control socket, where a worker keeps the
   identity it reconnects with. Use `--state` to choose another folder.

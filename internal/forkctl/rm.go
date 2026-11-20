@@ -354,19 +354,30 @@ func ForkUnmerged(repo, ws string) bool {
 
 func (c *Control) ForkRm(args []string) (int, error) {
 	const usage = "coop fork rm <name> [<options>]"
-	force := false
+	force, gone := false, false
 	var pos []string
 	for _, x := range args {
 		switch x {
 		case "--force", "-f":
 			force = true
+		case "--gone":
+			gone = true
 		case "--yes", "-y": // accepted so `--yes` skips the confirm below (read via hasYes)
 		default:
 			if strings.HasPrefix(x, "-") {
-				return 2, ui.UnknownOptionAmong(x, "coop fork rm", []string{"--force", "-f", "--yes", "-y"})
+				return 2, ui.UnknownOptionAmong(x, "coop fork rm", []string{"--force", "-f", "--gone", "--yes", "-y"})
 			}
 			pos = append(pos, x)
 		}
+	}
+	if gone {
+		if force {
+			return 2, ui.ConflictingOptions("--gone", "--force", "coop fork rm")
+		}
+		if len(pos) > 0 {
+			return 2, ui.UnexpectedArgument(pos[0], "coop fork rm", "coop fork rm --gone [--yes]")
+		}
+		return c.removeGoneRecords(hasYes(args))
 	}
 	name, err := oneForkName("rm", usage, pos)
 	if err != nil {

@@ -249,6 +249,15 @@ discarded work as done. Check
 `coop fork ls` and `coop fork review` before discarding a fork. [Land it](#land-it) explains the
 different effect of `--force` on `coop fork merge`.
 
+co:op keeps each project's fork records in its private state until you delete the forks, so a
+repository you delete without `coop fork rm` leaves them behind. `coop fork rm --gone`, run from
+anywhere at a terminal, lists the repositories that no longer exist, then asks before it removes
+their records and any record folders that hold nothing. `--yes` skips the question but not the
+terminal. A repository counts as gone only when it and its forks folder are missing while the folder
+that held it still holds other files and is on the same disk as the folder above it. Any other
+repository keeps its records: one on a disk that isn't connected, one whose whole parent folder was
+deleted, and one co:op can't match to its records. A repository you moved loses its fork records.
+
 ## Review
 
 `coop fork review <name>` shows a review summary before the patch:
