@@ -63,7 +63,9 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 	if reopen != nil {
 		return fmt.Errorf("host-authorized audit rework needs zero new commits for verification-only completion, or exactly one real repair commit without a Coop-Task trailer preserving the reviewed history")
 	}
-	if bound := tasks.CommitsForTask(repo, base, id); len(bound) == 1 && len(tasks.CommitsForTask(repo, base+".."+head, id)) == 0 {
+	// Counted in HEAD's history, not base's: an earlier attempt refused for two bound commits whose
+	// follow-up this attempt made unbound, as that refusal said, has one left, and the fold is the way on.
+	if bound := tasks.CommitsForTask(repo, head, id); len(bound) == 1 && len(tasks.CommitsForTask(repo, base+".."+head, id)) == 0 {
 		return fmt.Errorf("%w: %s", errCompletionBinding, boundReworkRecovery(id, bound[0]))
 	}
 	cause := ""

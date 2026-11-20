@@ -34,7 +34,7 @@ func TestRemoveLeftoverRecordsTakesOnlyTheForksOwn(t *testing.T) {
 	preview := IsolatedRecordPrefix("preview", mine) + "-5e6f7a8b"
 	link := IsolatedRecordPrefix("candidate", mine) + "-link"
 	own := []string{
-		"perf.log",
+		"perf.log", "perf.continue",
 		IsolatedRecordPrefix("source", mine) + ".json",
 		filepath.Join(candidate, "objects", "pack"),
 		filepath.Join(preview, "README.md"),
@@ -47,7 +47,7 @@ func TestRemoveLeftoverRecordsTakesOnlyTheForksOwn(t *testing.T) {
 		t.Fatal(err)
 	}
 	kept := []string{
-		"other.log", "perf.lock", "perf.generation.json",
+		"other.log", "other.continue", "perf.lock", "perf.generation.json",
 		IsolatedRecordPrefix("source", theirs) + ".json",
 		filepath.Join(IsolatedRecordPrefix("candidate", theirs)+"-1a2b3c4d", "HEAD"),
 		filepath.Join(IsolatedRecordPrefix("preview", theirs)+"-5e6f7a8b", "README.md"),

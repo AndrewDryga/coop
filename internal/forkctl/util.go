@@ -78,6 +78,11 @@ func safeLines(s string) string {
 // approve reports whether a destructive step is approved. --yes approves without asking; otherwise
 // it prompts interactively. In a non-interactive run (no TTY) without --yes it refuses rather than
 // silently taking the default — so a pipe or CI job can't land work and delete a fork on its own.
+//
+// It asks only for the land (merge, and an isolated fork's publish), and defaults to Yes on purpose:
+// the destructive-confirm-gate rule card says "Deletion prompts default to **No**; only a
+// land-then-remove flow may default Yes on the *land* step". Landing reviewed work is what the person
+// ran merge for and can be reverted; the fork's removal after it asks again, defaulting to No.
 func approve(prompt string, yes bool) bool {
 	if yes {
 		return true

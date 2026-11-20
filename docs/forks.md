@@ -259,7 +259,8 @@ their records and any record folders that hold nothing. `--yes` skips the questi
 terminal. A repository counts as gone only when it and its forks folder are missing while the folder
 that held it still holds other files and is on the same disk as the folder above it. Any other
 repository keeps its records: one on a disk that isn't connected, one whose whole parent folder was
-deleted, and one co:op can't match to its records. A repository you moved loses its fork records.
+deleted, and one co:op can't match to its records, such as one whose forks never took a task: their
+records name no repository. A repository you moved loses its fork records.
 
 ## Review
 

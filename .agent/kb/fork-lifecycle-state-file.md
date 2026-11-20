@@ -305,6 +305,11 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-20 — `coop fork rm` (and merge's delete) left `<name>.continue` behind; it now goes with the
+  log in `RemoveLeftoverRecordsLocked`. The `.lock` stays (a held lock file is never removed), and
+  a fork that never took a task writes no record naming its repository, so `--gone` cannot attribute
+  such a folder; its help and docs/forks.md now say so (task
+  2026-11-20-fix-four-rough-edges-found-by-the-live-isolated).
 - 2026-11-20 — an ended execution, launch note or reservation now removes its empty folder and an
   empty project records folder (rmdir only; writers make a removed folder again on ENOENT), so new
   runs leave no empty folders; `rm --gone` still sweeps the old ones (task

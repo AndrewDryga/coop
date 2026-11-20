@@ -777,8 +777,8 @@ func RemoveWorkerState(repo, name string) error {
 }
 
 // RemoveLeftoverRecordsLocked removes what a deleted fork leaves in the records folder that nothing
-// else can use: its log, the record of its last isolated publication and the private copies its
-// reviews kept. identity is the fork's, or the zero Identity for a fork that never had a generation,
+// else can use: its log, its continue note, the record of its last isolated publication and the
+// private copies its reviews kept. identity is the fork's, or the zero Identity for a fork that never had a generation,
 // which leaves only a log. The caller holds the lifecycle lock.
 //
 // The lock file stays. flock locks the file itself, so a command already waiting on it would lock a
@@ -810,7 +810,8 @@ func RemoveLeftoverRecordsLocked(repo, name string, identity Identity) error {
 	}
 	var failures []error
 	for _, entry := range entries {
-		leftover := entry.Name() == name+".log"
+		// The continue note only repeats a stopped worker's start command, which a removed fork has no use for.
+		leftover := entry.Name() == name+".log" || entry.Name() == name+".continue"
 		for _, prefix := range prefixes {
 			leftover = leftover || strings.HasPrefix(entry.Name(), prefix)
 		}

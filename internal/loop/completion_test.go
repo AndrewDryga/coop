@@ -528,6 +528,44 @@ func TestReopenedTaskFixedInAFollowUpCommitCompletes(t *testing.T) {
 	}
 }
 
+// N1 of the 2026-11-20 live pass: an attempt made two bound commits and was refused ("a task binds
+// one commit, so make the follow-ups unbound"). The next attempt did that, amending the follow-up to
+// drop its trailer, and was refused again with no way on, since the bound commit left was from before
+// it. The second refusal now names the fold into that commit, and following it completes the task.
+func TestFollowingTheMakeItUnboundAdviceInTheNextAttemptCompletes(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	start := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	git("add", "a.txt")
+	git("commit", "-q", "-m", "First part\n\nCoop-Task: task")
+	first := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "b.txt"), "b\n")
+	git("add", "b.txt")
+	git("commit", "-q", "-m", "Second part\n\nCoop-Task: task")
+	if err := checkAssignedCompletion(repo, start, "task", nil, nil); err == nil || !strings.Contains(err.Error(), "make the follow-ups unbound") {
+		t.Fatalf("first attempt with two bound commits = %v; want the make-it-unbound refusal", err)
+	}
+	// The next attempt starts where the refused one ended and follows that advice.
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	git("commit", "-q", "--amend", "-m", "Second part")
+	err := checkAssignedCompletion(repo, base, "task", nil, nil)
+	if !errors.Is(err, errCompletionBinding) || !strings.Contains(err.Error(), "git reset --soft "+first) ||
+		!strings.Contains(err.Error(), "git commit --amend --no-edit --only -- <changed paths>") {
+		t.Fatalf("second attempt after making the follow-up unbound = %v; want the fold into %s", err, first)
+	}
+	git("reset", "--soft", first)
+	git("commit", "-q", "--amend", "--no-edit", "--only", "--", "b.txt")
+	if err := checkAssignedCompletion(repo, base, "task", nil, nil); err != nil {
+		t.Fatalf("following the printed fold did not complete the task: %v", err)
+	}
+	if bound := tasks.CommitsForTask(repo, "", "task"); len(bound) != 1 || forkspace.GitOut(repo, "show", "HEAD:b.txt") != "b" {
+		t.Fatalf("history after the fold: bindings %v", bound)
+	}
+}
+
 func TestAuditReworkOutcomeRefusalNamesTheNormalCompletion(t *testing.T) {
 	for _, want := range []string{"outcome is refused", "re-close it with a normal completion, calling tasks_complete without outcome", "zero new commits"} {
 		if !strings.Contains(errAuditReworkOutcome.Error(), want) {

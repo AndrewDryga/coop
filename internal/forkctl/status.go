@@ -137,8 +137,10 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 				}
 			}
 			drift = forkCandidateDrift(ws, name, candidate, forkspace.GitOut(ws, "rev-parse", "HEAD"), open)
-			// Merge and the loop refuse a shallow fork before anything else, so ls says it first.
-			if RefuseShallowFork(ws, name) != nil {
+			// Merge and the loop refuse a shallow fork before anything else, so ls says it first. An
+			// isolated fork's merge refuses only a shallow file that cuts its unpublished commits, and
+			// keeps one a shallow clone gave it, so ls asks the same.
+			if isolated && isolatedShallowCut(repo, name, identity) || !isolated && RefuseShallowFork(ws, name) != nil {
 				drift = driftShallow
 			}
 			if drift == driftEmpty {

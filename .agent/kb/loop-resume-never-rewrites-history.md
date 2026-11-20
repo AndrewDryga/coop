@@ -3,7 +3,7 @@ name: loop-resume-never-rewrites-history
 description: a leaked box descendant un-completes committed work; resuming it later must never amend a non-HEAD commit, because that reparents the whole branch and cannot pass validation
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/committed_block.go, internal/taskmcp/tools.go, internal/tasks/completion_recovery.go, internal/tasks/completion_fingerprint.go, internal/loop/completion.go, internal/loop/iteration.go, internal/loop/prompts.go, internal/loop/ratelimit.go, internal/loop/loop.go, internal/box/supervisor/main.go, internal/box/run.go]
-updated: 2026-11-17
+updated: 2026-11-20
 ---
 A completed, committed task can land back in the queue with its work already in history. The chain,
 observed twice in emisar on 2026-08-01:
@@ -48,7 +48,10 @@ answers that shape with `boundReworkRecovery` instead of suggesting `already_sat
 `git commit --amend --no-edit --only -- <paths>` fold it into the bound commit (a `Coop-Recovery`
 amend when nothing changed); with another task's commit after it, block. Nothing but the task's own
 rework is rewritten, so no descendant is reparented. Accepting the unbound follow-up instead would
-hide its diff from reviews that find a task's commits by trailer.
+hide its diff from reviews that find a task's commits by trailer. The bound commits are counted in
+HEAD's history, not base's: an attempt refused for two bound commits ("make the follow-ups
+unbound") whose next attempt amends the follow-up unbound has one left in HEAD but two in base,
+and the fold is its way on too (N1 of the 2026-11-20 live pass; `countProblem` names it as well).
 
 **Committed, then blocked for a person.** A worker that commits and then blocks (a required gate
 cannot run in the box) left a task no later worker could close once other commits landed: it is
@@ -145,6 +148,9 @@ checked nothing" would again diff to nothing. For the same reason a history that
 parent (a root commit, an unreadable log) leaves the variable unset rather than falling back to HEAD.
 
 ## Changelog
+- 2026-11-20 — following "make the follow-up unbound" in the next attempt was refused with no way
+  on; the bound-rework fold now also answers it (counted in HEAD), with a test that follows the
+  printed advice (task 2026-11-20-fix-four-rough-edges-found-by-the-live-isolated).
 - 2026-11-17 — the body names the exported tasks.ResumePrefixFor (audit K3-6; checked internal/tasks/audit.go).
 - 2026-11-17 — the drain default now lives in the box supervisor's `descendantTimeout`, not
   image.go's shell; sources repointed.

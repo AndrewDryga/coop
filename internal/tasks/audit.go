@@ -3383,6 +3383,10 @@ func (scan taskBindingScan) countProblem(id string) string {
 	switch added := scan.newBound[id]; {
 	case len(added) == 0 && len(older) == 0:
 		return fmt.Sprintf("no commit carries the trailer %s", CoopTaskTrailer+": "+label)
+	case len(added) == 0 && len(older) == 1:
+		// A follow-up made unbound, as the refusals below advise, lands here in the next attempt.
+		return fmt.Sprintf("task %s's commit %s is from before this attempt, which added no commit with its trailer; fold this attempt's work for it into that commit (git reset --soft %s, then git commit --amend), when nothing but this task's work sits after it",
+			label, shortCommits(older), shortCommit(older[0]))
 	case len(added) == 0:
 		return fmt.Sprintf("task %s's commit %s is from before this attempt, which added no commit with its trailer", label, shortCommits(older))
 	case len(added) > 1:

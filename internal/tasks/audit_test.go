@@ -3583,6 +3583,17 @@ func TestBindingRefusalsNameCommitsTasksAndReasons(t *testing.T) {
 			t.Fatalf("empty attempt problems = %q", got)
 		}
 	})
+	t.Run("a binding only from before the attempt names the fold", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		commit(git, repo, "base")
+		first := commit(git, repo, "work\n\nCoop-Task: task-42")
+		base := commit(git, repo, "follow-up, its trailer since dropped")
+		head := commit(git, repo, "more work")
+		got := UnbindableTaskProblems(repo, base, head, []string{"task-42"}, touched)
+		if len(got) != 1 || !strings.Contains(got[0], "is from before this attempt") || !strings.Contains(got[0], "git reset --soft "+shortCommit(first)) {
+			t.Fatalf("problems = %q; want the fold into %s named", got, first)
+		}
+	})
 }
 
 // TestReportToleratedForeignBindings covers the report+journal shape for a harmless foreign binding:

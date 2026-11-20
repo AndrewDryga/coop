@@ -473,6 +473,39 @@ func assertIsolatedChangedLandRefused(t *testing.T, c *Control, repo string, ide
 	}
 }
 
+// coop fork ls agrees with merge about an isolated fork's shallow file: one at its boundary, as a
+// fork of a shallow clone has, is ready and merges; one that cuts its reviewed commits is shallow in
+// both. Before, ls called every shallow isolated fork changed.
+func TestLsAgreesWithMergeAboutAnIsolatedForksShallowFile(t *testing.T) {
+	work := func(t *testing.T, ws, id string) {
+		if err := os.WriteFile(filepath.Join(ws, "g.txt"), []byte("g\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "add", "g.txt")
+		git(t, ws, "commit", "-qm", "add g\n\nCoop-Task: "+id)
+	}
+	repo, ws, _, identity, c := prepareForkTaskCandidateHistory(t, "task-isolated-shallow-ls", true, work, nil)
+	base, err := forkspace.IsolatedCreationBase(repo, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shallow := filepath.Join(ws, ".git", "shallow")
+	writeTaskFile(t, shallow, forkspace.GitOut(ws, "rev-parse", "HEAD")+"\n")
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.Drift != driftShallow {
+		t.Fatalf("ls with a cut into the reviewed commits = %q, %q; want shallow", s.stateCell(), s.driftLine())
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil || !strings.Contains(err.Error(), "repository is shallow") {
+		t.Fatalf("merge with a cut into the reviewed commits = (%v, %v); want the shallow refusal", landed, err)
+	}
+	writeTaskFile(t, shallow, base+"\n")
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "ready" || s.Drift != driftNone {
+		t.Fatalf("ls with a shallow file at the boundary = %q, %q; want ready, as merge allows it", s.stateCell(), s.driftLine())
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); !landed || err != nil {
+		t.Fatalf("merge with a shallow file at the boundary = (%v, %v)", landed, err)
+	}
+}
+
 // coop fork ls shows an isolated fork whose merge would land a changed change as not mergeable only
 // while the branch is where that merge met it; the record admits nothing new through the ancestry
 // fence, and once the branch changes so the commits apply as reviewed, ls says ready and the merge

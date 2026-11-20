@@ -197,6 +197,12 @@ rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the b
 reflog keeps.
 
 ## Changelog
+- 2026-11-20 — ls called any shallow isolated fork changed; it now asks `isolatedShallowCut`, as merge
+  does, so a shallow clone's inherited file reads ready. A task pass stopped by a first Ctrl-C
+  (exit 130, final review skipped) is restored to in progress and redone with the bound-rework fold
+  on the rerun: checked, never accepted unreviewed, one work run, as after a crash. The isolated
+  publish prompt stays [Y/n] by the destructive-confirm-gate rule's land-step exception (task
+  2026-11-20-fix-four-rough-edges-found-by-the-live-isolated).
 - 2026-11-20 — a first Ctrl-C during a rebase, check-only or candidate-review pass that succeeded did
   not stop the fork loop (each pass is its own engine run with its own soft stop), so it went on to a
   review or rework. The loop now shares `RunSpec.StopRequested` across passes and stops before the

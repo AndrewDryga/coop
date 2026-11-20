@@ -51,6 +51,7 @@ type sharedFilePasses struct {
 	work                    func(ws, id string) // replaces a work pass's commit when set
 	ctrlCIn                 string              // "rebase", "check", "review" or "work": a first Ctrl-C arrives during that pass, which still finishes
 	works                   int                 // work passes run
+	lastQueue               string              // the projected queue the last work pass finished its task in
 	reviewWantsRebaseChecks bool
 	rebases                 []loop.RebaseSpec
 	checks                  []loop.RebaseSpec
@@ -199,6 +200,11 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 	if err := os.Rename(dir, filepath.Join(queue, tasks.StateDone, id)); err != nil {
 		t.Error(err)
 		return 1, nil
+	}
+	p.lastQueue = queue
+	if p.ctrlCIn == "work" {
+		// What the engine returns when a first Ctrl-C let the task finish: its final review is skipped.
+		return loop.LoopInterruptedExitCode, nil
 	}
 	return 0, nil
 }
@@ -930,6 +936,51 @@ func TestForkCandidateReviewStopsAfterAFirstCtrlCBeforeItsRework(t *testing.T) {
 	}
 	if f.passes.works != works+1 || len(f.passes.reviews) != 4 {
 		t.Fatalf("rerun: %d rework passes, %d new reviews; want the rework and its review", f.passes.works-works, len(f.passes.reviews)-3)
+	}
+}
+
+// N10 of the 2026-11-20 live pass: a first Ctrl-C during a fork's task pass lets the task finish
+// and its between-task audit run, but skips its final review, so the engine exits 130. The fork loop
+// then treats the pass like any unaccepted completion: its copy of the task goes back to in progress
+// (RestoreFailedForkProjection), never accepted without that review, and the commit stays. The rerun
+// takes the task again; its agent folds the review into the bound commit as the bound-rework refusal
+// tells it (Coop-Recovery), and the task is reviewed and merges with one binding. That costs one work
+// run, the same as after a crash between completion and acceptance, and skips no review.
+func TestForkTaskPassStoppedByAFirstCtrlCIsReviewedOnTheRerun(t *testing.T) {
+	repo := initRepo(t)
+	ignoreTheQueue(t, repo)
+	commitOnMain(t, repo, "shared.txt", "base\n")
+	const id = "2026-11-20-stopped-task"
+	seedForkDecisionTask(t, repo, id)
+	a := forkNetworkPreflightApp(t, repo)
+	passes := &sharedFilePasses{t: t, ctrlCIn: "work"}
+	a.forkLoopRun = passes.run
+	ws, identity := setUpForkForDecision(t, repo, "alpha")
+	code, out, err := runForkLoopStoppingAfterReview(t, a, repo, ws, identity)
+	if code != loop.LoopInterruptedExitCode || passes.works != 1 || len(passes.reviews) != 0 {
+		t.Fatalf("loop stopped during its task pass = (%d, %v), %d work passes, %d reviews\n%s", code, err, passes.works, len(passes.reviews), out)
+	}
+	if _, err := os.Stat(filepath.Join(passes.lastQueue, tasks.StateInProgress, id)); err != nil {
+		t.Fatalf("the stopped pass's task was not put back in progress for its review: %v", err)
+	}
+	if bound := tasks.CommitsForTask(ws, "", id); len(bound) != 1 {
+		t.Fatalf("the stopped pass's commit = %v; want it kept", bound)
+	}
+	passes.ctrlCIn = ""
+	passes.work = func(ws, id string) {
+		git(t, ws, "commit", "-q", "--amend", "--only", "--no-edit", "--trailer", "Coop-Recovery: 2026-11-20T12:00:00Z")
+	}
+	if code, out, err := runForkLoopStoppingAfterReview(t, a, repo, ws, identity); code != 0 || err != nil {
+		t.Fatalf("rerun after the stop = (%d, %v)\n%s", code, err, out)
+	}
+	if passes.works != 2 || len(passes.reviews) != 1 {
+		t.Fatalf("rerun: %d work passes, %d reviews; want one more work pass and the review", passes.works, len(passes.reviews))
+	}
+	if code, out, err := mergeForkForTest(t, a, "alpha"); code != 0 || err != nil {
+		t.Fatalf("merge after the rerun = (%d, %v)\n%s", code, err, out)
+	}
+	if bound := tasks.CommitsForTask(repo, "", id); len(bound) != 1 {
+		t.Fatalf("merged bindings = %v; want one", bound)
 	}
 }
 

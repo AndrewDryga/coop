@@ -54,6 +54,7 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 			} else {
 				ui.Note("  %s · fork commit %s, rebased onto %s as %s", ui.Count(n, "commit"), candidate.sourceHead[:12], branch, candidate.head[:12])
 			}
+			// [Y/n], as merge's land step: see approve for why a land may default to Yes.
 			if !approve("Publish these commits?", yes) {
 				ui.Note("Cancelled. Parent source, index and refs are unchanged.")
 				declined = true
