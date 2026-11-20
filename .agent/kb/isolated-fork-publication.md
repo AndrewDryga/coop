@@ -3,7 +3,7 @@ name: isolated-fork-publication
 description: optional independent execution, exact private review, semantic parent preconditions and durable forward-only publication
 subsystem: forkspace
 sources: [internal/cli/fork_isolated.go, internal/forkspace/generation.go, internal/forkspace/state.go, internal/forkspace/isolated.go, internal/forkspace/isolated_admission_test.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_config.go, internal/forkspace/independent_tree.go, internal/forkspace/lfs.go, internal/forkspace/lfs_storage.go, internal/box/isolated_launch.go, internal/box/isolated_services.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_parent.go, internal/forkctl/isolated_land.go, internal/forkctl/isolated_commands.go, internal/forkctl/isolated_dirty.go, internal/forkctl/testhelpers_test.go, internal/forkspace/create.go, internal/ui/usage.go]
-updated: 2026-11-17
+updated: 2026-11-19
 ---
 
 `--isolated` is opt-in; ordinary shared-write behavior stays trusted collaboration. Host-private
@@ -19,6 +19,11 @@ pass is not an atomic snapshot: callers still fence writers. Raw publication fix
 disable automatic maintenance, as trusted production Git commands already do.
 
 Execution owns objects, initialized unchanged submodules and verified offline LFS payloads.
+Creation drops the clone's `remote.origin` section (it named the parent checkout), keeping the
+`origin/*` refs as the parent's branches at creation, which `origin/HEAD` readers
+(`WorkspaceChanges`, `SetWorkspaceBase`) need; submodule copies drop the whole remote. A fork made
+before 2026-11-19 keeps the section: no Coop path reads or fetches it, and the box can write its own
+config anyway, so the boundary is that the parent is never mounted, not the config.
 Parent checkout/admin/common paths cannot enter through aliases, shared inodes, volume backing
 paths or services. Operator/service binds and existing volumes require inspectable contents: a daemon-only
 path absent on the host is unknown, not an empty volume. Exact creator-owned private volumes retain
@@ -84,6 +89,9 @@ Custom tools run at the captured base comparison while COOP_FORK_PATH points to 
 published tree, preserving HEAD...COOP_REVIEW_REF without handing over the model workspace.
 
 ## Changelog
+- 2026-11-19 — an isolated workspace kept `remote.origin.url` = the parent's host path, so a person's
+  `git fetch` there pulled later parent commits; creation now removes the remote section (task
+  2026-11-19-stop-an-isolated-fork-s-workspace-naming-the-par).
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K3-7; checked with grep).
 - 2026-11-06 — a parent with uncommitted changes, conflicts or hidden index flags is refused in the
   same block, naming the files and the exact command that clears them (task

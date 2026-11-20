@@ -61,6 +61,23 @@ func TestIsolatedForkHoldsHistoryUpToCreationAndNothingLater(t *testing.T) {
 	if !strings.Contains(string(log), "side commit") || !strings.Contains(string(refs), "refs/remotes/origin/side") {
 		t.Errorf("isolated fork refs:\n%s\nlog:\n%s\nwant the parent's other branch as it was at creation", refs, log)
 	}
+	// It names no remote, so a person's git fetch there cannot bring the parent's later commits in,
+	// while origin/HEAD, the base coop fork ls counts the fork's changes from, still resolves.
+	if remotes, err := exec.Command("git", "-C", ws, "remote").Output(); err != nil || len(remotes) != 0 {
+		t.Errorf("isolated fork remotes = %q, %v; want none", remotes, err)
+	}
+	if config, err := exec.Command("git", "-C", ws, "config", "--get-regexp", `^remote\.`).Output(); len(config) != 0 {
+		t.Errorf("isolated fork remote config = %q, %v; want none", config, err)
+	}
+	if base, err := exec.Command("git", "-C", ws, "rev-parse", "--verify", "origin/HEAD").Output(); err != nil || strings.TrimSpace(string(base)) != created {
+		t.Errorf("isolated fork origin/HEAD = %q, %v; want %s", base, err, created)
+	}
+	if out, err := exec.Command("git", "-C", ws, "fetch", "--quiet", "origin").CombinedOutput(); err == nil {
+		t.Errorf("git fetch origin in the isolated fork succeeded: %s", out)
+	}
+	if err := exec.Command("git", "-C", ws, "cat-file", "-e", late+"^{commit}").Run(); err == nil {
+		t.Fatal("git fetch brought a later parent commit into the isolated fork")
+	}
 	// Its remote-tracking branches are copies made at creation: log --all above saw no later commit.
 	objects, err := exec.Command("git", "-C", ws, "rev-parse", "--git-path", "objects/info/alternates").Output()
 	if err != nil {

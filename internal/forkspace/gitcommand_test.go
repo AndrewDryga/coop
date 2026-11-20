@@ -36,7 +36,7 @@ func TestHostGitRejectsSubmoduleEscapeArguments(t *testing.T) {
 		// A verb alone is not a shape: these read box-written credential helpers or write the
 		// host's own configuration.
 		{"remote", "update"}, {"remote", "add", "evil", "url"}, {"config", "--global", "user.name", "x"},
-		{"config", "core.fsmonitor", "evil"}, {"config", "--add", "user.name", "x"}, {"init"},
+		{"config", "core.fsmonitor", "evil"}, {"config", "--add", "user.name", "x"}, {"config", "--remove-section", "core"}, {"init"},
 		{"branch", "-D", "x"}, {"update-ref", "-d", "refs/heads/x"}, {"symbolic-ref", "HEAD", "refs/remotes/x"}, {"symbolic-ref", "refs/remotes/origin/HEAD", "refs/heads/private"},
 		{"for-each-ref", "--format=%(refname)", "refs/"}, {"rev-parse", "HEAD"}, {"worktree", "add", "--no-checkout", "path"},
 	} {
@@ -53,7 +53,7 @@ func TestGitRefCommandAcceptsTheShapesItsCallersUse(t *testing.T) {
 	for _, args := range [][]string{
 		{"config", "user.name", "Coop"}, {"config", "user.email", "coop@localhost"},
 		{"config", "user.signingkey", "key"}, {"config", "gpg.format", "ssh"}, {"config", "remote.origin.url", "/src"},
-		{"config", "--get", "user.name"},
+		{"config", "--get", "user.name"}, {"config", "--remove-section", "remote.origin"},
 		{"rev-parse", "--path-format=absolute", "--git-path", "objects"}, {"rev-parse", "--path-format=absolute", "--git-common-dir"},
 		{"update-ref", "refs/heads/main", commit}, {"update-ref", "refs/heads/main", commit, commit},
 		{"update-ref", "-m", "coop: re-sign commits", "refs/heads/main", commit, commit},

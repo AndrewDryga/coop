@@ -403,10 +403,11 @@ func refOnlyShape(args []string) bool {
 		return true
 	}
 	switch args[0] {
-	case "config": // the fork's identity and signing values, the clone's origin, or a read
+	case "config": // the fork's identity and signing values, the clone's origin and its removal, or a read
 		writable := []string{"user.name", "user.email", "user.signingkey", "gpg.format", "remote.origin.url"}
 		return len(args) == 3 && slices.Contains(writable, args[1]) ||
-			len(args) == 3 && args[1] == "--get" && plain(args[2])
+			len(args) == 3 && args[1] == "--get" && plain(args[2]) ||
+			slices.Equal(args, []string{"config", "--remove-section", "remote.origin"})
 	case "rev-parse":
 		return len(args) == 4 && args[1] == "--path-format=absolute" && args[2] == "--git-path" && plain(args[3]) ||
 			slices.Equal(args, []string{"rev-parse", "--path-format=absolute", "--git-common-dir"})

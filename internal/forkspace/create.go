@@ -133,6 +133,13 @@ func setupContext(ctx context.Context, repo, name, commit string, isolated bool)
 		if err := MaterializeIndependentTree(ctx, repo, ws, commit, commit); err != nil {
 			return ws, fmt.Errorf("isolated dependencies: %w", err)
 		}
+		// The clone names the parent checkout as its origin. Nothing of the parent may reach an
+		// isolated fork after creation, and a person's `git fetch` there would fetch it, so the remote
+		// goes; its origin/* branches stay, as the parent's branches at creation that origin/HEAD
+		// readers (WorkspaceChanges, SetWorkspaceBase) use. Submodule copies drop theirs too.
+		if err := GitRefCommand(ctx, ws, "config", "--remove-section", "remote.origin").Run(); err != nil {
+			return ws, fmt.Errorf("forget the isolated fork's origin: %w", err)
+		}
 		if err := ValidateIndependentGit(ws); err != nil {
 			return ws, err
 		}

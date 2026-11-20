@@ -96,7 +96,10 @@ coop fork merge research --yes
 An isolated fork keeps its own Git metadata and object files. It starts as a copy of your
 repository's branches as they were when you created it, so the agent can read their history. co:op
 copies nothing your repository commits after that into it, not when a merge conflicts and not when
-one lands. co:op prevents
+one lands. The fork names no Git remote, so a `git fetch` in it can't reach your repository, and
+its `origin/*` branches are yours as they were at creation. An isolated fork made by an earlier
+co:op release still names your checkout as `origin`. co:op never fetches from it, and
+`git -C <workspace> config --remove-section remote.origin` removes it. co:op prevents
 the box from mounting your parent checkout or its Git storage, including through another path, a
 service or a volume that co:op inspects. The agent can still create commits and branches and run rebase inside the
 fork.
