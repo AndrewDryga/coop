@@ -502,11 +502,12 @@ func TestLsAgreesWithMergeAboutAnIsolatedForksShallowFile(t *testing.T) {
 		t.Fatalf("ls with a shallow file at the boundary = %q, %q; want ready, as merge allows it", s.stateCell(), s.driftLine())
 	}
 	// With the parent's HEAD on a commit the creation base is not in, the boundary cannot be read, so
-	// ls cannot place the shallow file and must not call ready a fork merge refuses.
+	// ls cannot place the shallow file and must not call ready a fork merge refuses. Merge reads the
+	// boundary first, so ls names that.
 	branch := forkspace.GitOut(repo, "symbolic-ref", "HEAD")
 	lone := forkspace.GitOut(repo, "commit-tree", "HEAD^{tree}", "-m", "unrelated")
 	git(t, repo, "update-ref", "--no-deref", "HEAD", lone)
-	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() == "ready" || s.Drift != driftShallow {
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() == "ready" || s.Drift != driftBoundary {
 		t.Fatalf("ls with a shallow file and an unreadable boundary = %q, %q; want not ready", s.stateCell(), s.driftLine())
 	}
 	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil {
@@ -515,6 +516,46 @@ func TestLsAgreesWithMergeAboutAnIsolatedForksShallowFile(t *testing.T) {
 	git(t, repo, "symbolic-ref", "HEAD", branch)
 	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); !landed || err != nil {
 		t.Fatalf("merge with a shallow file at the boundary = (%v, %v)", landed, err)
+	}
+}
+
+// coop fork ls agrees with merge about an isolated fork whose merge boundary cannot be read, with no
+// shallow file involved: merge refuses it, so ls shows it as not ready and names the merge as the
+// command that says why; once the boundary reads again, ls says ready and the merge lands.
+func TestLsAgreesWithMergeAboutAnIsolatedForksUnreadableBoundary(t *testing.T) {
+	work := func(t *testing.T, ws, id string) {
+		if err := os.WriteFile(filepath.Join(ws, "g.txt"), []byte("g\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "add", "g.txt")
+		git(t, ws, "commit", "-qm", "add g\n\nCoop-Task: "+id)
+	}
+	repo, ws, _, identity, c := prepareForkTaskCandidateHistory(t, "task-isolated-boundary-ls", true, work, nil)
+	if _, err := os.Stat(filepath.Join(ws, ".git", "shallow")); !os.IsNotExist(err) {
+		t.Fatalf("shallow file = %v; want none", err)
+	}
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "ready" || s.Drift != driftNone {
+		t.Fatalf("ls with a readable boundary = %q, %q; want ready", s.stateCell(), s.driftLine())
+	}
+	// With the parent's branch on a commit the creation base is not in, the boundary cannot be read.
+	branch := forkspace.GitOut(repo, "symbolic-ref", "HEAD")
+	before := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	lone := forkspace.GitOut(repo, "commit-tree", "HEAD^{tree}", "-m", "unrelated")
+	git(t, repo, "update-ref", branch, lone)
+	s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil))
+	if s.stateCell() == "ready" || s.Drift != driftBoundary || !strings.Contains(s.driftLine(), "coop fork merge "+identity.Name) {
+		t.Fatalf("ls with an unreadable boundary = %q, %q; want not ready, naming the merge", s.stateCell(), s.driftLine())
+	}
+	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "no longer in the captured parent") {
+		t.Fatalf("merge with an unreadable boundary = (%v, %v); want the boundary refusal", landed, err)
+	}
+	git(t, repo, "update-ref", branch, before)
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "ready" || s.Drift != driftNone {
+		t.Fatalf("ls once the boundary reads again = %q, %q; want ready", s.stateCell(), s.driftLine())
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); !landed || err != nil {
+		t.Fatalf("merge once the boundary reads again = (%v, %v)", landed, err)
 	}
 }
 

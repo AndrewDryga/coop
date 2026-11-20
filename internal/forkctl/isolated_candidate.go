@@ -230,24 +230,24 @@ func refuseIsolatedShallowCut(ws, name, upstream string) error {
 	return nil
 }
 
-// isolatedShallowCut is refuseIsolatedShallowCut for coop fork ls, against the boundary merge would
-// use with the branch as it is now. A shallow file it cannot place against that boundary, because
-// the file or the boundary cannot be read, counts as a cut: ls must not call ready what merge
-// refuses. Merge itself is unchanged and says why.
-func isolatedShallowCut(repo, name string, identity forkspace.Identity) bool {
-	ws := forkspace.Workspace(repo, name)
-	if commits, err := forkspace.IndependentShallowCommits(ws); err == nil && len(commits) == 0 {
-		return false
-	}
+// isolatedBoundaryDrift is what coop fork ls says of the two checks an isolated fork's merge makes
+// before it fetches, in merge's order, with the branch as it is now: a boundary it cannot read
+// (driftBoundary), then a shallow file that cuts the fork's unmerged commits or cannot be read
+// (driftShallow). ls must not call ready what merge refuses; merge itself is unchanged and says why.
+// Both read only local refs and files.
+func isolatedBoundaryDrift(repo, name string, identity forkspace.Identity) candidateDrift {
 	parent, err := observed(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
-		return true
+		return driftBoundary
 	}
 	upstream, _, err := isolatedSourceBoundary(repo, identity, parent)
 	if err != nil {
-		return true
+		return driftBoundary
 	}
-	return refuseIsolatedShallowCut(ws, name, upstream) != nil
+	if refuseIsolatedShallowCut(forkspace.Workspace(repo, name), name, upstream) != nil {
+		return driftShallow
+	}
+	return driftNone
 }
 
 // isolatedJoin is a throwaway merge commit of tree with parents first and second, or first when

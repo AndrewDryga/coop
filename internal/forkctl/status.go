@@ -138,9 +138,14 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 			}
 			drift = forkCandidateDrift(ws, name, candidate, forkspace.GitOut(ws, "rev-parse", "HEAD"), open)
 			// Merge and the loop refuse a shallow fork before anything else, so ls says it first. An
-			// isolated fork's merge refuses only a shallow file that cuts its unpublished commits, and
-			// keeps one a shallow clone gave it, so ls asks the same.
-			if isolated && isolatedShallowCut(repo, name, identity) || !isolated && RefuseShallowFork(ws, name) != nil {
+			// isolated fork's merge first reads where its published work ends, then refuses only a
+			// shallow file that cuts its unpublished commits, keeping one a shallow clone gave it, so
+			// ls asks the same in that order.
+			if isolated {
+				if refusal := isolatedBoundaryDrift(repo, name, identity); refusal != driftNone {
+					drift = refusal
+				}
+			} else if RefuseShallowFork(ws, name) != nil {
 				drift = driftShallow
 			}
 			if drift == driftEmpty {
@@ -355,6 +360,8 @@ func (s forkStatus) driftLine() string {
 		return "Changed: " + parentBranchWords(s.RebaseBranch) + "'s history already has one of its task commits, which a rebase skips; coop fork merge " + s.Name + " says how to go on"
 	case driftShallow:
 		return "Changed: its repository is shallow; coop fork merge " + s.Name + " says how to go on"
+	case driftBoundary:
+		return "Not mergeable: Coop cannot tell which of its commits your branch already has; coop fork merge " + s.Name + " says why"
 	case driftRebasing:
 		return "Rebase onto " + parentBranchWords(s.RebaseBranch) + " not finished; rebase and review: coop fork " + s.Name + " --loop"
 	case driftMerges:

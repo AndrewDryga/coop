@@ -468,7 +468,10 @@ the reviewed commits apply but would not land exactly the reviewed change, for e
 branch already has part of it or has the change of a task's commit; `coop fork ls` then shows it as
 "changed after review" with those ways, and its loop refuses the same way. Both show only while your
 branch is where that merge found it: once you change the branch, `coop fork ls` shows the fork as
-ready again, and the next merge checks it anew. Don't cherry-pick its commits into your checkout by hand, since that skips the checks co:op runs on an isolated fork's commits, and don't
+ready again, and the next merge checks it anew. If co:op cannot tell which of an isolated fork's
+commits your branch already has, for example because your branch was rewritten so it no longer
+holds the commit the fork started from, `coop fork ls` shows it as not mergeable and `coop fork
+merge <name>` says why. Don't cherry-pick its commits into your checkout by hand, since that skips the checks co:op runs on an isolated fork's commits, and don't
 redo untrusted work in an ordinary fork, which gives the agent your checkout's Git storage.
 
 A fork whose branch moved after its final review shows as "changed after review" in `coop fork ls`,

@@ -25,6 +25,7 @@ const (
 	driftEmpty     // a finished rebase left none of the fork's commits
 	driftMerges    // its new commits, or its rebase, include a merge commit
 	driftShallow   // its repository is shallow (ls only: merge and loop refuse it on their own)
+	driftBoundary  // an isolated fork's merge boundary cannot be read (ls only: merge refuses it on its own)
 	driftRebased
 	driftDiverged
 )
