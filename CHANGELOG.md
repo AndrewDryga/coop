@@ -33,7 +33,7 @@
   by name instead of with a bare Git exit status.
 - **Fork runs no longer leave empty record folders behind**, and `coop fork rm` removes the
   fork's continue note. A task attempt told to make its follow-up commit unbound is now told how
-  to finish.
+  to finish, and is told to block the task for you when that would rewrite a published commit.
 - **A worker prunes its publication journal.** A file goes once its publication has finished and
   it is more than 30 days old.
 - **Restoring a checkpoint whose upstream commit left the default branch answers 409 at once.**
