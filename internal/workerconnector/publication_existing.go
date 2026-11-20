@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
@@ -24,8 +25,7 @@ func (p publicationHost) publishExistingPull(ctx context.Context, repository str
 	// A lost response must recover the same commit, even if someone subsequently
 	// changes the PR metadata. This observation never authorizes another push.
 	if observed == req.CandidateHead {
-		pull, err := p.readExistingPull(ctx, grant, intent)
-		return existingPullReceipt(intent, grant, pull, err), nil
+		return p.confirmExistingPull(ctx, grant, intent)
 	}
 	pull, err := p.readExistingPull(ctx, grant, intent)
 	if err != nil {
@@ -77,8 +77,41 @@ func (p publicationHost) publishExistingPull(ctx context.Context, repository str
 	}
 	// A confirmed write remains a confirmed write when GitHub's PR projection
 	// lags, fails, or the author changes metadata during the push.
-	pull, err = p.readExistingPull(ctx, grant, intent)
-	return existingPullReceipt(intent, grant, pull, err), nil
+	return p.confirmExistingPull(ctx, grant, intent)
+}
+
+// GitHub's PR view lags a Git push by a few seconds. These fixed waits (15 s in
+// total) let it catch up before an unconfirmed head becomes the final answer.
+var existingPullConfirmationWaits = []time.Duration{time.Second, 2 * time.Second, 3 * time.Second, 4 * time.Second, 5 * time.Second}
+
+// confirmExistingPull reads the PR after a confirmed push until it shows the
+// pushed head, shows a changed target, or the waits run out. Only a PR read that
+// shows the pushed head reports published. It never pushes or asks for a grant.
+// A worker stopping meanwhile settles nothing: the attempted marker and the
+// pushed branch let the next try confirm the same push without pushing again.
+func (p publicationHost) confirmExistingPull(ctx context.Context, grant publicationGrant, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
+	stopped := &workerproto.PublicationRetryError{Stage: "pull_request_confirmation"}
+	waits := existingPullConfirmationWaits
+	if p.confirmationWaitsForTest != nil {
+		waits = p.confirmationWaitsForTest
+	}
+	for attempt := 0; ; attempt++ {
+		pull, err := p.readExistingPull(ctx, grant, intent)
+		if err != nil && ctx.Err() != nil {
+			return workerproto.PublishResult{}, stopped
+		}
+		result := existingPullReceipt(intent, grant, pull, err)
+		if result.Status != "published_target_unverified" || attempt == len(waits) {
+			return result, nil
+		}
+		timer := time.NewTimer(waits[attempt])
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return workerproto.PublishResult{}, stopped
+		case <-timer.C:
+		}
+	}
 }
 
 func (p publicationHost) readExistingPull(ctx context.Context, grant publicationGrant, intent workerproto.PublishIntent) (*githubPublicationPull, error) {

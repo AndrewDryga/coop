@@ -1551,7 +1551,9 @@ This mode never creates a PR or changes its title, body or draft state; `title` 
 required bounded strings in the request but are unused in this mode.
 
 A confirmed push has a receipt even when the subsequent PR read fails or observes changed
-metadata. These results carry `target_observation` alongside the original branch, commit and PR
+metadata. GitHub's PR view can lag a push by a few seconds, so the worker reads the PR again for
+up to 15 seconds before it reports `published_target_unverified`; it reports `published` only
+after it sees the pushed commit on the PR. These results carry `target_observation` alongside the original branch, commit and PR
 identity. Its state is `changed_after_push` or `unverified_after_push`, with the bounded observed
 refs, repository IDs, head and PR state when available. A controller must report the warning and
 must not treat this as permission to resolve review threads or continue automatic edits.

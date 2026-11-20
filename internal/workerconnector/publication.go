@@ -90,6 +90,8 @@ type publicationHost struct {
 	client                *http.Client
 	api, remote, protocol string
 	lfsEndpointForTest    string
+	// Nil uses existingPullConfirmationWaits.
+	confirmationWaitsForTest []time.Duration
 }
 
 type githubPublicationPull struct {

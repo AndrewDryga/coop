@@ -3,6 +3,7 @@ package workerconnector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,9 +18,11 @@ import (
 )
 
 func TestExistingPullPublicationPreservesTheAuthorsWorkAndMetadata(t *testing.T) {
-	for _, scenario := range []string{"success", "escaped_body", "new_commit", "deleted_branch", "changed_base", "revoked", "changed_after_push", "unverified_after_push", "unrelated_candidate", "attempted_revoked", "attempted_newer", "marker_failure", "malformed_marker", "missing_marker_version", "unknown_marker_version"} {
+	for _, scenario := range []string{"success", "escaped_body", "new_commit", "deleted_branch", "changed_base", "revoked", "changed_after_push", "unverified_after_push", "lagging_pull", "stale_pull", "flaky_read", "cancelled_wait", "unrelated_candidate", "attempted_revoked", "attempted_newer", "marker_failure", "malformed_marker", "missing_marker_version", "unknown_marker_version"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx := context.Background()
+			publishCtx, stop := context.WithCancel(ctx)
+			defer stop()
 			repo, git := gitrepo.New(t)
 			git("commit", "--allow-empty", "-qm", "default")
 			base, _ := sourceGitValue(ctx, repo, "", "", "rev-parse", "HEAD")
@@ -95,10 +98,25 @@ func TestExistingPullPublicationPreservesTheAuthorsWorkAndMetadata(t *testing.T)
 					w.WriteHeader(502)
 					return
 				}
+				// GitHub's PR view showing the old head after the push: for two
+				// reads, or for every read.
+				if n >= 3 && (scenario == "lagging_pull" && n <= 4 || scenario == "stale_pull") {
+					pull.Head.SHA = expected
+				}
+				if n == 3 && scenario == "flaky_read" {
+					w.WriteHeader(502)
+					return
+				}
+				// The worker stops while it waits for GitHub to catch up.
+				if n == 3 && scenario == "cancelled_wait" {
+					pull.Head.SHA = expected
+					stop()
+				}
 				_ = json.NewEncoder(w).Encode(pull)
 			}))
 			defer server.Close()
 			host := publicationHost{stateRoot: stateRoot, api: server.URL, client: server.Client(), remote: remote, protocol: "file",
+				confirmationWaitsForTest: []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond},
 				grant: func(context.Context, workerproto.PublishIntent) (publicationGrant, error) {
 					n := grants.Add(1)
 					if n == 2 && scenario == "marker_failure" {
@@ -159,7 +177,21 @@ func TestExistingPullPublicationPreservesTheAuthorsWorkAndMetadata(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			result, err := host.publish(ctx, repo, intent)
+			result, err := host.publish(publishCtx, repo, intent)
+			if scenario == "cancelled_wait" {
+				var retry *workerproto.PublicationRetryError
+				saved, readErr := host.readPublicationProgress(intent)
+				if !errors.As(err, &retry) || readErr != nil || !saved.Attempted || saved.Result != nil {
+					t.Fatalf("a stop during the wait settled: %+v %v, saved %+v %v", result, err, saved, readErr)
+				}
+				// The restart confirms the same push: one grant for itself, no second push.
+				result, err = host.publish(ctx, repo, intent)
+				remoteHead, _ := sourceGitValue(ctx, remote, "", "file", "rev-parse", "refs/heads/human/change")
+				if err != nil || result.Status != "published" || remoteHead != head || grants.Load() != 3 {
+					t.Fatalf("restart after a stop: %+v %v remote=%s grants=%d", result, err, remoteHead, grants.Load())
+				}
+				return
+			}
 			if scenario == "marker_failure" || scenario == "malformed_marker" || scenario == "missing_marker_version" || scenario == "unknown_marker_version" {
 				remoteHead, _ := sourceGitValue(ctx, remote, "", "file", "rev-parse", "refs/heads/human/change")
 				if err == nil || remoteHead != expected {
@@ -175,18 +207,29 @@ func TestExistingPullPublicationPreservesTheAuthorsWorkAndMetadata(t *testing.T)
 			}
 			remoteHead, _ := sourceGitValue(ctx, remote, "", "file", "rev-parse", "--verify", "refs/heads/human/change")
 			switch scenario {
-			case "success", "escaped_body", "changed_after_push", "unverified_after_push":
-				status := "published"
-				if scenario == "changed_after_push" {
+			case "success", "escaped_body", "changed_after_push", "unverified_after_push", "lagging_pull", "stale_pull", "flaky_read":
+				status, wantReads := "published", int32(3)
+				switch scenario {
+				case "changed_after_push":
 					status = "published_target_changed"
-				}
-				if scenario == "unverified_after_push" {
-					status = "published_target_unverified"
+				case "unverified_after_push", "stale_pull":
+					// One read after the push, then one per wait.
+					status, wantReads = "published_target_unverified", 6
+				case "flaky_read":
+					wantReads = 4
+				case "lagging_pull":
+					wantReads = 5
 				}
 				if result.Status != status || result.Receipt == nil || result.Receipt.CommitSHA != head || remoteHead != head {
 					t.Fatalf("publication: %+v remote=%s", result, remoteHead)
 				}
-				if scenario == "success" || scenario == "escaped_body" || scenario == "changed_after_push" {
+				if reads.Load() != wantReads || grants.Load() != 2 {
+					t.Fatalf("PR reads = %d, grants = %d, want %d and 2", reads.Load(), grants.Load(), wantReads)
+				}
+				if scenario == "stale_pull" && (result.Receipt.TargetObservation == nil || result.Receipt.TargetObservation.HeadCommit != expected) {
+					t.Fatalf("stale PR observation: %+v", result.Receipt.TargetObservation)
+				}
+				if scenario != "unverified_after_push" {
 					host.grant = func(context.Context, workerproto.PublishIntent) (publicationGrant, error) {
 						t.Error("confirmed receipt tried to mint credentials")
 						return publicationGrant{}, publicationRefusal("publication_authorization_revoked")
