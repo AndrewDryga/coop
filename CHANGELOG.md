@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 15.1.0
 
 - **Controllers can assign named presets to reviews and coding jobs.** Export an approved global
   recipe with `coop presets NAME --export-job`. Each job keeps the selected prompts and accounts.
