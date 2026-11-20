@@ -137,7 +137,9 @@ func rebaseDroppedCommits(ws, parent, rebased, base, head string) (bool, error) 
 // commit when the fork's branch is no longer on it, "" when it is.
 func skippedCommitError(ws, name, branch, detail, tail, back string) error {
 	words := parentBranchWords(branch)
-	cause := words + " already has the change of one of the fork's reviewed commits that belongs to a task, so a rebase onto " +
+	// "History", not the branch: a commit a later one reverted still counts, and git matches changes
+	// ignoring whitespace, so the branch's files may differ from the fork's.
+	cause := words + "'s history already has the change of one of the fork's reviewed commits that belongs to a task (git ignores whitespace when it matches changes), so a rebase onto " +
 		words + " skips that commit and its task is left without a commit of its own."
 	if detail != "" {
 		cause += " " + detail
@@ -148,10 +150,10 @@ func skippedCommitError(ws, name, branch, detail, tail, back string) error {
 		words + " does not either: a rebase still skips the commit." + tail
 	again := [2]string{"Or remove " + words + "'s commit with that change from its history, then merge again:", "coop fork merge " + name}
 	if back != "" {
-		again = [2]string{"Or remove " + words + "'s commit with that change from its history, go back to the reviewed commit and merge again:",
+		again = [2]string{GoBackLabel(ws, "Or remove "+words+"'s commit with that change from its history, go back to the reviewed commit and merge again:"),
 			GoBackCommand(ws, "reset", "--hard", back) + " && coop fork merge " + name}
 	}
-	return ui.CommandFailed("Fork "+name+"'s reviewed commit is already on "+words, cause,
+	return ui.CommandFailed("Fork "+name+"'s reviewed commit is already in "+words+"'s history", cause,
 		[2]string{"Discard its work and return its tasks to the queue:", "coop fork rm " + name + " --force"}, again)
 }
 

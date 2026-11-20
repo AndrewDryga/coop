@@ -95,3 +95,24 @@ func TestATaskLandedForkShowsNoChangesAfterTheMerge(t *testing.T) {
 	}
 	requireChanges(t, ws, "after the task candidate landed", 0, 0)
 }
+
+// A task land whose gate fails puts the fork back on its reviewed commit, but its rebase already
+// moved the base to the parent's newer commit. Counting from that base showed the parent's own lines
+// as removals the fork never made (+1 −3 where merge said +1 −0); counting from where the fork meets
+// the base agrees with merge.
+func TestATaskForkRestoredByARedGateCountsOnlyItsOwnWork(t *testing.T) {
+	repo, ws, _, identity, c := prepareForkTaskCandidate(t, "task-red-base")
+	commitLines(t, repo, "parent.txt", 3)
+	c.gateOK = func(_, _, _ string) bool { return false }
+	landed, err := mergeOneForTest(t, c, repo, "gate-image", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "candidate restored") {
+		t.Fatalf("merge with a red gate = (%v, %v)", landed, err)
+	}
+	if pathExists(filepath.Join(ws, "parent.txt")) {
+		t.Fatal("the fork was not put back on its reviewed commit, so this proves nothing")
+	}
+	if forkspace.GitOut(ws, "rev-parse", "origin/HEAD") != forkspace.GitOut(repo, "rev-parse", "HEAD") {
+		t.Fatal("the land did not move the fork's base to the parent, so this proves nothing")
+	}
+	requireChanges(t, ws, "after a red gate restored the candidate", 1, 0)
+}

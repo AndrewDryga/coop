@@ -341,7 +341,7 @@ func (s forkStatus) driftLine() string {
 	case driftChanged:
 		return "Changed: its reviewed change would land changed on " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
 	case driftSkipped:
-		return "Changed: " + parentBranchWords(s.RebaseBranch) + " already has one of its task commits, which a rebase skips; coop fork merge " + s.Name + " says how to go on"
+		return "Changed: " + parentBranchWords(s.RebaseBranch) + "'s history already has one of its task commits, which a rebase skips; coop fork merge " + s.Name + " says how to go on"
 	case driftShallow:
 		return "Changed: its repository is shallow; coop fork merge " + s.Name + " names the file to remove"
 	case driftRebasing:

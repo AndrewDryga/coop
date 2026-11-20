@@ -48,9 +48,15 @@ func GitOut(dir string, args ...string) string {
 // WorkspaceChanges is what a fork workspace has changed since its base, as coop fork ls and coop
 // tasks watch both show it: lines added and removed, counting uncommitted edits to tracked files.
 // The base is the clone's origin/HEAD, the parent commit the fork was cut from, which a merge moves
-// (SetWorkspaceBase). Zero and zero when git cannot say.
+// (SetWorkspaceBase). It counts from where HEAD meets that base, as coop fork merge does: a merge
+// whose gate fails can put a task fork back on its reviewed commit after its rebase moved the base
+// ahead, and the parent's newer commits are no removals of the fork's. Zero and zero when git cannot say.
 func WorkspaceChanges(ws string) (ins, del int) {
-	return ParseShortstat(GitOut(ws, "diff", "--shortstat", "origin/HEAD"))
+	base := GitOut(ws, "merge-base", "origin/HEAD", "HEAD")
+	if base == "" {
+		base = "origin/HEAD"
+	}
+	return ParseShortstat(GitOut(ws, "diff", "--shortstat", base))
 }
 
 // SetWorkspaceBase moves the commit WorkspaceChanges counts from. A clone leaves origin/HEAD at the

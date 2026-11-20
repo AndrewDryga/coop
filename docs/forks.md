@@ -79,6 +79,9 @@ coop fork merge api --yes                   # merges the reviewed work and delet
 coop fork api codex -d --stop-after-review  # a new fork takes the next task
 ```
 
+If you stop a loop during its final review, run `coop fork <name> --loop` again to finish that
+review. The fork takes no new task until the review ends, and `coop fork merge` says the same.
+
 A fork you keep after merging takes no new task: its files stay for you to look at, and a loop on it
 refuses and names how to go on, either `--fresh` to start it over or a new fork. A loop that finds no
 task to take, because the queue is empty or other agents hold what is left, says so in its log
@@ -433,7 +436,8 @@ A merge also checks that it lands exactly what was reviewed. When your branch ha
 rebased commits must make the same line changes as the reviewed ones. When they don't, for example
 because your branch already has part of the change, the fork goes to the same rebase and review as
 after a conflict, and `coop fork ls` shows it as "changed after review". A rebase skips a commit
-whose change your branch already has. When that commit is one a task's `Coop-Task` trailer binds,
+whose change your branch's history already has, and git ignores whitespace when it compares
+changes, so a commit still counts when your file differs from the fork's only in whitespace. When that commit is one a task's `Coop-Task` trailer binds,
 the task would be left without a commit of its own, and no rebase or review can give it one back. So
 the merge stops at once and says so, even when the rest of the change would land exactly as
 reviewed, and the loop then runs no agent for it. When a conflict came
@@ -453,7 +457,9 @@ were when it was created, and co:op copies none of your branch's later commits i
 rebase the fork onto your branch for its agent. When its reviewed commits conflict with your branch, `coop fork ls`
 shows it as "conflicts with your branch" and the merge names two ways out: change your branch until
 the fork's commits apply and merge again, or discard its work with `coop fork rm <name> --force`
-and start a new isolated fork from your current branch. The merge gives the same two ways out when
+and start a new isolated fork from your current branch. Its loop has nothing to do, since no agent
+can rebase it: `coop fork <name> --loop` refuses at once with the same ways out, and names the
+command that starts a new isolated fork if you choose to discard this one. The merge gives the same two ways out when
 the reviewed commits apply but would not land exactly the reviewed change, for example because your
 branch already has part of it or has the change of a task's commit; `coop fork ls` doesn't show
 that case. Don't cherry-pick its commits into your checkout by hand, since that skips the checks co:op runs on an isolated fork's commits, and don't
@@ -465,7 +471,8 @@ the fork's loop gives them. Any other branch that no longer builds on the review
 one you rewrote by hand with no conflicting merge waiting, can neither merge nor be reviewed again:
 reset the fork's branch to the reviewed commit that the refusal names, or discard the fork's work
 with `coop fork rm <name> --force`. If a rebase of yours is still in progress in the fork, the
-command it names aborts that rebase first.
+command it names aborts that rebase first, which drops any conflict resolution you have not
+committed.
 
 A loop that stops prints a `Continue:` line that repeats the exact run you started, its agent and
 options included. `coop fork <name> --loop` resumes it as well, with the fork's saved agent.

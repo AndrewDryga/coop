@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,9 @@ func TestIsolatedConflictNamesTheWaysOutAndShowsInLs(t *testing.T) {
 	}
 	repo, ws, _, identity, c := prepareForkTaskCandidateHistory(t, "task-isolated-conflict", true, edit, nil)
 	name := identity.Name
+	if isolated, err := forkspace.IsolatedGeneration(repo, identity); err != nil || !isolated {
+		t.Fatalf("the fixture is not an isolated fork (%v, %v), so this proves nothing", isolated, err)
+	}
 	before := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("parent\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -163,10 +167,20 @@ func TestIsolatedConflictNamesTheWaysOutAndShowsInLs(t *testing.T) {
 	if s.stateCell() != "conflict" || !strings.Contains(s.driftLine(), "start a new isolated fork") || strings.Contains(s.driftLine(), "--loop") {
 		t.Fatalf("isolated fork after a conflict: state %q, %q", s.stateCell(), s.driftLine())
 	}
-	// The record is no rebase request: a loop start on the reviewed commit goes ahead, and one on a
-	// branch rewritten off it is refused in the terminal, as without the record, not after "Started".
-	if err := RefuseDivergedFork(repo, identity); err != nil {
-		t.Fatalf("loop start on the reviewed commit = %v", err)
+	// The record is no rebase request: no agent may rebase an isolated fork, so a loop start on the
+	// reviewed commit is refused in the terminal with the same ways out as merge, and the person's
+	// own commands to discard and start again; one on a branch rewritten off it is refused as without
+	// the record, not after "Started".
+	var loopBlock *ui.UsageError
+	if err := RefuseDivergedFork(repo, identity); !errors.As(err, &loopBlock) ||
+		loopBlock.Headline != "Fork "+name+"'s reviewed commits conflict with main" ||
+		!strings.Contains(loopBlock.Cause, "No agent ran") ||
+		!slices.Contains(loopBlock.Rows, [2]string{"Change main until the fork's commits apply, then merge again:", "coop fork merge " + name}) ||
+		!slices.Contains(loopBlock.Rows, [2]string{"Or, if you choose to discard its work, remove the fork:", "coop fork rm " + name + " --force"}) ||
+		!slices.ContainsFunc(loopBlock.Rows, func(row [2]string) bool {
+			return row[0] == "Then start a new isolated fork from main:" && strings.HasPrefix(row[1], "coop fork "+name+" ") && strings.HasSuffix(row[1], " --isolated")
+		}) {
+		t.Fatalf("loop start on a conflicted isolated fork = %v; want the isolated conflict refusal", err)
 	}
 	reviewed := forkspace.GitOut(ws, "rev-parse", "HEAD")
 	git(t, ws, "reset", "-q", "--hard", "HEAD~1")

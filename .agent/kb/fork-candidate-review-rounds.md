@@ -2,7 +2,7 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go, internal/forkctl/status.go, internal/forkctl/isolated_candidate.go]
+sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go, internal/forkctl/status.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_commands.go, internal/cli/fork_loop_report.go, internal/forkspace/gitcommand.go]
 updated: 2026-11-19
 ---
 
@@ -90,12 +90,16 @@ path: the source holds every parent branch only as it was at creation (a `--no-l
 view copying all branches as `origin/*`, forkspace TestIsolatedForkHoldsHistoryUpToCreationAndNothingLater)
 and nothing of the parent enters it later, through a conflicting merge or a land either
 (forkctl TestIsolatedConflictNamesTheWaysOutAndShowsInLs). `RefuseDivergedFork` ignores the
-isolated record (and refuses a skipped one), so a rewritten isolated fork is refused before a loop
+isolated record off the reviewed commit (and refuses a skipped one), so a rewritten isolated fork is refused before a loop
 starts. Their private rebase's conflict (`isolatedConflictError`, from unmerged paths;
 signing and other failures keep the old guidance) names the two ways out (change the branch, or
 discard and re-fork) and writes a request with the `isolated-conflict` cause only so ls shows
-"conflicts" with those ways; the loop ignores it, the fence admits nothing by it, and a merge whose
-private rebase applies closes it. The private rebase's join commits keep it from replaying published
+"conflicts" with those ways; a loop on the reviewed commit runs nothing for it and is refused with
+exit 1, the same ways out and the person's restart commands (`IsolatedConflictLoopError`, from
+`RefuseDivergedFork` before any start and from the loop's pass), so `--loop && merge` stops; the
+fence admits nothing by it, and a merge whose private rebase applies closes it. The publish header names
+the fork's own commit and the new commit it publishes as, rebased onto the branch.
+The private rebase's join commits keep it from replaying published
 source but not from skipping a source commit whose patch the parent gained since the boundary, so a
 reviewed round's merge runs `isolatedLandedAsReviewed` in the private clone: when the parent's tree
 is still the boundary's, the rebased tree must be the reviewed source tree (line edits drop
@@ -135,9 +139,10 @@ commits, and checked before the line edits, since the parent having a change and
 them matching) the parent already has a task's commit:
 a rebase pass could only skip it again or keep it empty, which review fails, so the cause is
 `skipped` and merge, loop (before any agent, `SkippedCommitError`) and ls (`driftSkipped`) all stop
-with "discard, or remove the branch's commit with that change from its history and merge again". A
+with "discard, or remove the branch's commit with that change from its history and merge again"
+(titled "already in <branch>'s history", since that is true after a revert too). A
 revert is not enough: `git rebase` skips a commit whose patch-id matches any commit in
-merge-base..branch, a reverted one included (`--reapply-cherry-picks` would replay it, and the land's
+merge-base..branch (patch-id ignores whitespace, so a differing file can still match), a reverted one included (`--reapply-cherry-picks` would replay it, and the land's
 line-edit check would still hold, but the land does not use it). The fence admits no rebase onto
 such a request's `onto`. Otherwise the cause is `changed`, so the loop rebases and the result is
 reviewed, and ls says `changed`, never "conflicts". A land that later gets past `landedAsReviewed`
@@ -154,7 +159,9 @@ rebase skips a commit whose patch the parent has, and `--reapply-cherry-picks` s
 unseen; only the change comparison catches that. `git merge-tree --write-tree --merge-base` (git
 2.40) would give the same guarantee but this Mac's git is 2.39 and merge-tree's own merge-base reads
 the view. An honest moved-parent land whose change differs (the parent has part of it) costs a
-rebase and a review, never a refusal. A shallow fork is refused before the merge fetches it, in the
+rebase and a review, never a refusal. A shallow fork is refused before the merge fetches it (and,
+for an ordinary fork, before the merge's commit-count header, `fetchForkForMerge`, which an isolated
+merge never reaches; isolated forks have no shallow check), in the
 land replay and by `CheckRebase` (`RebaseShallow`), and the trusted view sets `core.commitGraph=false`
 so a box-written commit-graph cannot answer for the commit objects.
 
@@ -162,16 +169,26 @@ A reviewed fork whose HEAD moved off its active candidate is not landable, so `c
 as `changed` ("changed after review") rather than `ready`, and one with an open conflict request whose
 rebase is not finished as `conflict` ("conflicts with your branch"); a `changed` or `skipped`
 request and a shallow repository (`driftShallow`, ls only) read as `changed`. It counts its changes from where
-it meets the branch, as merge does. `forkCandidateDrift` tells the cases apart: new commits on top,
+it meets the branch, as merge does; otherwise `forkspace.WorkspaceChanges` counts from where HEAD
+meets the fork's base (`origin/HEAD`), since a red-gate land restores the candidate after its rebase
+moved that base to the newer parent, which counted the parent's own lines as the fork's removals. `forkCandidateDrift` tells the cases apart: new commits on top,
 and a finished rebase onto an open request's `onto` (`driftRebased`), go back to review with the
 fork's loop; with a request open, any other HEAD (`driftConflicts`, `driftRebasing`, even a rebase
 stopped half way) is the loop's to finish, never a hand reset; without one, a HEAD that no longer
 descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork`), both naming the
 ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`. Every
 go-back command comes from `forkctl.GoBackCommand`, which starts with `git rebase --abort` while a
-rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the branch where it was).
+rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the branch where it was);
+`GoBackLabel` then warns on the row that the abort drops uncommitted conflict resolutions, which no
+reflog keeps.
 
 ## Changelog
+- 2026-11-19 — wording from the live follow-up pass: merge of a shallow fork printed a "0 commits"
+  header before its refusal; the skipped-commit title said "already on main" after a revert; a loop
+  on a conflicted isolated fork listed a merge that is refused; the isolated publish header called
+  the rebased commit the reviewed one; merge after a stopped final review named `--stop-after-review`
+  where a plain rerun finishes it; ls counted a red-gate-restored task fork's base as removals. All
+  fixed (task 2026-11-19-fix-seven-wording-and-consistency-notes-from-the).
 - 2026-11-19 — the go-back advice for a fork whose branch left the reviewed commit was a bare
   `git reset --hard`, which mid-rebase moves the detached HEAD and not the branch; every go-back
   advice now aborts a rebase in progress first (task

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // rebaseAttempt is what the stand-in agent does in a fork's rebase pass.
@@ -44,6 +46,7 @@ type sharedFilePasses struct {
 	checkCommits            bool
 	checkDirties            bool                // the check pass leaves a tracked file changed, as a gate that writes one does
 	checkStopsRebase        bool                // the check pass leaves a rebase in progress
+	checkInterrupted        bool                // the check pass is stopped by Ctrl-C, as the loop engine ends one
 	work                    func(ws, id string) // replaces a work pass's commit when set
 	reviewWantsRebaseChecks bool
 	rebases                 []loop.RebaseSpec
@@ -73,6 +76,10 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 		return 0, nil
 	case spec.Rebase != nil && spec.Rebase.CheckOnly:
 		p.checks = append(p.checks, *spec.Rebase)
+		if p.checkInterrupted {
+			// What the engine returns for a pass stopped mid-attempt: exit 130, nothing reported.
+			return loop.LoopInterruptedExitCode, ui.Reported(errors.New("rebase pass stopped"))
+		}
 		if p.checkCommits {
 			if err := os.WriteFile(filepath.Join(spec.Repo, "fix.txt"), []byte("fixed\n"), 0o644); err != nil {
 				t.Error(err)
@@ -753,13 +760,84 @@ func TestForkLoopStopsAtOnceOnASkippedTaskCommit(t *testing.T) {
 	}
 	for range 2 {
 		code, out, err := f.loop(t)
-		if code == 0 || err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") ||
+		if code == 0 || err == nil || !strings.Contains(err.Error(), "reviewed commit is already in main's history") ||
 			!strings.Contains(err.Error(), "No agent ran") || !strings.Contains(err.Error(), "coop fork rm beta --force") {
 			t.Fatalf("loop after a skipped commit = (%d, %v)\n%s", code, err, out)
 		}
 	}
 	if len(f.passes.rebases)+len(f.passes.checks) != 0 || len(f.passes.reviews) != 2 {
 		t.Fatalf("a skipped commit ran %d passes and %d reviews; want none", len(f.passes.rebases)+len(f.passes.checks), len(f.passes.reviews))
+	}
+}
+
+// An isolated fork's conflict, recorded by its merge, gives its loop nothing to do: no agent may
+// rebase it. The loop's own pass refuses it as the skipped-commit case does, with exit 1, so a
+// `coop fork x --loop && coop fork merge x` stops there, and names the ways out. This checks the
+// loop's in-pass branch, which keys on the record; the start-up refusal on a real isolated fork is
+// forkctl's TestIsolatedConflictNamesTheWaysOutAndShowsInLs (the isolated fixture lives there).
+func TestForkLoopOnAConflictedIsolatedForkNamesTheWaysOut(t *testing.T) {
+	f := setUpConflictingForks(t)
+	unlock, err := forkspace.LockState(f.repo, f.beta.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tasks.RequestForkCandidateRebaseLocked(f.repo, f.reviewed, f.parent, "main", tasks.RebaseCauseIsolatedConflict)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviews := len(f.passes.reviews)
+	code, out, err := f.loop(t)
+	if code != 1 || err == nil {
+		t.Fatalf("loop on a conflicted isolated fork = (%d, %v)\n%s", code, err, out)
+	}
+	for _, want := range []string{"reviewed commits conflict with main", "no agent can rebase it", "No agent ran", "coop fork merge beta", "coop fork rm beta --force", " --isolated"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("loop refusal lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(out, "next steps") || strings.Contains(out, "ready to merge") {
+		t.Errorf("loop output still lists the generic next steps:\n%s", out)
+	}
+	if len(f.passes.rebases)+len(f.passes.checks) != 0 || len(f.passes.reviews) != reviews {
+		t.Fatalf("the loop ran %d passes and %d reviews; want none", len(f.passes.rebases)+len(f.passes.checks), len(f.passes.reviews)-reviews)
+	}
+}
+
+// Ctrl-C during the check-only pass after a hand rebase stops the loop with the engine's exit 130,
+// before any review and with no checks kept. The rerun the stop names checks the same tree again,
+// then reviews it once, and the reviewed result merges.
+func TestForkRebaseCheckPassStoppedByCtrlCRunsAgainOnTheRerun(t *testing.T) {
+	f := setUpConflictingForks(t)
+	if !rebaseKeepingEveryLine(t, f.ws, f.parent) {
+		t.FailNow()
+	}
+	rebased := forkspace.GitOut(f.ws, "rev-parse", "HEAD")
+	f.passes.checkInterrupted = true
+	if code, out, err := f.loop(t); code != loop.LoopInterruptedExitCode || err == nil {
+		t.Fatalf("loop whose check pass was stopped = (%d, %v)\n%s", code, err, out)
+	}
+	if len(f.passes.checks) != 1 || len(f.passes.reviews) != 2 {
+		t.Fatalf("after the stop: %d check passes, %d reviews; want one check pass and no new review", len(f.passes.checks), len(f.passes.reviews))
+	}
+	if rebase, ok, err := tasks.ReadForkCandidateRebase(f.repo, f.beta); err != nil || !ok || rebase.Verification != "" || rebase.VerifiedTree != "" {
+		t.Fatalf("request after the stop = %+v, %v, %v; want it open with no checks kept", rebase, ok, err)
+	}
+	if code, _, err := mergeForkForTest(t, f.a, "beta"); code == 0 || err == nil || !strings.Contains(err.Error(), "rebased but not reviewed again yet") {
+		t.Fatalf("merge after the stop = (%d, %v); want the not-reviewed refusal", code, err)
+	}
+	f.passes.checkInterrupted, f.passes.reportChecks, f.passes.reviewWantsRebaseChecks = false, true, true
+	if code, out, err := f.loop(t); code != 0 || err != nil {
+		t.Fatalf("rerun after the stop = (%d, %v)\n%s", code, err, out)
+	}
+	if len(f.passes.checks) != 2 || len(f.passes.rebases) != 0 || len(f.passes.reviews) != 3 {
+		t.Fatalf("rerun: %d check passes, %d rebase passes, %d reviews; want a second check pass and one review", len(f.passes.checks), len(f.passes.rebases), len(f.passes.reviews))
+	}
+	if review := f.passes.reviews[2]; review.Head != rebased || review.RebaseVerification != rebaseCheckReport {
+		t.Fatalf("review after the rerun = %+v; want the rebased head with the rerun's checks", review)
+	}
+	if code, out, err := mergeForkForTest(t, f.a, "beta"); code != 0 || err != nil {
+		t.Fatalf("merge after the rerun = (%d, %v)\n%s", code, err, out)
 	}
 }
 
@@ -847,7 +925,7 @@ func TestForkRebaseThatSkipsATaskCommitAfterAConflictStopsForGood(t *testing.T) 
 	reviews := len(passes.reviews)
 	refusal := func(step string, err error) {
 		t.Helper()
-		if err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") || !strings.Contains(err.Error(), "coop fork rm beta --force") {
+		if err == nil || !strings.Contains(err.Error(), "reviewed commit is already in main's history") || !strings.Contains(err.Error(), "coop fork rm beta --force") {
 			t.Fatalf("%s = %v; want the skipped-commit refusal", step, err)
 		}
 	}
@@ -887,7 +965,7 @@ func TestForkRebaseThatSkipsATaskCommitAfterAConflictStopsForGood(t *testing.T) 
 			t.Fatalf("fork ls = (%d, %v)", code, err)
 		}
 	})
-	if !strings.Contains(listing, "main already has one of its task commits") || strings.Contains(listing, "review it") {
+	if !strings.Contains(listing, "main's history already has one of its task commits") || strings.Contains(listing, "review it") {
 		t.Errorf("fork ls disagrees with the loop:\n%s", listing)
 	}
 	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != parent {

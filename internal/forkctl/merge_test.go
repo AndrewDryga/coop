@@ -541,6 +541,79 @@ func TestMergeRefusalNamesTheUnreviewedTaskAndTheStopFlag(t *testing.T) {
 	}
 }
 
+// A final review that started and was stopped (as by Ctrl-C) leaves the fork with no reviewed work.
+// Merge then names a plain rerun of the loop, as the stop message does: until that review ends the
+// loop takes no new task, with or without --stop-after-review.
+func TestMergeRefusalAfterAStoppedFinalReviewNamesAPlainRerun(t *testing.T) {
+	repo := initRepo(t)
+	root := filepath.Join(repo, tasks.TasksRoot)
+	if err := tasks.ScaffoldStateDirs(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a-done", "b-waiting"} {
+		writeTaskFile(t, filepath.Join(root, tasks.StateTodo, id, "task.md"), "# Canonical task\n- [x] required checks passed\n")
+	}
+	ws, err := forkspace.Setup(repo, "runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(repo, "runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := forkspace.EnsureGenerationLocked(repo, "runner")
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assign := func() tasks.ForkAssignment {
+		t.Helper()
+		assignment, err := tasks.AssignForkTask([]string{root}, tasks.ForkAssignmentRequest{
+			AuthorityRepo: repo, Fork: identity, WorkspaceRoot: ws,
+			BaselineHead: forkspace.GitOut(ws, "rev-parse", "HEAD"),
+			LeaseOwner:   tasks.TaskLeaseOwner{RunID: "test", PID: os.Getpid(), Provider: "codex", Target: "codex"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if assignment.Lease != nil {
+			if err := assignment.Lease.Release(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return assignment
+	}
+	done := assign()
+	projected, ok := mustCurrentTask(t, done.Owner.Projection, done.Task.Item.ID)
+	if !ok {
+		t.Fatal("projected task missing")
+	}
+	if err := os.WriteFile(filepath.Join(ws, "work.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "work.txt")
+	git(t, ws, "commit", "-qm", "do it\n\nCoop-Task: "+done.Task.Item.ID)
+	if err := tasks.MoveTaskDir(done.Owner.Projection, projected, tasks.StateDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.AcceptForkProjection(repo, root, done.Task.Item.ID, done.Owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, began, err := tasks.BeginForkCandidateReview(repo, identity, forkspace.GitOut(ws, "rev-parse", "HEAD"), forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}")); err != nil || !began {
+		t.Fatalf("begin the final review = %v, %v", began, err)
+	}
+	// The review is stopped here, before any verdict.
+	c := &Control{cfg: &config.Config{ConfigDir: t.TempDir()}}
+	landed, err := mergeOneForTest(t, c, repo, "", "runner", false)
+	want := "runner has no reviewed work to merge: its final review did not finish — run its loop again to finish it: coop fork runner --loop, then merge it"
+	if landed || err == nil || err.Error() != want {
+		t.Fatalf("merge after a stopped final review = (%v, %v), want the refusal %q", landed, err, want)
+	}
+	if next := assign(); next.Outcome != tasks.ForkAssignmentExecutorDrained {
+		t.Fatalf("a plain loop rerun would take %+v; want no new task before the review ends", next)
+	}
+}
+
 // A fork that cannot pass its own checks keeps its task paused. A person who brought its commit to
 // the branch, and kept working there, takes the task with `coop tasks done --from-fork`; merging the
 // fork afterwards drops the commit the branch already has instead of conflicting with the later
@@ -1078,8 +1151,8 @@ func TestChangedForkGoBackAdviceAbortsARebaseInProgress(t *testing.T) {
 		shellLine([]string{"git", "-C", ws, "reset", "--hard", candidate.Head})
 	var block *ui.UsageError
 	if err := RefuseDivergedFork(repo, identity); !errors.As(err, &block) ||
-		!slices.Contains(block.Rows, [2]string{"Go back to the reviewed commit:", want}) {
-		t.Fatalf("loop refusal mid-rebase = %v, want the row %q", err, want)
+		!slices.Contains(block.Rows, [2]string{"Go back to the reviewed commit (the abort drops conflict resolutions not yet committed):", want}) {
+		t.Fatalf("loop refusal mid-rebase = %v, want the row %q with the abort's warning", err, want)
 	}
 	if out, err := exec.Command("sh", "-c", want).CombinedOutput(); err != nil {
 		t.Fatalf("following the advice: %v\n%s", err, out)
@@ -1092,6 +1165,45 @@ func TestChangedForkGoBackAdviceAbortsARebaseInProgress(t *testing.T) {
 	}
 	if landed, err := mergeOneForTest(t, c, repo, "", name, false); !landed || err != nil {
 		t.Fatalf("merge after going back = (%v, %v)", landed, err)
+	}
+}
+
+// The go-back command is pasted into a shell, so a workspace path with a space stays one word, and
+// the row warns about the abort only while a rebase is in progress. Run as printed, it aborts the
+// rebase and puts the branch back on the commit.
+func TestGoBackCommandQuotesAPathWithASpace(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	ws := filepath.Join(t.TempDir(), "my fork")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "init", "-q", "-b", "work")
+	for _, line := range []string{"one\n", "two\n"} {
+		writeTaskFile(t, filepath.Join(ws, "f.txt"), line)
+		git(t, ws, "add", "f.txt")
+		git(t, ws, "commit", "-qm", strings.TrimSpace(line))
+	}
+	back := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	if label := GoBackLabel(ws, "Go back:"); label != "Go back:" {
+		t.Fatalf("label with no rebase in progress = %q", label)
+	}
+	if err := exec.Command("git", "-C", ws, "rebase", "-q", "-x", "false", "HEAD~1").Run(); err == nil {
+		t.Fatal("the rebase should stop at its failing exec")
+	}
+	cmd := GoBackCommand(ws, "reset", "--hard", back)
+	if want := "git -C '" + ws + "' rebase --abort && git -C '" + ws + "' reset --hard " + back; cmd != want {
+		t.Fatalf("go-back command = %q, want %q", cmd, want)
+	}
+	if label := GoBackLabel(ws, "Go back:"); !strings.Contains(label, "drops conflict resolutions not yet committed") {
+		t.Fatalf("label mid-rebase = %q", label)
+	}
+	if out, err := exec.Command("sh", "-c", cmd).CombinedOutput(); err != nil {
+		t.Fatalf("running the printed command: %v\n%s", err, out)
+	}
+	if RebaseInProgress(ws) || forkspace.GitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD") != "work" ||
+		forkspace.GitOut(ws, "rev-parse", "HEAD") != back {
+		t.Fatal("the printed command did not put the branch back on the commit")
 	}
 }
 

@@ -45,8 +45,15 @@ func (c *Control) forkMergeIsolatedCommand(repo, name string, identity forkspace
 		return c.mergeIsolatedLocked(repo, img, name, identity, force, skipEmpty, func(candidate isolatedCandidate) bool {
 			count, _ := observed(candidate.dir, "rev-list", "--count", candidate.parent.Head+".."+candidate.head)
 			n, _ := strconv.Atoi(count)
-			ui.Note("Publish isolated fork %s into %s", name, strings.TrimPrefix(candidate.parent.Target, "refs/heads/"))
-			ui.Note("  %s · exact reviewed candidate %s", ui.Count(n, "commit"), candidate.head)
+			branch := strings.TrimPrefix(candidate.parent.Target, "refs/heads/")
+			ui.Note("Publish isolated fork %s into %s", name, branch)
+			// The fork's own commit is the one its review read; what publishes is that work rebased
+			// onto the branch, a new commit, so the header names both.
+			if candidate.head == candidate.sourceHead {
+				ui.Note("  %s · fork commit %s", ui.Count(n, "commit"), candidate.head)
+			} else {
+				ui.Note("  %s · fork commit %s, rebased onto %s as %s", ui.Count(n, "commit"), candidate.sourceHead[:12], branch, candidate.head[:12])
+			}
 			if !approve("Publish these commits?", yes) {
 				ui.Note("Cancelled. Parent source, index and refs are unchanged.")
 				declined = true

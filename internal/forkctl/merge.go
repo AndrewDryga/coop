@@ -640,6 +640,10 @@ func fetchForkForMerge(repo, ws, name string) error {
 	if !pathExists(ws) {
 		return NoSuchFork(name)
 	}
+	// Refused here, before the merge's header: a shallow history makes its commit count meaningless.
+	if err := RefuseShallowFork(ws, name); err != nil {
+		return err
+	}
 	if err := gitFetchInto(repo, ws, name); err != nil {
 		return fmt.Errorf("%s: git fetch: %w", name, err)
 	}
@@ -984,6 +988,13 @@ func noReviewedWorkError(repo, name string, identity forkspace.Identity) error {
 		}
 	}
 	cause := "its loop stopped before the final review of all its work"
+	if len(open) == 0 {
+		// A final review that started and was stopped holds the fork's work: its loop takes no new
+		// task until that review ends, so a plain rerun finishes it, as the stop message says.
+		if summary, err := tasks.ReadForkTaskStateSummary(repo, identity); err == nil && summary.Candidate {
+			return fmt.Errorf("%s has no reviewed work to merge: its final review did not finish — run its loop again to finish it: coop fork %s --loop, then merge it", name, name)
+		}
+	}
 	if len(open) == 1 {
 		cause = open[0] + " is not reviewed yet"
 	} else if len(open) > 1 {

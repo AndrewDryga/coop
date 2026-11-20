@@ -2,11 +2,13 @@ package forkctl
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
 )
@@ -40,6 +42,21 @@ func TestLandRefusesAShallowFork(t *testing.T) {
 	}
 	if pending, err := ForkHasPendingLand(repo, identity); err != nil || pending {
 		t.Fatalf("land journal after the refusal = %v, %v", pending, err)
+	}
+	// The command refuses before its header, whose commit count a shallow history makes meaningless.
+	if c.cfg == nil {
+		c.cfg = &config.Config{}
+	}
+	c.cfg.RepoOverride = repo
+	var code int
+	notes := captureStderr(t, func() { code, err = c.ForkMerge([]string{identity.Name, "--yes"}) })
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "repository is shallow") || strings.Contains(notes, "Merge fork") {
+		t.Fatalf("coop fork merge of a shallow fork = (%d, %v), printed:\n%s", code, err, notes)
+	}
+	// merge --all agrees: it lands nothing and gives the same refusal.
+	notes = captureStderr(t, func() { code, err = c.ForkMerge([]string{"--all", "--yes"}) })
+	if code == 0 || !strings.Contains(notes+fmt.Sprint(err), "repository is shallow") || forkspace.GitOut(repo, "rev-parse", "HEAD") != parent {
+		t.Fatalf("coop fork merge --all of a shallow fork = (%d, %v), printed:\n%s", code, err, notes)
 	}
 }
 
@@ -89,6 +106,20 @@ func TestLandRefusesAChangeTheRebaseWouldAlter(t *testing.T) {
 	if s.stateCell() != "changed" || s.driftLine() != "Changed: its reviewed change would land changed on main; rebase and review: coop fork "+identity.Name+" --loop" {
 		t.Fatalf("fork after a changed land: state %q, %q", s.stateCell(), s.driftLine())
 	}
+	// And so the listing itself reads: changed, never "conflicts".
+	if c.cfg == nil {
+		c.cfg = &config.Config{}
+	}
+	c.cfg.RepoOverride = repo
+	listing := captureStdout(t, func() {
+		if code, err := c.ForkLs(nil); code != 0 || err != nil {
+			t.Fatalf("fork ls = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(listing, "changed after review") || !strings.Contains(listing, "would land changed on main") ||
+		strings.Contains(strings.ToLower(listing), "conflict") {
+		t.Fatalf("fork ls after a changed land:\n%s", listing)
+	}
 }
 
 // Reviewed commits A (removes the readme's line, bound to the task) and C (adds g.txt), on a branch
@@ -124,7 +155,7 @@ func TestLandStopsWhenTheBranchAlreadyHasATaskCommit(t *testing.T) {
 		if landed || err == nil {
 			t.Fatalf("merge %d whose rebase skips a task's commit = (%v, %v)", attempt, landed, err)
 		}
-		for _, want := range []string{"reviewed commit is already on main", "Coop-Task: ", "is on 0 commit(s)", "coop fork rm " + name + " --force", "Nothing was merged."} {
+		for _, want := range []string{"reviewed commit is already in main's history", "Coop-Task: ", "is on 0 commit(s)", "coop fork rm " + name + " --force", "Nothing was merged."} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("merge %d refusal does not say %q: %v", attempt, want, err)
 			}
@@ -149,7 +180,7 @@ func TestLandStopsWhenTheBranchAlreadyHasATaskCommit(t *testing.T) {
 	if got := SkippedCommits(ws, parent, candidate.Head); len(got) != 1 {
 		t.Fatalf("skipped commits = %q; want A alone", got)
 	}
-	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") {
+	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "reviewed commit is already in main's history") {
 		t.Fatalf("loop start after a skipped commit = %v; want the refusal before the loop starts", err)
 	}
 	loopErr := SkippedCommitError(ws, name, candidate, rebase, nil, " No agent ran.", false)
@@ -157,13 +188,13 @@ func TestLandStopsWhenTheBranchAlreadyHasATaskCommit(t *testing.T) {
 		t.Fatalf("loop refusal = %v", loopErr)
 	}
 	s := c.gatherForkStatus(repo, name, tasks.ReadProjectSnapshot(repo, nil))
-	if s.stateCell() != "changed" || !strings.Contains(s.driftLine(), "main already has one of its task commits") {
+	if s.stateCell() != "changed" || !strings.Contains(s.driftLine(), "main's history already has one of its task commits") {
 		t.Fatalf("fork after a skipped commit: state %q, %q", s.stateCell(), s.driftLine())
 	}
 	// A hand rebase onto that parent changes nothing: merge says the same, with the way back.
 	git(t, ws, "rebase", "-q", parent)
 	landed, err := mergeOneForTest(t, c, repo, "", name, false)
-	if landed || err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") || !strings.Contains(err.Error(), "reset --hard "+candidate.Head) {
+	if landed || err == nil || !strings.Contains(err.Error(), "reviewed commit is already in main's history") || !strings.Contains(err.Error(), "reset --hard "+candidate.Head) {
 		t.Fatalf("merge after a hand rebase = (%v, %v)", landed, err)
 	}
 	if _, err := tasks.SupersedeStaleForkCandidate(repo, identity, forkspace.GitOut(ws, "rev-parse", "HEAD")); err == nil {
@@ -175,7 +206,7 @@ func TestLandStopsWhenTheBranchAlreadyHasATaskCommit(t *testing.T) {
 	// main's history since the fork started, and the refusal says so.
 	git(t, repo, "revert", "--no-edit", "HEAD")
 	landed, err = mergeOneForTest(t, c, repo, "", name, false)
-	if landed || err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") ||
+	if landed || err == nil || !strings.Contains(err.Error(), "reviewed commit is already in main's history") ||
 		!strings.Contains(err.Error(), "reverting the change on main does not either") || !strings.Contains(err.Error(), "from its history") {
 		t.Fatalf("merge after main reverted its commit = (%v, %v); want the same refusal, saying a revert is not enough", landed, err)
 	}
@@ -234,7 +265,7 @@ func TestLandRefusesASkippedTaskCommitEvenWhenTheEditsMatch(t *testing.T) {
 	setReadme(t, repo, original, "main puts it back")
 	parent := forkspace.GitOut(repo, "rev-parse", "HEAD")
 	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
-	if landed || err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") || !strings.Contains(err.Error(), "is on 0 commit(s)") {
+	if landed || err == nil || !strings.Contains(err.Error(), "reviewed commit is already in main's history") || !strings.Contains(err.Error(), "is on 0 commit(s)") {
 		t.Fatalf("merge whose rebase skips the task's commit with matching edits = (%v, %v)", landed, err)
 	}
 	if forkspace.GitOut(repo, "rev-parse", "HEAD") != parent {

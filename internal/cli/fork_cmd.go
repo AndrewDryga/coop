@@ -1643,7 +1643,11 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 			if rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil {
 				return 1, err
 			} else if requested && rebase.Cause == tasks.RebaseCauseIsolatedConflict {
-				// Only a record for ls: nothing of the parent may enter an isolated box, so no rebase.
+				// Nothing of the parent may enter an isolated box, so no agent rebases it: on the reviewed
+				// commit the loop has nothing to do, and the ways on are a person's.
+				if head == candidate.Head {
+					return 1, forkctl.IsolatedConflictLoopError(ws, name, rebase.Branch)
+				}
 			} else if requested && rebase.Cause == tasks.RebaseCauseSkipped {
 				// The branch already has a task's commit: no rebase keeps it, so no agent runs.
 				return 1, forkctl.SkippedCommitError(ws, name, candidate, rebase, nil, " No agent ran, and nothing was reviewed or merged.", head != candidate.Head)
@@ -2015,7 +2019,7 @@ func (a *app) checkForkRebaseTree(repo, ws, name string, candidate tasks.ForkCan
 			cause = "The check pass left tracked files of " + name + " changed, which a gate that writes to files git tracks does. Coop keeps checks only of the exact, clean rebased tree, so every run ends here until the gate writes its output only to ignored paths (or the agent stops editing)."
 		}
 		return 1, ui.CommandFailed("Fork "+name+" changed during its rebase check", cause+" Nothing was reviewed or merged.",
-			[2]string{"Go back to the rebased commit:", forkctl.GoBackCommand(ws, "checkout", "-f", "-B", name, head)},
+			[2]string{forkctl.GoBackLabel(ws, "Go back to the rebased commit:"), forkctl.GoBackCommand(ws, "checkout", "-f", "-B", name, head)},
 			[2]string{"Then check and review it:", spec.Continue},
 			[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})
 	}
@@ -2075,7 +2079,7 @@ func checkForkRebase(repo, ws, name string, candidate tasks.ForkCandidate, rebas
 	if len(problems) > 0 {
 		return ui.CommandFailed("Fork "+name+"'s rebase changed which commits belong to its tasks",
 			strings.Join(problems, "\n")+"\nNothing was reviewed or merged.",
-			[2]string{"Go back to the reviewed commit:", back},
+			[2]string{forkctl.GoBackLabel(ws, "Go back to the reviewed commit:"), back},
 			[2]string{"Then rebase again:", continueCmd}, discard)
 	}
 	return nil

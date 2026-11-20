@@ -371,6 +371,51 @@ func isolatedTestCommit(t *testing.T, ws, path, text string) string {
 	return head
 }
 
+// The publish header names the fork's own commit, the one a review reads, and the new commit that
+// publishes it rebased onto the branch; it used to call the rebased commit the reviewed one.
+func TestIsolatedPublishHeaderNamesTheForkCommitAndTheRebasedOne(t *testing.T) {
+	repo, ws, _, c := isolatedTestFork(t)
+	source := isolatedTestCommit(t, ws, "first.txt", "first\n")
+	isolatedTestCommit(t, repo, "parent.txt", "parent\n")
+	var code int
+	var err error
+	notes := captureStderr(t, func() { code, err = c.ForkMerge([]string{"isolated", "--yes"}) })
+	if code != 0 || err != nil {
+		t.Fatalf("isolated merge = (%d, %v)\n%s", code, err, notes)
+	}
+	published, _ := observed(repo, "rev-parse", "HEAD")
+	if published == source {
+		t.Fatal("the publication was not rebased, so this test checks nothing")
+	}
+	if want := "1 commit · fork commit " + source[:12] + ", rebased onto main as " + published[:12]; !strings.Contains(notes, want) {
+		t.Fatalf("publish header lacks %q:\n%s", want, notes)
+	}
+}
+
+// The ordinary fork's shallow refusal runs before merge's header (fetchForkForMerge), which an
+// isolated merge never reaches: a single isolated merge takes its own path exactly as before, and
+// never gives the ordinary fork's shallow refusal. Whether an isolated fork should refuse a shallow
+// workspace is a separate question.
+func TestIsolatedMergeIsNotGivenTheOrdinaryShallowRefusal(t *testing.T) {
+	repo, ws, _, c := isolatedTestFork(t)
+	head := isolatedTestCommit(t, ws, "first.txt", "first\n")
+	gitDir := forkspace.GitOut(ws, "rev-parse", "--absolute-git-dir")
+	if gitDir == "" {
+		t.Fatal("no git dir for the isolated workspace")
+	}
+	writeTaskFile(t, filepath.Join(gitDir, "shallow"), head+"\n")
+	var code int
+	var err error
+	notes := captureStderr(t, func() { code, err = c.ForkMerge([]string{"isolated", "--yes"}) })
+	// As on main before this change: the isolated merge publishes, shallow file or not.
+	if code != 0 || err != nil || !strings.Contains(notes, "Published isolated fork isolated") {
+		t.Fatalf("single isolated merge with a shallow file = (%d, %v); want it published as before\n%s", code, err, notes)
+	}
+	if !pathExists(filepath.Join(repo, "first.txt")) {
+		t.Fatal("the isolated fork's work did not land")
+	}
+}
+
 func TestIsolatedPublicationLeavesSourceAndSupportsKeptFork(t *testing.T) {
 	repo, ws, identity, c := isolatedTestFork(t)
 	first := isolatedTestCommit(t, ws, "first.txt", "first\n")
