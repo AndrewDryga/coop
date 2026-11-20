@@ -395,8 +395,28 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		return mergeOutcome{}, isolatedForceRefusal()
 	}
 	candidate, err := prepareIsolatedCandidate(repo, name, identity, forkspace.WantsSigning())
+	var conflict *isolatedConflictError
+	if errors.As(err, &conflict) {
+		// Recorded only so ls says it conflicts; the loop and the fence act on nothing of it.
+		if reviewed, ok, readErr := tasks.ReadForkCandidate(repo, identity); readErr != nil {
+			return mergeOutcome{}, errors.Join(readErr, conflict.refusal())
+		} else if ok {
+			if err := tasks.RequestForkCandidateRebaseLocked(repo, reviewed, forkspace.GitOut(repo, "rev-parse", "HEAD"), conflict.branch, tasks.RebaseCauseIsolatedConflict); err != nil {
+				return mergeOutcome{}, errors.Join(err, conflict.refusal())
+			}
+		}
+		return mergeOutcome{}, conflict.refusal()
+	}
 	if err != nil {
 		return mergeOutcome{}, err
+	}
+	// The commits apply now, so an earlier merge's conflict record no longer holds.
+	if reviewed, ok, err := tasks.ReadForkCandidate(repo, identity); err != nil {
+		return mergeOutcome{}, err
+	} else if ok {
+		if err := tasks.CloseForkCandidateRebaseLocked(repo, reviewed); err != nil {
+			return mergeOutcome{}, err
+		}
 	}
 	defer func() {
 		// The kept copy is the journal's custody: it lives exactly as long as a journal does. A
@@ -446,8 +466,8 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		}
 		if len(merges) > 0 {
 			return mergeOutcome{}, ui.CommandFailed("Fork "+name+"'s reviewed commits include a merge commit",
-				mergeCommitsCause(merges)+" Nothing was merged.",
-				[2]string{"Discard its work and return its tasks to the queue:", "coop fork rm " + name + " --force"})
+				mergeCommitsCause(merges)+" Nothing was merged. It is an isolated fork, so nothing of your branch may enter its box to straighten them.",
+				[2]string{"Discard its work, return its tasks to the queue and start a new isolated fork from your branch:", "coop fork rm " + name + " --force"})
 		}
 		original = &taskCandidate
 	}

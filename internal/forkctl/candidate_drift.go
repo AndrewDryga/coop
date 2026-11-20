@@ -40,6 +40,14 @@ func forkCandidateDrift(ws, name string, candidate tasks.ForkCandidate, head str
 	if rebase != nil && rebase.Cause == tasks.RebaseCauseSkipped {
 		return driftSkipped
 	}
+	// An isolated fork's conflict is only a record of the last merge: it conflicts while the branch is
+	// the reviewed commit, and anything else reads as if there were no request.
+	if rebase != nil && rebase.Cause == tasks.RebaseCauseIsolatedConflict {
+		if head == candidate.Head {
+			return driftConflicts
+		}
+		rebase = nil
+	}
 	if head == candidate.Head {
 		switch {
 		case rebase == nil:
@@ -327,17 +335,28 @@ func CheckRebase(ws, name, onto string) RebaseResult {
 // RefuseDivergedFork refuses a loop on a fork whose branch no longer builds on its reviewed
 // candidate. The loop would stop at its first step, after a background start said "Started", so the
 // refusal comes in the terminal, with the same ways on as coop fork merge gives. A fork whose merge
-// conflicted is the loop's to rebase, wherever its branch is.
+// conflicted is the loop's to rebase, wherever its branch is, except an isolated one, which no loop
+// rebases; a skipped task commit, which the loop refuses before any agent, is refused here too.
 func RefuseDivergedFork(repo string, identity forkspace.Identity) error {
 	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)
 	if err != nil || !ok {
 		return err
 	}
-	if _, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || requested {
+	rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity)
+	if err != nil {
 		return err
 	}
 	ws := forkspace.Workspace(repo, identity.Name)
 	head := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	switch {
+	case requested && rebase.Cause == tasks.RebaseCauseSkipped:
+		// The loop refuses this before any agent runs; say it here, not after a "Started".
+		return SkippedCommitError(ws, identity.Name, candidate, rebase, nil, " No agent ran, and nothing was reviewed or merged.", head != candidate.Head)
+	case requested && rebase.Cause != tasks.RebaseCauseIsolatedConflict:
+		return nil // the loop's to rebase or check, wherever the branch is
+	}
+	// An isolated fork's conflict record lets nothing build on the parent, so its branch is held to
+	// the reviewed commit exactly as without one.
 	if forkCandidateDrift(ws, identity.Name, candidate, head, nil) != driftDiverged {
 		return nil
 	}

@@ -334,6 +334,9 @@ func (s forkStatus) driftLine() string {
 	case driftRebased:
 		return "Changed: rebased onto " + parentBranchWords(s.RebaseBranch) + " since its review; review it: coop fork " + s.Name + " --loop"
 	case driftConflicts:
+		if s.RebaseCause == tasks.RebaseCauseIsolatedConflict {
+			return "Conflicts with " + parentBranchWords(s.RebaseBranch) + "; change it until the fork applies, or discard it (coop fork rm " + s.Name + " --force) and start a new isolated fork"
+		}
 		return "Conflicts with " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
 	case driftChanged:
 		return "Changed: its reviewed change would land changed on " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"

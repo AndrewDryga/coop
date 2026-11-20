@@ -669,10 +669,19 @@ func TestIsolatedPrivateRebaseFailureGivesSafeSourceGuidance(t *testing.T) {
 			if err == nil || result.landed {
 				t.Fatal("private failure fixture did not refuse", err)
 			}
-			for _, text := range []string{"private rebase failed", ws, boundary, "coop fork review isolated", "trusted signing settings"} {
+			want := []string{"private rebase failed", ws, boundary, "coop fork review isolated", "trusted signing settings"}
+			if !signing {
+				// A conflict names the two ways out a person has; no agent can rebase an isolated fork.
+				want = []string{"reviewed commits conflict with main", "README.md", "Change main until the fork's commits apply", "coop fork merge isolated",
+					"start a new isolated fork", "coop fork rm isolated --force"}
+			}
+			for _, text := range want {
 				if !strings.Contains(err.Error(), text) {
 					t.Errorf("private failure missing safe guidance %q: %v", text, err)
 				}
+			}
+			if !signing && (strings.Contains(err.Error(), "--loop") || strings.Contains(err.Error(), "rework")) {
+				t.Errorf("an isolated conflict points to a loop that cannot rebase it: %v", err)
 			}
 			if strings.Contains(err.Error(), "isolated review conflicts against") {
 				t.Fatal("every private failure mislabeled as a conflict", err)

@@ -36,6 +36,10 @@ const (
 	// holds one. The loop runs no agent for it: a person straightens the commits onto the parent
 	// commit with git rebase, and the loop checks and reviews the result.
 	RebaseCauseMerges = "merges"
+	// RebaseCauseIsolatedConflict: an isolated fork's reviewed commits conflict with the parent. It
+	// only records the refusal for ls: nothing of the parent may enter an isolated box, so the loop
+	// runs no rebase for it and the fence admits nothing new.
+	RebaseCauseIsolatedConflict = "isolated-conflict"
 )
 
 // forkCandidateRebase records that a reviewed round's merge conflicted with the parent branch, so the
@@ -81,7 +85,7 @@ func validRebaseRequest(rebase forkCandidateRebase, identity forkspace.Identity)
 	return rebase.Version == forkCandidateRebaseVersion && rebase.Fork == identity && validAssignmentID(rebase.CandidateID) &&
 		rebase.Onto != "" && validCommitID(rebase.Onto) &&
 		rebase.Branch != "" && ValidTaskText(rebase.Branch, false, forkCandidateBranchLimit) && !rebase.CreatedAt.IsZero() &&
-		(rebase.Cause == RebaseCauseConflict || rebase.Cause == RebaseCauseChanged || rebase.Cause == RebaseCauseSkipped || rebase.Cause == RebaseCauseMerges) &&
+		(rebase.Cause == RebaseCauseConflict || rebase.Cause == RebaseCauseChanged || rebase.Cause == RebaseCauseSkipped || rebase.Cause == RebaseCauseMerges || rebase.Cause == RebaseCauseIsolatedConflict) &&
 		(rebase.Verification == "") == (rebase.VerifiedTree == "") && validCommitID(rebase.VerifiedTree) &&
 		(rebase.Verification == "" || ValidTaskText(rebase.Verification, true, forkRebaseVerificationLimit))
 }
@@ -121,7 +125,7 @@ func buildsOnReviewedRound(repo string, manifest forkCandidateManifest, reviewed
 	}
 	rebase, err := openForkCandidateRebase(repo, manifest)
 	// A skipped commit's request waits for a person, not a rebase, so nothing may build on its onto.
-	if err != nil || rebase == nil || rebase.Cause == RebaseCauseSkipped || head == rebase.Onto {
+	if err != nil || rebase == nil || rebase.Cause == RebaseCauseSkipped || rebase.Cause == RebaseCauseIsolatedConflict || head == rebase.Onto {
 		return false, err
 	}
 	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", rebase.Onto, head); err != nil {

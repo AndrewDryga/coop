@@ -134,6 +134,84 @@ func TestIsolatedCandidateWithAMergeCommitIsNotLanded(t *testing.T) {
 	}
 }
 
+// An isolated fork whose reviewed commits conflict with the branch: the merge names the two ways
+// out a person has, ls shows it as conflicting with those ways rather than a loop, and the record
+// admits no rebase. Once the branch changes so the commits apply, the next merge lands them.
+func TestIsolatedConflictNamesTheWaysOutAndShowsInLs(t *testing.T) {
+	edit := func(t *testing.T, ws, id string) {
+		if err := os.WriteFile(filepath.Join(ws, "README.md"), []byte("fork\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "commit", "-qam", "fork edits the readme\n\nCoop-Task: "+id)
+	}
+	repo, ws, _, identity, c := prepareForkTaskCandidateHistory(t, "task-isolated-conflict", true, edit, nil)
+	name := identity.Name
+	before := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("parent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "commit", "-qam", "parent edits the readme")
+	landed, err := mergeOneForTest(t, c, repo, "", name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "conflict with main") || !strings.Contains(err.Error(), "isolated fork") ||
+		!strings.Contains(err.Error(), "coop fork rm "+name+" --force") || strings.Contains(err.Error(), "--loop") {
+		t.Fatalf("isolated conflicting merge = (%v, %v)", landed, err)
+	}
+	if rebase, ok, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || !ok || rebase.Cause != tasks.RebaseCauseIsolatedConflict {
+		t.Fatalf("record after the conflict = %+v, %v, %v", rebase, ok, err)
+	}
+	s := c.gatherForkStatus(repo, name, tasks.ReadProjectSnapshot(repo, nil))
+	if s.stateCell() != "conflict" || !strings.Contains(s.driftLine(), "start a new isolated fork") || strings.Contains(s.driftLine(), "--loop") {
+		t.Fatalf("isolated fork after a conflict: state %q, %q", s.stateCell(), s.driftLine())
+	}
+	// The record is no rebase request: a loop start on the reviewed commit goes ahead, and one on a
+	// branch rewritten off it is refused in the terminal, as without the record, not after "Started".
+	if err := RefuseDivergedFork(repo, identity); err != nil {
+		t.Fatalf("loop start on the reviewed commit = %v", err)
+	}
+	reviewed := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	git(t, ws, "reset", "-q", "--hard", "HEAD~1")
+	if err := os.WriteFile(filepath.Join(ws, "other.txt"), []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, ws, "add", "other.txt")
+	git(t, ws, "commit", "-qm", "a rewrite off the reviewed commit")
+	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "changed after its final review") {
+		t.Fatalf("loop start on a rewritten isolated fork = %v; want the up-front refusal", err)
+	}
+	git(t, ws, "reset", "-q", "--hard", reviewed)
+	conflicting := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	holdsNothingLater(t, ws, "after a conflicting merge", conflicting)
+	git(t, repo, "reset", "-q", "--hard", before)
+	if err := os.WriteFile(filepath.Join(repo, "later.txt"), []byte("later\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "later.txt")
+	git(t, repo, "commit", "-qm", "the parent moves on without a conflict")
+	later := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if landed, err := mergeOneForTest(t, c, repo, "", name, false); !landed || err != nil {
+		t.Fatalf("merge once the branch no longer conflicts = (%v, %v)", landed, err)
+	}
+	holdsNothingLater(t, ws, "after a land", conflicting, later, forkspace.GitOut(repo, "rev-parse", "HEAD"))
+}
+
+// holdsNothingLater fails unless the isolated workspace ws holds none of the parent's commits shas and
+// borrows no objects through alternates: nothing of the parent enters it after creation.
+func holdsNothingLater(t *testing.T, ws, step string, shas ...string) {
+	t.Helper()
+	for _, sha := range shas {
+		if _, err := forkspace.GitOutErr(ws, "cat-file", "-e", sha+"^{commit}"); err == nil {
+			t.Errorf("%s: the isolated workspace holds the parent's later commit %s", step, sha)
+		}
+	}
+	if info, err := os.Stat(filepath.Join(ws, ".git", "objects")); err != nil || !info.IsDir() {
+		t.Fatalf("%s: the isolated workspace has no object directory of its own: %v", step, err)
+	}
+	alternates := filepath.Join(ws, ".git", "objects", "info", "alternates")
+	if _, err := os.Stat(alternates); err == nil {
+		t.Errorf("%s: the isolated workspace borrows objects through %s", step, alternates)
+	}
+}
+
 // The freeze check counts only the fork's own commits: a merge commit the parent's history already
 // holds is not the fork's to answer for.
 func TestFreezeCheckIgnoresMergesTheParentAlreadyHas(t *testing.T) {

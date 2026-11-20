@@ -93,9 +93,12 @@ coop fork review research --stat
 coop fork merge research --yes
 ```
 
-An isolated fork keeps its own Git metadata and object files. co:op prevents the box from mounting
-your parent checkout or its Git storage, including through another path, a service or a volume
-that co:op inspects. The agent can still create commits and branches and run rebase inside the
+An isolated fork keeps its own Git metadata and object files. It starts as a copy of your
+repository's branches as they were when you created it, so the agent can read their history. co:op
+copies nothing your repository commits after that into it, not when a merge conflicts and not when
+one lands. co:op prevents
+the box from mounting your parent checkout or its Git storage, including through another path, a
+service or a volume that co:op inspects. The agent can still create commits and branches and run rebase inside the
 fork.
 
 Isolation stays enabled when you reopen the fork, run a detached loop or connect through ACP. You
@@ -427,13 +430,20 @@ runs no agent after it. Discard the fork's work with `coop fork rm <name> --forc
 tasks to the queue, or remove your branch's commit with that change from its history and merge
 again. Reverting it is not enough: a rebase skips a commit whose change appears anywhere in your
 branch's history since the fork started, even if a later commit undid it. Once a merge gets past
-this check, the refusal is gone, even if your merge gate then fails. A fork whose repository is shallow is refused until its `.git/shallow` file
-is removed, since git would then misread its history; until then `coop fork ls` shows a reviewed
-one as "changed after review".
+this check, the refusal is gone, even if your merge gate then fails.
 
-This path is for ordinary forks. An `--isolated` fork never shares history with your branch, so
-co:op cannot rebase it there; when its commits conflict, change your branch until they apply, or
-discard its work with `coop fork rm <name> --force` and let a new fork redo it.
+A fork whose repository is shallow is refused until its `.git/shallow` file is removed, since git
+would then misread its history; until then `coop fork ls` shows a reviewed one as "changed after
+review".
+
+This path is for ordinary forks. An `--isolated` fork holds your repository's branches only as they
+were when it was created, and co:op copies none of your branch's later commits into it, so it cannot
+rebase the fork onto your branch for its agent. When its reviewed commits conflict with your branch, `coop fork ls`
+shows it as "conflicts with your branch" and the merge names two ways out: change your branch until
+the fork's commits apply and merge again, or discard its work with `coop fork rm <name> --force`
+and start a new isolated fork from your current branch. Don't cherry-pick its commits into your
+checkout by hand, since that skips the checks co:op runs on an isolated fork's commits, and don't
+redo untrusted work in an ordinary fork, which gives the agent your checkout's Git storage.
 
 A fork whose branch moved after its final review shows as "changed after review" in `coop fork ls`,
 and `coop fork merge` refuses it. New commits on top of the reviewed one need another review, which

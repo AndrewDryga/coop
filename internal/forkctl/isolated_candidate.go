@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -161,6 +162,9 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 		return isolatedCandidate{}, commandErr
 	}
 	if output, rebaseErr := command.CombinedOutput(); rebaseErr != nil {
+		if files := isolatedConflictFiles(ctx, dir); len(files) > 0 {
+			return isolatedCandidate{}, &isolatedConflictError{name: name, branch: gitBranch(repo), files: files}
+		}
 		return isolatedCandidate{}, fmt.Errorf("isolated private rebase failed; source and parent remain unchanged: %w\n"+
 			"Retained source: %s\nPublished source boundary: %s\n"+
 			"Review and rework only unpublished source commits after that boundary; preserve its ancestry. "+
@@ -229,6 +233,58 @@ const changeInYourCheckout = "Remove it from the fork's commits and make the cha
 
 // isolatedRefusal answers a commit of an isolated fork that Coop will not merge, in the block the
 // other merge refusals use: what it refuses and why, that --force cannot change it, and what to do.
+// isolatedConflictFiles is the paths a stopped private rebase in dir left unmerged, none when it
+// stopped for another reason, such as signing.
+func isolatedConflictFiles(ctx context.Context, dir string) []string {
+	command, err := forkspace.GitCommandWithEnv(ctx, dir, forkspace.IndependentGitEnv(), "ls-files", "--unmerged", "-z")
+	if err != nil {
+		return nil
+	}
+	out, err := command.Output()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var files []string
+	for _, entry := range strings.Split(string(out), "\x00") {
+		if _, path, ok := strings.Cut(entry, "\t"); ok && !seen[path] {
+			seen[path] = true
+			files = append(files, path)
+		}
+	}
+	return files
+}
+
+// isolatedConflictError is the refusal of an isolated fork whose reviewed commits conflict with the
+// parent branch. Nothing of the parent may enter an isolated box, so no agent can rebase them; the
+// two ways out are a person's.
+type isolatedConflictError struct {
+	name, branch string
+	files        []string
+}
+
+// Unwrap is the refusal itself, so it prints as every other refusal does.
+func (e *isolatedConflictError) Unwrap() error { return e.refusal() }
+
+func (e *isolatedConflictError) Error() string { return e.refusal().Error() }
+
+func (e *isolatedConflictError) refusal() error {
+	files := slices.Clone(e.files)
+	more := ""
+	if len(files) > 5 {
+		files, more = files[:5], " and more"
+	}
+	for i := range files {
+		files[i] = ui.SafeInline(files[i])
+	}
+	branch := parentBranchWords(e.branch)
+	return ui.CommandFailed("Fork "+e.name+"'s reviewed commits conflict with "+branch,
+		"They conflict in "+strings.Join(files, ", ")+more+", so nothing merged. It is an isolated fork: it holds the repository's branches only as they were when it was created, and nothing of "+
+			branch+" may enter its box later, so no agent can rebase it.",
+		[2]string{"Change " + branch + " until the fork's commits apply, then merge again:", "coop fork merge " + e.name},
+		[2]string{"Or discard its work and start a new isolated fork from " + branch + ":", "coop fork rm " + e.name + " --force"})
+}
+
 func isolatedRefusal(headline, why, action string) *ui.UsageError {
 	return ui.CommandFailed(headline, why+"\n--force cannot bypass this check.", [2]string{"", action})
 }

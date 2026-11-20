@@ -2,7 +2,7 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go, internal/forkctl/status.go]
+sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go, internal/forkctl/status.go, internal/forkctl/isolated_candidate.go]
 updated: 2026-11-19
 ---
 
@@ -86,7 +86,16 @@ discard closes it without touching the file. It sits outside the manifest so the
 and the builds that read it, stay as they were. It keys on `onto`, a parent commit, so re-signing
 the fork's commits does not disturb it. A failed round keeps its number for its rework's review,
 which the review heading names (`ForkCandidateReview.AfterRework`). Isolated forks have no such
-path: their source never shares history with the parent (isolated_candidate.go).
+path: the source holds every parent branch only as it was at creation (a `--no-local` clone of a
+view copying all branches as `origin/*`, forkspace TestIsolatedForkHoldsHistoryUpToCreationAndNothingLater)
+and nothing of the parent enters it later, through a conflicting merge or a land either
+(forkctl TestIsolatedConflictNamesTheWaysOutAndShowsInLs). `RefuseDivergedFork` ignores the
+isolated record (and refuses a skipped one), so a rewritten isolated fork is refused before a loop
+starts. Their private rebase's conflict (`isolatedConflictError`, from unmerged paths;
+signing and other failures keep the old guidance) names the two ways out (change the branch, or
+discard and re-fork) and writes a request with the `isolated-conflict` cause only so ls shows
+"conflicts" with those ways; the loop ignores it, the fence admits nothing by it, and a merge whose
+private rebase applies closes it.
 
 No round may hold a merge commit. A review reads the candidate's diff, but `git rebase` lands its
 commits one by one, flattening a merge and replaying every commit beneath it, so a change a merge
@@ -152,6 +161,9 @@ descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork
 ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
 
 ## Changelog
+- 2026-11-19 — an isolated fork's conflict said "rework" and ls did not show it, and the card said
+  its source shares no history with the parent; the refusal names the two ways out, ls shows it, and
+  the history boundary is stated and tested (task 2026-11-19-say-plainly-what-a-conflicted-isolated-fork-can).
 - 2026-11-19 — a reviewed round with a merge commit read as "conflicts" and promised a loop that runs
   no agent; it now has the `merges` cause and names the git rebase. A skipped task commit whose
   edits still matched landed with its task commit-less; it is now refused as the other skipped case.

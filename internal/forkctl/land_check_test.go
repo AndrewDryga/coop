@@ -149,6 +149,9 @@ func TestLandStopsWhenTheBranchAlreadyHasATaskCommit(t *testing.T) {
 	if got := SkippedCommits(ws, parent, candidate.Head); len(got) != 1 {
 		t.Fatalf("skipped commits = %q; want A alone", got)
 	}
+	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") {
+		t.Fatalf("loop start after a skipped commit = %v; want the refusal before the loop starts", err)
+	}
 	loopErr := SkippedCommitError(ws, name, candidate, rebase, nil, " No agent ran.", false)
 	if !strings.Contains(loopErr.Error(), "Its commit ") || !strings.Contains(loopErr.Error(), "No agent ran.") || strings.Contains(loopErr.Error(), "reset --hard") {
 		t.Fatalf("loop refusal = %v", loopErr)

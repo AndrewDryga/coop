@@ -1634,6 +1634,8 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 			}
 			if rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil {
 				return 1, err
+			} else if requested && rebase.Cause == tasks.RebaseCauseIsolatedConflict {
+				// Only a record for ls: nothing of the parent may enter an isolated box, so no rebase.
 			} else if requested && rebase.Cause == tasks.RebaseCauseSkipped {
 				// The branch already has a task's commit: no rebase keeps it, so no agent runs.
 				return 1, forkctl.SkippedCommitError(ws, name, candidate, rebase, nil, " No agent ran, and nothing was reviewed or merged.", head != candidate.Head)
@@ -1772,6 +1774,9 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 					return 1, err
 				}
 				rebasedOnto, rebaseChecks := rebase.Onto, ""
+				if rebase.Cause == tasks.RebaseCauseIsolatedConflict {
+					rebasedOnto = "" // nothing was rebased: an isolated fork's conflict is only recorded
+				}
 				if rebase.VerifiedTree == review.Candidate.Tree {
 					rebaseChecks = rebase.Verification // checks of any other tree are not this round's
 				}
