@@ -19,9 +19,12 @@ const (
 	driftNone candidateDrift = iota
 	driftAhead
 	driftConflicts // a merge conflicted; the branch is still the reviewed commit
+	driftChanged   // a merge would have landed another change; the branch is still the reviewed commit
+	driftSkipped   // the parent already has one of its task-bound commits, which a rebase skips
 	driftRebasing  // a rebase onto the parent is started or stopped, not finished
 	driftEmpty     // a finished rebase left none of the fork's commits
 	driftMerges    // its new commits, or its rebase, include a merge commit
+	driftShallow   // its repository is shallow (ls only: merge and loop refuse it on their own)
 	driftRebased
 	driftDiverged
 )
@@ -33,11 +36,18 @@ func forkCandidateDrift(ws, name string, candidate tasks.ForkCandidate, head str
 	if !forkspace.ValidObjectID(head) {
 		return driftNone
 	}
+	// No rebase keeps a task commit the parent already has, wherever the branch is now.
+	if rebase != nil && rebase.Cause == tasks.RebaseCauseSkipped {
+		return driftSkipped
+	}
 	if head == candidate.Head {
-		if rebase != nil {
-			return driftConflicts
+		switch {
+		case rebase == nil:
+			return driftNone
+		case rebase.Cause == tasks.RebaseCauseChanged:
+			return driftChanged
 		}
-		return driftNone
+		return driftConflicts
 	}
 	if _, err := forkspace.GitOutErr(ws, "merge-base", "--is-ancestor", candidate.Head, head); err == nil {
 		if merges, err := tasks.MergeCommitsOutside(ws, candidate.Head, head); err == nil && len(merges) > 0 {
@@ -197,9 +207,20 @@ func candidateDriftError(ws, name string, candidate tasks.ForkCandidate, head st
 		}
 		merges, _ := tasks.MergeCommitsOutside(ws, base, head)
 		return MergeCommitsError(ws, name, base, merges, tail)
-	case driftConflicts, driftRebasing:
-		return ui.CommandFailed("Fork "+name+"'s rebase onto "+parentBranchWords(rebase.Branch)+" is not finished",
-			"Its reviewed commits conflict with "+parentBranchWords(rebase.Branch)+", and its loop rebases them, resolves the conflict and reviews the result before it can merge."+tail,
+	case driftSkipped:
+		back := ""
+		if head != candidate.Head {
+			back = candidate.Head
+		}
+		return skippedCommitError(ws, name, rebase.Branch, skippedCommitsDetail(SkippedTaskCommits(ws, rebase.Onto, candidate.Head)), tail, back)
+	case driftShallow:
+		return RefuseShallowFork(ws, name)
+	case driftConflicts, driftChanged, driftRebasing:
+		why := "Its reviewed commits conflict with " + parentBranchWords(rebase.Branch) + ", and its loop rebases them, resolves the conflict and reviews the result before it can merge."
+		if rebase.Cause == tasks.RebaseCauseChanged {
+			why = "Its reviewed change would land changed on " + parentBranchWords(rebase.Branch) + ", so its loop rebases its commits there and reviews the result before it can merge."
+		}
+		return ui.CommandFailed("Fork "+name+"'s rebase onto "+parentBranchWords(rebase.Branch)+" is not finished", why+tail,
 			[2]string{"Rebase and review:", loop},
 			[2]string{"Then merge it:", "coop fork merge " + name}, discard)
 	}

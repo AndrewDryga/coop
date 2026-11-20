@@ -24,6 +24,7 @@ type forkStatus struct {
 	Ready                        bool
 	Drift                        candidateDrift // how the branch moved off its reviewed candidate, when Ready
 	RebaseBranch                 string         // the parent branch an open rebase request names
+	RebaseCause                  string         // why that request was made, a tasks.RebaseCause value
 	EmptyDropped                 bool           // an empty rebase lost reviewed work, rather than the branch having it
 	Landing                      bool
 	Ins, Del                     int
@@ -114,13 +115,13 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		landing = landing || observed.PendingLand
 		cleanup = cleanup || observed.CleanupPending || executionCleanup > 0
 	}
-	drift, rebaseBranch, emptyDropped := driftNone, "", false
+	drift, rebaseBranch, rebaseCause, emptyDropped := driftNone, "", "", false
 	if ready && hasIdentity && !landing {
 		if candidate, ok, err := tasks.ReadForkCandidate(repo, identity); err == nil && ok {
 			var open *tasks.ForkCandidateRebase
 			// A display: an unreadable request only reads as none.
 			if rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err == nil && requested {
-				open, rebaseBranch = &rebase, rebase.Branch
+				open, rebaseBranch, rebaseCause = &rebase, rebase.Branch, rebase.Cause
 				// Count the fork's branch from where it meets the branch, as merge does: not from the
 				// fork's old base, which counts the branch's own changes once rebased, nor the work
 				// tree, which mid-rebase holds conflict markers merge never sees.
@@ -130,6 +131,10 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 				}
 			}
 			drift = forkCandidateDrift(ws, name, candidate, forkspace.GitOut(ws, "rev-parse", "HEAD"), open)
+			// Merge and the loop refuse a shallow fork before anything else, so ls says it first.
+			if RefuseShallowFork(ws, name) != nil {
+				drift = driftShallow
+			}
 			if drift == driftEmpty {
 				emptyDropped = len(droppedReviewedWork(ws, candidate.Head, open.Onto)) > 0
 			}
@@ -153,6 +158,7 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		Ready:               ready,
 		Drift:               drift,
 		RebaseBranch:        rebaseBranch,
+		RebaseCause:         rebaseCause,
 		EmptyDropped:        emptyDropped,
 		Landing:             landing,
 		Ins:                 ins,
@@ -240,7 +246,9 @@ func (s forkStatus) stateCell() string {
 	if s.Landing {
 		return "landing"
 	}
-	if s.Ready && (s.Drift == driftConflicts || s.Drift == driftRebasing) {
+	// Only a textual conflict reads as one; a change that would land changed, or a commit the
+	// branch already has, is a change to review or decide.
+	if s.Ready && (s.Drift == driftConflicts || s.Drift == driftRebasing && s.RebaseCause == tasks.RebaseCauseConflict) {
 		return "conflict"
 	}
 	if s.Ready && s.Drift != driftNone {
@@ -327,6 +335,12 @@ func (s forkStatus) driftLine() string {
 		return "Changed: rebased onto " + parentBranchWords(s.RebaseBranch) + " since its review; review it: coop fork " + s.Name + " --loop"
 	case driftConflicts:
 		return "Conflicts with " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
+	case driftChanged:
+		return "Changed: its reviewed change would land changed on " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
+	case driftSkipped:
+		return "Changed: " + parentBranchWords(s.RebaseBranch) + " already has one of its task commits, which a rebase skips; coop fork merge " + s.Name + " says how to go on"
+	case driftShallow:
+		return "Changed: its repository is shallow; coop fork merge " + s.Name + " names the file to remove"
 	case driftRebasing:
 		return "Rebase onto " + parentBranchWords(s.RebaseBranch) + " not finished; rebase and review: coop fork " + s.Name + " --loop"
 	case driftMerges:

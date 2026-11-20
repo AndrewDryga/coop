@@ -34,10 +34,13 @@ func RefuseShallowFork(ws, name string) error {
 }
 
 // landRefusal is a land the checks stopped after the rebase: err says why, and again says the
-// reviewed change must be rebased onto the branch and reviewed in full before it can land.
+// refusal records a rebase request for cause (a tasks.RebaseCause value): the reviewed change must be
+// rebased onto the branch and reviewed in full before it can land, or, for a skipped commit, a person
+// decides.
 type landRefusal struct {
 	err   error
 	again bool
+	cause string
 }
 
 // landedAsReviewed checks that the rebase lands the branch plus exactly the reviewed change. When
@@ -78,13 +81,105 @@ func landedAsReviewed(ws, name, branch string, intent landIntent) *landRefusal {
 	if reviewed == landed {
 		return nil
 	}
-	return &landRefusal{again: true, err: ui.CommandFailed("Fork "+name+"'s reviewed change would land changed on "+parentBranchWords(branch),
+	// A skipped commit bound to a task leaves that task without a commit of its own. A rebase pass
+	// would skip it again, or keep it empty, which review rightly fails, so this stops for a person.
+	problems, err := tasks.RebaseBindingProblems(ws, parent, candidate.Head, intent.RebasedHead)
+	if err != nil {
+		return unverifiable(err)
+	}
+	if len(problems) > 0 {
+		return &landRefusal{again: true, cause: tasks.RebaseCauseSkipped, err: skippedCommitError(ws, name, branch, strings.Join(problems, " "), " Nothing was merged.", "")}
+	}
+	return &landRefusal{again: true, cause: tasks.RebaseCauseChanged, err: ui.CommandFailed("Fork "+name+"'s reviewed change would land changed on "+parentBranchWords(branch),
 		"Rebased onto "+parentBranchWords(branch)+", its commits would not land exactly the reviewed change, for example because "+
-			parentBranchWords(branch)+" already has a commit of theirs, which a rebase skips. Nothing was merged. The fork's loop rebases them onto "+
+			parentBranchWords(branch)+" already has part of it. Nothing was merged. The fork's loop rebases them onto "+
 			parentBranchWords(branch)+" and the result is reviewed again before it can merge.",
 		[2]string{"Rebase and review:", "coop fork " + name + " --loop"},
 		[2]string{"Then merge it:", "coop fork merge " + name},
 		[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})}
+}
+
+// skippedCommitError is the one refusal of reviewed commits one of which the parent branch already
+// has, bound to a task: rebased there, the commit drops out and its task keeps no commit of its own.
+// Coop lands only each task's reviewed commits, and a rebase cannot keep that one, so the fork's
+// loop does not try; merge, loop and ls all send the person to the same two ways on. detail names
+// the commits or bindings, "" when unknown; tail says what did not happen. back is the reviewed
+// commit when the fork's branch is no longer on it, "" when it is.
+func skippedCommitError(ws, name, branch, detail, tail, back string) error {
+	words := parentBranchWords(branch)
+	cause := words + " already has the change of one of the fork's reviewed commits that belongs to a task, so a rebase onto " +
+		words + " skips that commit and its task is left without a commit of its own."
+	if detail != "" {
+		cause += " " + detail
+	}
+	// A revert does not help: git rebase skips a commit whose change is anywhere in the branch's
+	// history since the fork started, even one a later commit reverted.
+	cause += " Coop merges only each task's own reviewed commits, so no rebase or review can fix this, and reverting the change on " +
+		words + " does not either: a rebase still skips the commit." + tail
+	again := [2]string{"Or remove " + words + "'s commit with that change from its history, then merge again:", "coop fork merge " + name}
+	if back != "" {
+		again = [2]string{"Or remove " + words + "'s commit with that change from its history, go back to the reviewed commit and merge again:",
+			shellLine([]string{"git", "-C", ws, "reset", "--hard", back}) + " && coop fork merge " + name}
+	}
+	return ui.CommandFailed("Fork "+name+"'s reviewed commit is already on "+words, cause,
+		[2]string{"Discard its work and return its tasks to the queue:", "coop fork rm " + name + " --force"}, again)
+}
+
+// SkippedCommitError is the fork loop's refusal of reviewed commits one of which the parent branch
+// rebase.Branch already has, bound to a task: before its rebase pass, when the open request says a
+// merge found it (tail: no agent ran), or after the pass, when its rebase skipped such a commit
+// (moved: the fork's branch is off the reviewed commit). shas names the skipped task commits; nil
+// names them as git's own patch matching tells, for display only.
+func SkippedCommitError(ws, name string, candidate tasks.ForkCandidate, rebase tasks.ForkCandidateRebase, shas []string, tail string, moved bool) error {
+	back := ""
+	if moved {
+		back = candidate.Head
+	}
+	if shas == nil {
+		shas = SkippedTaskCommits(ws, rebase.Onto, candidate.Head)
+	}
+	return skippedCommitError(ws, name, rebase.Branch, skippedCommitsDetail(shas), tail, back)
+}
+
+// SkippedTaskCommits is SkippedCommits narrowed to the commits that carry a Coop-Task binding, read
+// from raw objects: a skipped commit with no trailer costs no task its commit.
+func SkippedTaskCommits(ws, onto, head string) []string {
+	bound, err := tasks.TaskBoundCommits(ws, onto, head, SkippedCommits(ws, onto, head))
+	if err != nil {
+		return nil
+	}
+	return bound
+}
+
+// SkippedCommits is the commits of head whose change onto already has, by git's own patch matching
+// (`--cherry-mark`), the one a rebase uses to skip them; none when git cannot tell. It only chooses
+// and words a refusal: what Coop refuses is decided from raw objects.
+func SkippedCommits(ws, onto, head string) []string {
+	out, err := forkspace.GitOutErr(ws, "rev-list", "--cherry-mark", "--right-only", "--no-merges", onto+"..."+head)
+	if err != nil {
+		return nil
+	}
+	var shas []string
+	for _, line := range strings.Split(out, "\n") {
+		if sha, ok := strings.CutPrefix(line, "="); ok && forkspace.ValidObjectID(sha) {
+			shas = append(shas, sha)
+		}
+	}
+	return shas
+}
+
+func skippedCommitsDetail(shas []string) string {
+	short := make([]string, len(shas))
+	for i, sha := range shas {
+		short[i] = sha[:12]
+	}
+	switch len(short) {
+	case 0:
+		return ""
+	case 1:
+		return "Its commit " + short[0] + " is already there."
+	}
+	return "Its commits " + strings.Join(short, ", ") + " are already there."
 }
 
 // lineEdits is the change from one commit to another as its line edits alone: each file's removed

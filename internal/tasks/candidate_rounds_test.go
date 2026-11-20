@@ -316,7 +316,19 @@ func TestForkCandidateRebaseRequestAdmitsOnlyARebaseOntoItsParent(t *testing.T) 
 			t.Fatal(err)
 		}
 		defer unlock()
-		return RequestForkCandidateRebaseLocked(f.repo, candidate, onto, "parent")
+		return RequestForkCandidateRebaseLocked(f.repo, candidate, onto, "parent", "")
+	}
+	// A skipped commit's request waits for a person: no rebase onto its parent commit is admitted.
+	unlock, err := forkspace.LockState(f.repo, f.identity.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, onto, "parent", RebaseCauseSkipped); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, rebased); err == nil || !strings.Contains(err.Error(), "no longer descends") {
+		t.Fatalf("a rebase under a skipped commit's request = %v; want the ancestry refusal", err)
 	}
 	other := candidate
 	other.ID = newAssignmentID()
@@ -396,10 +408,10 @@ func TestForkCandidateRebaseRequestRefreshesAndIsReplaced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "main"); err != nil {
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "main", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, ""); err == nil {
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "", ""); err == nil {
 		t.Fatal("a rebase request without its branch was recorded")
 	}
 	unlock()
@@ -413,12 +425,30 @@ func TestForkCandidateRebaseRequestRefreshesAndIsReplaced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "release"); err != nil {
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "release", ""); err != nil {
 		t.Fatal(err)
 	}
 	unlock()
 	if got, ok, err := ReadForkCandidateRebase(f.repo, f.identity); err != nil || !ok || got != (ForkCandidateRebase{Onto: first, Branch: "release"}) {
 		t.Fatalf("replaced request = %+v, %v, %v", got, ok, err)
+	}
+	// The cause says why the land asked; a refresh keeps it, and an unknown one is never written.
+	unlock, err = forkspace.LockState(f.repo, f.identity.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "main", "bogus"); err == nil {
+		t.Fatal("a rebase request with an unknown cause was recorded")
+	}
+	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, first, "main", RebaseCauseChanged); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if err := RefreshForkCandidateRebase(f.repo, candidate, second, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := ReadForkCandidateRebase(f.repo, f.identity); err != nil || !ok || got != (ForkCandidateRebase{Onto: second, Branch: "main", Cause: RebaseCauseChanged}) {
+		t.Fatalf("refreshed changed-cause request = %+v, %v, %v", got, ok, err)
 	}
 }
 

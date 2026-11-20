@@ -250,13 +250,17 @@ type CandidateReviewSpec struct {
 	AfterRework bool
 }
 
-// RebaseSpec names the rebase a fork's conflicting merge asked for: the fork's branch, the parent
-// branch and its exact commit to rebase onto, and the project's gate command, "" for none. Report,
-// when set, receives the checks the pass's agent reported running, one per line, once it succeeds.
+// RebaseSpec names the rebase a fork's merge asked for: the fork's branch, the parent branch and its
+// exact commit to rebase onto, and the project's gate command, "" for none. Changed says the merge
+// would have landed another change rather than conflicting. CheckOnly runs a pass that only checks
+// a rebase that is already finished, such as one made by hand, and changes nothing. Report, when
+// set, receives the checks the pass's agent reported running, one per line, once it succeeds.
 type RebaseSpec struct {
 	Branch       string
 	Onto         string
 	ParentBranch string
 	Gate         string
+	Changed      bool
+	CheckOnly    bool
 	Report       func(checks string)
 }

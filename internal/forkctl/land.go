@@ -277,7 +277,7 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 			}
 			// A conflict is ordinary between parallel forks. The fork's loop rebases the work and
 			// reviews the result as a new round; until then this reviewed round stays what may land.
-			if err := tasks.RequestForkCandidateRebaseLocked(repo, intent.Candidate, failed.onto, failed.branch); err != nil {
+			if err := tasks.RequestForkCandidateRebaseLocked(repo, intent.Candidate, failed.onto, failed.branch, tasks.RebaseCauseConflict); err != nil {
 				return intent, false, errors.Join(err, failed)
 			}
 			return intent, false, candidateConflictError(name, failed)
@@ -302,12 +302,18 @@ func (c *Control) advanceTaskLand(repo, ws, name, img string, intent landIntent)
 			if refusal.again {
 				// What the rebase lands is not the branch plus the reviewed change, so the change itself
 				// must be reviewed against the branch: a rebase onto it and a full review, as after a
-				// conflict.
-				if err := tasks.RequestForkCandidateRebaseLocked(repo, intent.Candidate, intent.ParentBefore, gitBranch(repo)); err != nil {
+				// conflict. A skipped task commit's request instead keeps loop and ls saying why not.
+				if err := tasks.RequestForkCandidateRebaseLocked(repo, intent.Candidate, intent.ParentBefore, gitBranch(repo), refusal.cause); err != nil {
 					return intent, false, errors.Join(err, refusal.err)
 				}
 			}
 			return intent, false, refusal.err
+		}
+		// The reviewed commits now land exactly as reviewed, so an earlier land's request (a
+		// conflict, a changed land, a skipped commit) no longer holds: a red gate from here leaves the
+		// reviewed round to fix with new commits, not a stale refusal.
+		if err := tasks.CloseForkCandidateRebaseLocked(repo, intent.Candidate); err != nil {
+			return intent, false, err
 		}
 		if err := writeLandIntent(repo, intent); err != nil {
 			return intent, false, err

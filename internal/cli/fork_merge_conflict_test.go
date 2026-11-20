@@ -33,15 +33,20 @@ const (
 // With reviewWantsRebaseChecks the review acts as the real reviewer did on a rebased round: the
 // tasks' handoffs predate the conflict resolution, so without the rebase pass's own checks it fails
 // the round with "gate: stale". With reportChecks a finished rebase reports its checks as the loop
-// does from the agent's reply.
+// does from the agent's reply, and so does a check-only pass; with checkCommits that pass commits a
+// fix it was told not to make.
 type sharedFilePasses struct {
 	t                       *testing.T
 	attempts                []rebaseAttempt
 	findings                [][]tasks.ForkCandidateFinding
 	afterRebase             func(ws string)
 	reportChecks            bool
+	checkCommits            bool
+	checkDirties            bool                // the check pass leaves a tracked file changed, as a gate that writes one does
+	work                    func(ws, id string) // replaces a work pass's commit when set
 	reviewWantsRebaseChecks bool
 	rebases                 []loop.RebaseSpec
+	checks                  []loop.RebaseSpec
 	reviews                 []loop.CandidateReviewSpec
 }
 
@@ -65,6 +70,26 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 			return 1, &loop.CandidateReviewFindings{Tasks: findings}
 		}
 		return 0, nil
+	case spec.Rebase != nil && spec.Rebase.CheckOnly:
+		p.checks = append(p.checks, *spec.Rebase)
+		if p.checkCommits {
+			if err := os.WriteFile(filepath.Join(spec.Repo, "fix.txt"), []byte("fixed\n"), 0o644); err != nil {
+				t.Error(err)
+				return 1, nil
+			}
+			git(t, spec.Repo, "add", "fix.txt")
+			git(t, spec.Repo, "commit", "-qm", "Fix what the check found")
+		}
+		if p.checkDirties {
+			if err := os.WriteFile(filepath.Join(spec.Repo, "shared.txt"), []byte("gate output\n"), 0o644); err != nil {
+				t.Error(err)
+				return 1, nil
+			}
+		}
+		if p.reportChecks && spec.Rebase.Report != nil {
+			spec.Rebase.Report(rebaseCheckReport)
+		}
+		return 0, nil
 	case spec.Rebase != nil:
 		p.rebases = append(p.rebases, *spec.Rebase)
 		if len(p.attempts) == 0 {
@@ -80,19 +105,7 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 			git(t, spec.Repo, "reset", "-q", "--hard", spec.Rebase.Onto)
 			return 0, nil
 		}
-		if out, err := gitCommand(spec.Repo, "rebase", spec.Rebase.Onto).CombinedOutput(); err == nil {
-			t.Errorf("the rebase onto the parent did not conflict:\n%s", out)
-		}
-		lines := strings.Fields(forkspace.GitOut(spec.Repo, "show", spec.Rebase.Onto+":shared.txt"))
-		if err := os.WriteFile(filepath.Join(spec.Repo, "shared.txt"), []byte(strings.Join(append(lines, "beta"), "\n")+"\n"), 0o644); err != nil {
-			t.Error(err)
-			return 1, nil
-		}
-		git(t, spec.Repo, "add", "shared.txt")
-		continueRebase := gitCommand(spec.Repo, "rebase", "--continue")
-		continueRebase.Env = append(continueRebase.Env, "GIT_EDITOR=true")
-		if out, err := continueRebase.CombinedOutput(); err != nil {
-			t.Errorf("git rebase --continue: %v\n%s", err, out)
+		if !rebaseKeepingEveryLine(t, spec.Repo, spec.Rebase.Onto) {
 			return 1, nil
 		}
 		if p.afterRebase != nil {
@@ -132,6 +145,12 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 		}
 		git(t, spec.Repo, "add", "repair.txt")
 		git(t, spec.Repo, "commit", "-qm", "Repair the review finding")
+	} else if p.work != nil {
+		if err != nil {
+			t.Error(err)
+			return 1, nil
+		}
+		p.work(spec.Repo, id)
 	} else {
 		if err == nil {
 			err = os.WriteFile(filepath.Join(spec.Repo, "shared.txt"), []byte(spec.ForkName+"\n"), 0o644)
@@ -147,6 +166,28 @@ func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+// rebaseKeepingEveryLine rebases beta's branch in ws onto onto, where it conflicts in shared.txt, and
+// resolves the conflict by keeping every line, as an agent or a person would.
+func rebaseKeepingEveryLine(t *testing.T, ws, onto string) bool {
+	t.Helper()
+	if out, err := gitCommand(ws, "rebase", onto).CombinedOutput(); err == nil {
+		t.Errorf("the rebase onto the parent did not conflict:\n%s", out)
+	}
+	lines := strings.Fields(forkspace.GitOut(ws, "show", onto+":shared.txt"))
+	if err := os.WriteFile(filepath.Join(ws, "shared.txt"), []byte(strings.Join(append(lines, "beta"), "\n")+"\n"), 0o644); err != nil {
+		t.Error(err)
+		return false
+	}
+	git(t, ws, "add", "shared.txt")
+	continueRebase := gitCommand(ws, "rebase", "--continue")
+	continueRebase.Env = append(continueRebase.Env, "GIT_EDITOR=true")
+	if out, err := continueRebase.CombinedOutput(); err != nil {
+		t.Errorf("git rebase --continue: %v\n%s", err, out)
+		return false
+	}
+	return true
 }
 
 // hideBehindAMerge commits e.txt on a side branch of the fork's branch and merges it with a
@@ -597,5 +638,232 @@ func TestForkMergeCommitOnAReviewedForkGetsOneTrueReason(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "e.txt")); !os.IsNotExist(err) {
 		t.Fatalf("content the review never saw reached the parent: %v", err)
+	}
+}
+
+// A person who rebases the fork by hand, as the merge-commit refusal tells them to, runs no rebase
+// pass, so no pass reported checks on the rebased tree, and the tasks' handoffs predate it: the first
+// review failed as stale and a rework run followed. The loop now runs one check-only pass, which
+// changes nothing, and its reported checks reach the first review of exactly that tree.
+func TestForkHandRebaseGetsACheckPassBeforeItsFirstReview(t *testing.T) {
+	f := setUpConflictingForks(t)
+	if !rebaseKeepingEveryLine(t, f.ws, f.parent) {
+		t.FailNow()
+	}
+	rebased := forkspace.GitOut(f.ws, "rev-parse", "HEAD")
+	f.passes.reportChecks, f.passes.reviewWantsRebaseChecks = true, true
+	if code, out, err := f.loop(t); code != 0 || err != nil {
+		t.Fatalf("loop after a hand rebase = (%d, %v)\n%s", code, err, out)
+	}
+	if len(f.passes.rebases) != 0 || len(f.passes.checks) != 1 {
+		t.Fatalf("passes = %d rebase, %d check; want only one check pass", len(f.passes.rebases), len(f.passes.checks))
+	}
+	if check := f.passes.checks[0]; check.Onto != f.parent || check.Branch != "beta" || check.ParentBranch != "main" {
+		t.Fatalf("check pass = %+v; want beta's rebase onto main's %s", check, f.parent)
+	}
+	if len(f.passes.reviews) != 3 {
+		t.Fatalf("reviews = %+v; want one passing review of the rebased round", f.passes.reviews)
+	}
+	if review := f.passes.reviews[2]; review.Head != rebased || review.RebasedOnto != f.parent || review.RebaseVerification != rebaseCheckReport || review.AfterRework {
+		t.Fatalf("review of the hand rebase = %+v; want it given the check pass's report", review)
+	}
+	if code, out, err := mergeForkForTest(t, f.a, "beta"); code != 0 || err != nil {
+		t.Fatalf("merge of the reviewed hand rebase = (%d, %v)\n%s", code, err, out)
+	}
+}
+
+// A check pass that reports nothing runs once; the review then judges the handoffs alone, as before.
+func TestForkRebaseCheckPassThatReportsNothingRunsOnce(t *testing.T) {
+	f := setUpConflictingForks(t)
+	if !rebaseKeepingEveryLine(t, f.ws, f.parent) {
+		t.FailNow()
+	}
+	if code, out, err := f.loop(t); code != 0 || err != nil {
+		t.Fatalf("loop = (%d, %v)\n%s", code, err, out)
+	}
+	if len(f.passes.checks) != 1 || len(f.passes.reviews) != 3 || f.passes.reviews[2].RebaseVerification != "" {
+		t.Fatalf("%d check passes, reviews %+v; want one check pass and a review with no reported checks", len(f.passes.checks), f.passes.reviews)
+	}
+}
+
+// The check pass may only run checks. One that commits is refused before any review, and keeps no
+// report: its checks would be of a tree no review reads.
+func TestForkRebaseCheckPassThatChangesTheForkIsRefused(t *testing.T) {
+	f := setUpConflictingForks(t)
+	if !rebaseKeepingEveryLine(t, f.ws, f.parent) {
+		t.FailNow()
+	}
+	rebased := forkspace.GitOut(f.ws, "rev-parse", "HEAD")
+	f.passes.reportChecks, f.passes.checkCommits = true, true
+	code, out, err := f.loop(t)
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "changed during its rebase check") ||
+		!strings.Contains(err.Error(), "checkout -f -B beta "+rebased) {
+		t.Fatalf("loop whose check pass committed = (%d, %v)\n%s", code, err, out)
+	}
+	if len(f.passes.reviews) != 2 {
+		t.Fatalf("a changed check pass reached review (%d reviews)", len(f.passes.reviews))
+	}
+	if rebase, ok, err := tasks.ReadForkCandidateRebase(f.repo, f.beta); err != nil || !ok || rebase.Verification != "" {
+		t.Fatalf("request after the refused check = %+v, %v, %v; want it open with no report", rebase, ok, err)
+	}
+	if candidate, ok, err := tasks.ReadForkCandidate(f.repo, f.beta); err != nil || !ok || candidate.ID != f.reviewed.ID {
+		t.Fatalf("candidate after the refusal = %+v, %v, %v; want the reviewed round still active", candidate, ok, err)
+	}
+}
+
+// A person who merges main into the fork instead of rebasing gets the merge-commit refusal from the
+// loop, which does not claim a rebase ran.
+func TestForkHandMergeIsRefusedWithoutClaimingARebase(t *testing.T) {
+	f := setUpConflictingForks(t)
+	if out, err := gitCommand(f.ws, "merge", "--no-ff", f.parent).CombinedOutput(); err == nil {
+		t.Fatalf("merging main into beta did not conflict:\n%s", out)
+	}
+	if err := os.WriteFile(filepath.Join(f.ws, "shared.txt"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, f.ws, "add", "shared.txt")
+	git(t, f.ws, "commit", "-qm", "Merge main")
+	code, out, err := f.loop(t)
+	if code == 0 || len(f.passes.rebases)+len(f.passes.checks) != 0 {
+		t.Fatalf("loop over a hand merge = (%d, %v) after %d passes\n%s", code, err, len(f.passes.rebases)+len(f.passes.checks), out)
+	}
+	mergeCommitRefusal(t, "loop over a hand merge", err, f.ws, f.parent)
+	if strings.Contains(err.Error(), "rebase kept") || strings.Contains(err.Error(), "pass kept") {
+		t.Errorf("the refusal claims a rebase ran: %v", err)
+	}
+}
+
+// After a merge found that the branch already has one of the fork's task commits, the loop runs no
+// agent: no rebase can keep that commit. It says so and names the ways on, every time.
+func TestForkLoopStopsAtOnceOnASkippedTaskCommit(t *testing.T) {
+	f := setUpConflictingForks(t)
+	unlock, err := forkspace.LockState(f.repo, f.beta.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tasks.RequestForkCandidateRebaseLocked(f.repo, f.reviewed, f.parent, "main", tasks.RebaseCauseSkipped)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		code, out, err := f.loop(t)
+		if code == 0 || err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") ||
+			!strings.Contains(err.Error(), "No agent ran") || !strings.Contains(err.Error(), "coop fork rm beta --force") {
+			t.Fatalf("loop after a skipped commit = (%d, %v)\n%s", code, err, out)
+		}
+	}
+	if len(f.passes.rebases)+len(f.passes.checks) != 0 || len(f.passes.reviews) != 2 {
+		t.Fatalf("a skipped commit ran %d passes and %d reviews; want none", len(f.passes.rebases)+len(f.passes.checks), len(f.passes.reviews))
+	}
+}
+
+// A gate that writes to tracked files makes every check pass end dirty. The refusal says that is the
+// likely cause and what to change, instead of only "changed".
+func TestForkRebaseCheckPassThatDirtiesTrackedFilesSaysWhy(t *testing.T) {
+	f := setUpConflictingForks(t)
+	if !rebaseKeepingEveryLine(t, f.ws, f.parent) {
+		t.FailNow()
+	}
+	f.passes.reportChecks, f.passes.checkDirties = true, true
+	code, out, err := f.loop(t)
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "changed during its rebase check") ||
+		!strings.Contains(err.Error(), "writes to files git tracks") || !strings.Contains(err.Error(), "ignored paths") {
+		t.Fatalf("loop whose check left tracked files changed = (%d, %v)\n%s", code, err, out)
+	}
+	if len(f.passes.reviews) != 2 {
+		t.Fatalf("a dirty check pass reached review (%d reviews)", len(f.passes.reviews))
+	}
+}
+
+// After a real conflict, the rebase (here the agent's) skips a task's commit because main already
+// has its change. The loop spends that one agent run, then refuses with the plain skipped-commit
+// answer and records it, so a second loop runs no agent, starts no round, and ls and merge say the
+// same as the loop.
+func TestForkRebaseThatSkipsATaskCommitAfterAConflictStopsForGood(t *testing.T) {
+	repo := initRepo(t)
+	ignoreTheQueue(t, repo)
+	commitOnMain(t, repo, "shared.txt", "base\n")
+	commitOnMain(t, repo, "notes.txt", "one\nZ\ntwo\n")
+	first, second := "2026-11-19-skip-a", "2026-11-19-skip-b"
+	seedForkDecisionTask(t, repo, first)
+	seedForkDecisionTask(t, repo, second)
+	a := forkNetworkPreflightApp(t, repo)
+	passes := &sharedFilePasses{t: t, reportChecks: true}
+	passes.work = func(ws, id string) {
+		file, content := "shared.txt", "beta\n"
+		if id == first {
+			file, content = "notes.txt", "one\ntwo\n" // A: removes the line Z
+		}
+		if err := os.WriteFile(filepath.Join(ws, file), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "commit", "-qam", "Do "+id+"\n\nCoop-Task: "+id)
+	}
+	a.forkLoopRun = passes.run
+	ws, beta := setUpForkForDecision(t, repo, "beta")
+	if code, out, err := runForkLoopForDecision(t, a, repo, ws, beta); code != 0 || err != nil { // both tasks, one review
+		t.Fatalf("fork loop = (%d, %v)\n%s", code, err, out)
+	}
+	reviewed, ok, err := tasks.ReadForkCandidate(repo, beta)
+	if err != nil || !ok || len(reviewed.Assignments) != 2 {
+		t.Fatalf("reviewed candidate = %+v, %v, %v; want both tasks", reviewed, ok, err)
+	}
+	commitOnMain(t, repo, "notes.txt", "one\ntwo\n") // A's patch
+	parent := commitOnMain(t, repo, "shared.txt", "main\n")
+	if code, out, err := mergeForkForTest(t, a, "beta"); code == 0 || err == nil || !strings.Contains(err.Error(), "conflict with main") {
+		t.Fatalf("conflicting merge = (%d, %v)\n%s", code, err, out)
+	}
+	if request, ok, err := tasks.ReadForkCandidateRebase(repo, beta); err != nil || !ok || request.Cause != tasks.RebaseCauseConflict {
+		t.Fatalf("request after the conflict = %+v, %v, %v", request, ok, err)
+	}
+	reviews := len(passes.reviews)
+	refusal := func(step string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), "reviewed commit is already on main") || !strings.Contains(err.Error(), "coop fork rm beta --force") {
+			t.Fatalf("%s = %v; want the skipped-commit refusal", step, err)
+		}
+	}
+	passes.attempts = []rebaseAttempt{rebaseAndResolve}
+	code, out, err := runForkLoopStoppingAfterReview(t, a, repo, ws, beta)
+	if code == 0 {
+		t.Fatalf("loop whose rebase skipped A = (%d, %v)\n%s", code, err, out)
+	}
+	refusal("loop whose rebase skipped A", err)
+	if !strings.Contains(err.Error(), "Its commit ") {
+		t.Errorf("the refusal does not name the skipped commit: %v", err)
+	}
+	if len(passes.rebases) != 1 || len(passes.checks) != 0 || len(passes.reviews) != reviews {
+		t.Fatalf("%d rebase, %d check passes, %d new reviews; want one agent run and no review", len(passes.rebases), len(passes.checks), len(passes.reviews)-reviews)
+	}
+	if request, ok, err := tasks.ReadForkCandidateRebase(repo, beta); err != nil || !ok || request.Cause != tasks.RebaseCauseSkipped || request.Onto != parent {
+		t.Fatalf("request after the skip = %+v, %v, %v; want it marked skipped", request, ok, err)
+	}
+	code, _, err = runForkLoopStoppingAfterReview(t, a, repo, ws, beta)
+	if code == 0 {
+		t.Fatal("second loop passed")
+	}
+	refusal("second loop", err)
+	if !strings.Contains(err.Error(), "No agent ran") || len(passes.rebases) != 1 || len(passes.checks) != 0 || len(passes.reviews) != reviews {
+		t.Fatalf("second loop ran %d rebase, %d check passes, %d reviews: %v", len(passes.rebases), len(passes.checks), len(passes.reviews)-reviews, err)
+	}
+	if candidate, ok, err := tasks.ReadForkCandidate(repo, beta); err != nil || !ok || candidate.ID != reviewed.ID {
+		t.Fatalf("candidate = %+v, %v, %v; want the reviewed round, no new one", candidate, ok, err)
+	}
+	if code, _, err := mergeForkForTest(t, a, "beta"); code == 0 {
+		t.Fatal("merge after the skip passed")
+	} else {
+		refusal("merge after the skip", err)
+	}
+	listing := captureStdout(t, func() {
+		if code, err := a.forkctl().ForkLs(nil); code != 0 || err != nil {
+			t.Fatalf("fork ls = (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(listing, "main already has one of its task commits") || strings.Contains(listing, "review it") {
+		t.Errorf("fork ls disagrees with the loop:\n%s", listing)
+	}
+	if got := forkspace.GitOut(repo, "rev-parse", "HEAD"); got != parent {
+		t.Fatalf("main moved to %s", got)
 	}
 }

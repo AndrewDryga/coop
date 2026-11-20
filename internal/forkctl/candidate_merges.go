@@ -28,7 +28,11 @@ func mergeCommitsCause(merges []string) string {
 	if len(merges) > len(shown) {
 		more = fmt.Sprintf(" and %d more", len(merges)-len(shown))
 	}
-	return "Commit " + strings.Join(shown, ", ") + more + " merges two lines of history. A merge lands the fork as a straight line of " +
+	subject := "Commit " + shown[0] + " merges"
+	if len(merges) > 1 {
+		subject = "Commits " + strings.Join(shown, ", ") + more + " merge"
+	}
+	return subject + " two lines of history. A merge lands the fork as a straight line of " +
 		"its commits, which can bring back changes that the merge's own diff, the one a review reads, does not show. " +
 		"Coop reviews and merges only a straight line of commits."
 }
@@ -47,7 +51,7 @@ func (c *Control) refuseReviewedMergeCommits(repo, name string, candidate tasks.
 		return nil
 	}
 	branch := gitBranch(repo)
-	if err := tasks.RequestForkCandidateRebaseLocked(repo, candidate, forkspace.GitOut(repo, "rev-parse", "HEAD"), branch); err != nil {
+	if err := tasks.RequestForkCandidateRebaseLocked(repo, candidate, forkspace.GitOut(repo, "rev-parse", "HEAD"), branch, tasks.RebaseCauseConflict); err != nil {
 		return err
 	}
 	return ui.CommandFailed("Fork "+name+"'s reviewed commits include a merge commit",

@@ -1598,6 +1598,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 	// Full admission marks its configuration's resolved mode explicit. Keep the original inputs
 	// for these read-only checks so an earlier run cannot hide a later project request.
 	networkCfg := a.cfg.Clone()
+	checkedTree := "" // the rebased tree this run's check pass already ran on
 	for {
 		// Check the fork's own policy and build files before assigning canonical work, including in
 		// the worker: either may have changed since its parent's preview or the previous task, and a
@@ -1620,27 +1621,42 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 		if candidate, exists, err := tasks.ReadForkCandidate(repo, identity); err != nil {
 			return 1, err
 		} else if exists {
-			// The candidate's merge conflicted: its agent rebases the work onto the parent first, and the
-			// supersession below sends the result to a new review like any other change.
+			// The candidate's merge conflicted, or would have landed another change: its agent rebases
+			// the work onto the parent first, and the supersession below sends the result to a new
+			// review like any other change.
+			passSpec := loop.RunSpec{
+				Repo: ws, Image: img, Agent: agent,
+				ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
+				ForkGeneration: string(identity.Generation), ForkWorker: detached,
+				ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop,
+				Rotation: rot, Preset: a.preset, Peers: peers, Sink: sink,
+				Continue: continueCmd, Network: network.admission(),
+			}
 			if rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil {
 				return 1, err
+			} else if requested && rebase.Cause == tasks.RebaseCauseSkipped {
+				// The branch already has a task's commit: no rebase keeps it, so no agent runs.
+				return 1, forkctl.SkippedCommitError(ws, name, candidate, rebase, nil, " No agent ran, and nothing was reviewed or merged.", head != candidate.Head)
 			} else if requested && forkctl.CheckRebase(ws, name, rebase.Onto) == forkctl.RebaseUnfinished {
-				if code, err := a.rebaseForkCandidate(repo, ws, name, candidate, rebase, loop.RunSpec{
-					Repo: ws, Image: img, Agent: agent,
-					ForkName: name, ForkOwner: forkctl.ForkContainerOwner(repo, name, identity.Generation),
-					ForkGeneration: string(identity.Generation), ForkWorker: detached,
-					ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop,
-					Rotation: rot, Preset: a.preset, Peers: peers, Sink: sink,
-					Continue: continueCmd, Network: network.admission(),
-				}); err != nil || code != 0 {
+				if code, err := a.rebaseForkCandidate(repo, ws, name, candidate, rebase, passSpec); err != nil || code != 0 {
 					return code, err
 				}
 				continue
 			} else if requested {
-				// A rebase that finished before this run, say right before a crash, still gets the
-				// host's checks before it can go to review.
-				if err := checkForkRebase(ws, name, candidate, rebase, continueCmd); err != nil {
+				// A rebase that finished before this pass, by hand or right before a crash, still gets
+				// the host's checks before it can go to review.
+				if err := checkForkRebase(repo, ws, name, candidate, rebase, continueCmd, false); err != nil {
 					return 1, err
+				}
+				// The review needs checks run on exactly this tree, and the tasks' handoffs predate the
+				// rebase: without them the first review fails as stale. A rebase no pass of this loop
+				// reported on, such as one made by hand, gets one check-only pass, once per tree.
+				if rebase.VerifiedTree != tree && checkedTree != tree {
+					checkedTree = tree
+					if code, err := a.checkForkRebaseTree(repo, ws, name, candidate, rebase, head, passSpec); err != nil || code != 0 {
+						return code, err
+					}
+					continue
 				}
 			}
 			// New commits that include a merge commit start no review: say why and how to straighten
@@ -1913,28 +1929,16 @@ func (a *app) rebaseForkCandidate(repo, ws, name string, candidate tasks.ForkCan
 	if len(merges) > 0 {
 		return 1, forkctl.MergeCommitsError(ws, name, rebase.Onto, merges, " No agent ran, and nothing was reviewed or merged.")
 	}
-	for _, assignment := range candidate.Assignments {
-		queueRel, err := tasks.ProjectionQueueRel(ws, assignment.Index.Projection)
-		if err != nil {
-			return 1, err
-		}
-		spec.Queues = append(spec.Queues, queueRel)
-	}
-	branch := rebase.Branch
-	if branch == "HEAD" {
-		branch = "the parent branch"
-	}
-	gate, err := a.forkctl().MergeGateCommand(repo)
+	branch, err := a.prepareForkRebasePass(repo, ws, candidate, rebase, &spec)
 	if err != nil {
 		return 1, err
 	}
 	reported := ""
-	spec.Rebase = &loop.RebaseSpec{Branch: name, Onto: rebase.Onto, ParentBranch: branch, Gate: gate,
-		Report: func(checks string) { reported = checks }}
+	spec.Rebase.Report = func(checks string) { reported = checks }
 	if code, err := a.forkLoopPass(spec); err != nil || code != 0 {
 		return code, err
 	}
-	if err := checkForkRebase(ws, name, candidate, rebase, spec.Continue); err != nil {
+	if err := checkForkRebase(repo, ws, name, candidate, rebase, spec.Continue, true); err != nil {
 		return 1, err
 	}
 	// The review of the rebased tree gets the checks the pass ran on it, which the tasks' own
@@ -1949,10 +1953,72 @@ func (a *app) rebaseForkCandidate(repo, ws, name string, candidate tasks.ForkCan
 	return 0, nil
 }
 
-// checkForkRebase is the host's check of a rebase pass, before anything of it reaches a review: the
+// prepareForkRebasePass fills in what a rebase or check pass of the fork's loop needs: the candidate's
+// task queues, which the box mounts, and the rebase itself. It returns the parent branch in words.
+func (a *app) prepareForkRebasePass(repo, ws string, candidate tasks.ForkCandidate, rebase tasks.ForkCandidateRebase, spec *loop.RunSpec) (string, error) {
+	for _, assignment := range candidate.Assignments {
+		queueRel, err := tasks.ProjectionQueueRel(ws, assignment.Index.Projection)
+		if err != nil {
+			return "", err
+		}
+		spec.Queues = append(spec.Queues, queueRel)
+	}
+	branch := rebase.Branch
+	if branch == "HEAD" {
+		branch = "the parent branch"
+	}
+	gate, err := a.forkctl().MergeGateCommand(repo)
+	if err != nil {
+		return "", err
+	}
+	spec.Rebase = &loop.RebaseSpec{Branch: spec.ForkName, Onto: rebase.Onto, ParentBranch: branch, Gate: gate,
+		Changed: rebase.Cause == tasks.RebaseCauseChanged}
+	return branch, nil
+}
+
+// checkForkRebaseTree runs one check-only pass over a finished rebase that no pass of the loop
+// reported checks for, such as one a person made by hand: its agent runs the merge gate and
+// `git diff --check` and reports them, changing nothing. The host refuses the pass if HEAD or the
+// tree moved, so the checks it keeps are of exactly the tree the review then reads; they reach the
+// reviewer as the agent's claims, never as checks Coop ran. A pass that reports nothing leaves the
+// review to judge the handoffs alone.
+func (a *app) checkForkRebaseTree(repo, ws, name string, candidate tasks.ForkCandidate, rebase tasks.ForkCandidateRebase, head string, spec loop.RunSpec) (int, error) {
+	tree := forkspace.GitOut(ws, "rev-parse", head+"^{tree}")
+	if _, err := a.prepareForkRebasePass(repo, ws, candidate, rebase, &spec); err != nil {
+		return 1, err
+	}
+	reported := ""
+	spec.Rebase.CheckOnly = true
+	spec.Rebase.Report = func(checks string) { reported = checks }
+	if code, err := a.forkLoopPass(spec); err != nil || code != 0 {
+		return code, err
+	}
+	if forkspace.GitOut(ws, "rev-parse", "HEAD") != head || forkspace.GitOut(ws, "rev-parse", "HEAD^{tree}") != tree ||
+		forkctl.CheckRebase(ws, name, rebase.Onto) != forkctl.RebaseFinished {
+		cause := "The check pass may only run checks, but the branch " + name + " is no longer exactly the rebased commit " + head[:12] + ", clean."
+		if forkspace.GitOut(ws, "rev-parse", "HEAD") == head && forkspace.GitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD") == name {
+			// Only the work tree changed: most likely the gate itself writes to tracked files. Every
+			// rerun would end the same way, so say what to change.
+			cause = "The check pass left tracked files of " + name + " changed, which a gate that writes to files git tracks does. Coop keeps checks only of the exact, clean rebased tree, so every run ends here until the gate writes its output only to ignored paths (or the agent stops editing)."
+		}
+		return 1, ui.CommandFailed("Fork "+name+" changed during its rebase check", cause+" Nothing was reviewed or merged.",
+			[2]string{"Go back to the rebased commit:", "git -C " + shellWord(ws) + " checkout -f -B " + shellWord(name) + " " + head},
+			[2]string{"Then check and review it:", spec.Continue},
+			[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})
+	}
+	if reported != "" {
+		if err := tasks.RecordForkCandidateRebaseVerification(repo, candidate, tree, reported); err != nil {
+			return 1, fmt.Errorf("fork %s: keep the rebase check's results for its review: %w", name, err)
+		}
+	}
+	return 0, nil
+}
+
+// checkForkRebase is the host's check of a rebase, before anything of it reaches a review: the
 // rebase finished, left commits of the fork's own, and kept every Coop-Task binding of the reviewed
-// commits exactly, none dropped, doubled, moved to another task or added for one.
-func checkForkRebase(ws, name string, candidate tasks.ForkCandidate, rebase tasks.ForkCandidateRebase, continueCmd string) error {
+// commits exactly, none dropped, doubled, moved to another task or added for one. afterPass says this
+// loop's rebase pass just ran it; otherwise it finished before, by hand or before a crash.
+func checkForkRebase(repo, ws, name string, candidate tasks.ForkCandidate, rebase tasks.ForkCandidateRebase, continueCmd string, afterPass bool) error {
 	back := shellWord("git") + " -C " + shellWord(ws) + " reset --hard " + candidate.Head
 	discard := [2]string{"Or discard its work:", "coop fork rm " + name + " --force"}
 	switch forkctl.CheckRebase(ws, name, rebase.Onto) {
@@ -1966,11 +2032,32 @@ func checkForkRebase(ws, name string, candidate tasks.ForkCandidate, rebase task
 		return forkctl.RefuseShallowFork(ws, name)
 	case forkctl.RebaseMerges:
 		merges, _ := tasks.MergeCommitsOutside(ws, rebase.Onto, forkspace.GitOut(ws, "rev-parse", "HEAD"))
-		return forkctl.MergeCommitsError(ws, name, rebase.Onto, merges, " The rebase kept it, so nothing was reviewed or merged.")
+		tail := " Nothing was reviewed or merged."
+		if afterPass {
+			tail = " The rebase pass kept a merge, so nothing was reviewed or merged."
+		}
+		return forkctl.MergeCommitsError(ws, name, rebase.Onto, merges, tail)
 	}
 	problems, err := tasks.RebaseBindingProblems(ws, rebase.Onto, candidate.Head, forkspace.GitOut(ws, "rev-parse", "HEAD"))
 	if err != nil {
 		return fmt.Errorf("fork %s: check the rebased commits' task bindings: %w", name, err)
+	}
+	// A task's commit the parent already has drops out of any rebase: going back and rebasing again
+	// only drops it again, so the way on is a person's. Only a skipped commit whose own task lost a
+	// commit counts; the request then says so, so merge, ls and the next loop agree without another
+	// agent run.
+	if len(problems) > 0 {
+		dropped, err := tasks.RebaseDroppedTaskCommits(ws, rebase.Onto, candidate.Head, forkspace.GitOut(ws, "rev-parse", "HEAD"),
+			forkctl.SkippedCommits(ws, rebase.Onto, candidate.Head))
+		if err != nil {
+			return fmt.Errorf("fork %s: check the rebased commits' task bindings: %w", name, err)
+		}
+		if len(dropped) > 0 {
+			if err := tasks.MarkForkCandidateRebaseSkipped(repo, candidate); err != nil {
+				return fmt.Errorf("fork %s: record the skipped commit: %w", name, err)
+			}
+			return forkctl.SkippedCommitError(ws, name, candidate, rebase, dropped, " Nothing was reviewed or merged.", true)
+		}
 	}
 	if len(problems) > 0 {
 		return ui.CommandFailed("Fork "+name+"'s rebase changed which commits belong to its tasks",

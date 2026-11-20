@@ -2,7 +2,7 @@
 name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
-sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go]
+sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go, internal/forkctl/status.go]
 updated: 2026-11-19
 ---
 
@@ -66,9 +66,15 @@ follows a box-written shallow file), and keeps the lines of the agent's final me
 with `REBASE CHECK —` (the decoders' `finalMessage`, never tool output or stderr; lines naming the
 report markers dropped) with the request, bound to the rebased tree
 (`RecordForkCandidateRebaseVerification`): the tasks' handoffs predate the resolution, so without
-them the reviewer failed every rebased round as stale. The review prompt quotes each line inside
-untrusted markers and says the agent claims them and Coop did not verify them. Then the usual
-supersession and review. The ancestry fence (`buildsOnReviewedRound`) accepts a HEAD that descends
+them the reviewer failed every rebased round as stale. A finished rebase no pass reported on (a
+person rebased by hand, often after the merge-commit refusal, or the pass reported nothing) gets one
+check-only pass per tree per run (`RebaseSpec.CheckOnly`, `forkRebaseCheckPrompt`,
+`checkForkRebaseTree`): its agent runs the merge gate and `git diff --check` and changes nothing; the
+host refuses it if HEAD, the tree or a clean finished rebase moved (only dirty tracked files: the
+refusal blames a gate that writes them, since every rerun ends the same), and keeps its lines bound
+to that tree as above. Coop itself runs no gate on the host, so the check is an agent claim like the rebase
+pass's, never "Coop ran it". The review prompt quotes each line inside untrusted markers and says the
+agent claims them and Coop did not verify them. Then the usual supersession and review. The ancestry fence (`buildsOnReviewedRound`) accepts a HEAD that descends
 from the reviewed round or, while the request names the current round, from `onto` but is not `onto`
 itself; nothing else changes what may land, since the rebased HEAD is a new pending round that needs
 a full candidate review, whose prompt says to review the whole diff from `onto`
@@ -101,7 +107,25 @@ The land then checks it lands exactly the reviewed change (`landedAsReviewed`, l
 must be the reviewed tree. When it moved, the rebased change from the parent must make the same line
 edits (`lineEdits`: `git diff -U0`, no line numbers or blob names) as the reviewed change from where
 the candidate's straight line of commits starts (`tasks.ForkCommitsBase`, raw); a mismatch retires
-the journal and records a rebase request, so the loop rebases and the result is reviewed. A plain
+the journal and records a rebase request with a cause (`tasks.RebaseCause*`, `cause` in the request
+file, omitted for a conflict). When the rebased commits lost a Coop-Task binding
+(`RebaseBindingProblems` over the land's own rebased head) the parent already has a task's commit:
+a rebase pass could only skip it again or keep it empty, which review fails, so the cause is
+`skipped` and merge, loop (before any agent, `SkippedCommitError`) and ls (`driftSkipped`) all stop
+with "discard, or remove the branch's commit with that change from its history and merge again". A
+revert is not enough: `git rebase` skips a commit whose patch-id matches any commit in
+merge-base..branch, a reverted one included (`--reapply-cherry-picks` would replay it, and the land's
+line-edit check would still hold, but the land does not use it). The fence admits no rebase onto
+such a request's `onto`. Otherwise the cause is `changed`, so the loop rebases and the result is
+reviewed, and ls says `changed`, never "conflicts". A land that later gets past `landedAsReviewed`
+closes any open request (`CloseForkCandidateRebaseLocked`), so a red merge gate after the person
+fixed the branch leaves an ordinary reviewed round, not a stale refusal. A conflict-caused rebase
+(pass or by hand) that skipped a task's commit gets the same refusal from `checkForkRebase`, which
+then marks the request `skipped` (`MarkForkCandidateRebaseSkipped`), so ls, merge and the next loop
+agree without another agent run. Only a skipped commit whose own binding lost a commit counts
+(`RebaseDroppedTaskCommits` over git's `--cherry-mark` matches, `SkippedTaskCommits` for wording);
+an untrailered match beside another binding problem gets the ordinary binding refusal.
+A plain
 rebase skips a commit whose patch the parent has, and `--reapply-cherry-picks` still drops it as
 "already upstream", so reviewed A (remove Z), B (add Z), C on a parent with A's patch landed Z
 unseen; only the change comparison catches that. `git merge-tree --write-tree --merge-base` (git
@@ -112,8 +136,9 @@ land replay and by `CheckRebase` (`RebaseShallow`), and the trusted view sets `c
 so a box-written commit-graph cannot answer for the commit objects.
 
 A reviewed fork whose HEAD moved off its active candidate is not landable, so `coop fork ls` shows it
-as `changed` ("changed after review") rather than `ready`, and one with an open rebase request whose
-rebase is not finished as `conflict` ("conflicts with your branch"), counting its changes from where
+as `changed` ("changed after review") rather than `ready`, and one with an open conflict request whose
+rebase is not finished as `conflict` ("conflicts with your branch"); a `changed` or `skipped`
+request and a shallow repository (`driftShallow`, ls only) read as `changed`. It counts its changes from where
 it meets the branch, as merge does. `forkCandidateDrift` tells the cases apart: new commits on top,
 and a finished rebase onto an open request's `onto` (`driftRebased`), go back to review with the
 fork's loop; with a request open, any other HEAD (`driftConflicts`, `driftRebasing`, even a rebase
@@ -122,6 +147,12 @@ descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork
 ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
 
 ## Changelog
+- 2026-11-19 — a hand rebase had no REBASE CHECK lines, so its first review failed as stale and a
+  rework run followed; a skipped task commit sent the loop into an empty-commit rework that ended in
+  a decision; ls said "conflicts" for a changed land and showed nothing for a shallow fork; "Commit
+  X, Y merges" and "The rebase kept it" with no rebase run. Now a check-only pass, a request cause
+  (`changed`/`skipped`) that stops a skipped commit at once, and fixed wording (task
+  2026-11-19-smooth-the-fork-rebase-path-after-a-hand-rebase).
 - 2026-11-19 — a shallow fork could make the land replay a reviewed commit as a root and skip the
   tree check, and a rebase that skipped an already-applied commit could land a change no review saw;
   the land refuses a shallow fork and compares the landed change with the reviewed one (task

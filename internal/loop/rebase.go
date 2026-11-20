@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -41,10 +42,19 @@ type rebasePass struct {
 // rotation and retries: a usage limit rotates to the next target or waits for its reset, a dead
 // sign-in moves to another account, and an ordinary failure retries a few times. It holds no task,
 // so an attempt that fails leaves nothing to undo: the next one starts by aborting any rebase the
-// last left. The caller checks the rebase itself.
+// last left. The caller checks the rebase itself. A check-only pass runs the same way.
 func (c *Control) runRebasePass(ctx context.Context, rebase RebaseSpec, p rebasePass) (int, error) {
 	ui.Note("")
-	ui.Note("Rebasing %s onto %s (%s), which its reviewed commits conflict with.", rebase.Branch, rebase.ParentBranch, rebase.Onto[:12])
+	what := "Rebase"
+	switch {
+	case rebase.CheckOnly:
+		what = "Rebase check"
+		ui.Note("Checking %s, rebased onto %s (%s), before its review.", rebase.Branch, rebase.ParentBranch, rebase.Onto[:12])
+	case rebase.Changed:
+		ui.Note("Rebasing %s onto %s (%s), where its reviewed change would land changed.", rebase.Branch, rebase.ParentBranch, rebase.Onto[:12])
+	default:
+		ui.Note("Rebasing %s onto %s (%s), which its reviewed commits conflict with.", rebase.Branch, rebase.ParentBranch, rebase.Onto[:12])
+	}
 	fails, waits, retries := 0, 0, 0
 	for {
 		agent := c.applyTarget(p.rot)
@@ -60,7 +70,7 @@ func (c *Control) runRebasePass(ctx context.Context, rebase RebaseSpec, p rebase
 		}
 		c.recordStage(p.repo, p.runid, "rebase", classification.outcome, target, start, code, retries, 0, headBefore, p.hosts, nil, nil, res)
 		if ctx.Err() != nil {
-			ui.Failure("Rebase interrupted", "Nothing was reviewed or merged.", [2]string{"Continue:", p.continueCmd})
+			ui.Failure(what+" interrupted", "Nothing was reviewed or merged.", [2]string{"Continue:", p.continueCmd})
 			return LoopInterruptedExitCode, ui.Reported(ctx.Err())
 		}
 		action, wait, resetAt := decideIteration(classification, time.Now(), &fails, &waits, &retries)
@@ -71,7 +81,7 @@ func (c *Control) runRebasePass(ctx context.Context, rebase RebaseSpec, p rebase
 			return 0, nil
 		}
 		if p.stopped() {
-			ui.Failure("Rebase interrupted", "Nothing was reviewed or merged.", [2]string{"Continue:", p.continueCmd})
+			ui.Failure(what+" interrupted", "Nothing was reviewed or merged.", [2]string{"Continue:", p.continueCmd})
 			return LoopInterruptedExitCode, ui.Reported(errors.New("rebase pass stopped"))
 		}
 		switch action {
@@ -84,7 +94,7 @@ func (c *Control) runRebasePass(ctx context.Context, rebase RebaseSpec, p rebase
 		case actRetryNow:
 			ladder.SleepOrWake(wait, p.wake)
 		case actRetry:
-			ui.Alert("Rebase attempt failed",
+			ui.Alert(what+" attempt failed",
 				wrappedLoopText(attemptCause(attemptSubject(agent, nil), code, runErr), 6)+"\n"+
 					fmt.Sprintf("Retrying in 10 seconds · attempt %d of %d.", fails+1, maxLoopFailures))
 			ladder.SleepOrWake(10*time.Second, p.wake)
@@ -104,10 +114,10 @@ func (c *Control) runRebasePass(ctx context.Context, rebase RebaseSpec, p rebase
 				[2]string{"Continue:", p.continueCmd})
 			return 1, ui.Reported(fmt.Errorf("still rate limited after %d waits", maxLimitWaits))
 		default: // actStop, actOutputStop
-			ui.Failure("Rebase pass failed",
+			ui.Failure(what+" pass failed",
 				wrappedLoopText("Last attempt: "+attemptCause(attemptSubject(agent, nil), code, runErr), 6)+"\nNothing was reviewed or merged.",
 				[2]string{"Continue:", p.continueCmd})
-			return 1, ui.Reported(errors.Join(runErr, errors.New("rebase pass failed")))
+			return 1, ui.Reported(errors.Join(runErr, errors.New(strings.ToLower(what)+" pass failed")))
 		}
 	}
 }

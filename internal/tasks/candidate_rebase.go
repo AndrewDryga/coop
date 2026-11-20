@@ -20,19 +20,36 @@ const (
 	forkRebaseVerificationLimit = 4096
 )
 
+// Why a land asked for a rebase. A conflict stores no cause, so its request reads as it did before
+// causes existed.
+const (
+	// RebaseCauseConflict: the reviewed commits conflict with the parent commit.
+	RebaseCauseConflict = ""
+	// RebaseCauseChanged: they rebase cleanly but would not land exactly the reviewed change, for
+	// example because the parent has part of it; the loop rebases them and the result is reviewed.
+	RebaseCauseChanged = "changed"
+	// RebaseCauseSkipped: the parent already has the change of a commit bound to a task, so a rebase
+	// skips that commit and its task loses its commit. No rebase keeps it, so the loop refuses before
+	// any agent runs and a person decides.
+	RebaseCauseSkipped = "skipped"
+)
+
 // forkCandidateRebase records that a reviewed round's merge conflicted with the parent branch, so the
 // fork's loop rebases that round onto the parent's exact commit and reviews the result as the next
 // round. It is open only while the round it names is the manifest's current one in a live phase:
 // publishing the next round, a land or a discard closes it without touching the file. It lives
 // beside the manifest rather than in it, so a build that predates it reads the manifest unchanged.
-// Only the host writes it: the merge that conflicted, and the loop's rebase pass, which moves Onto
-// to where Branch is when the pass starts and then keeps what the pass reported checking.
+// Only the host writes it: the merge that conflicted or would have landed a different change, and
+// the fork's loop, whose rebase pass moves Onto to where Branch is when the pass starts, and which
+// keeps what its rebase or check pass reported checking.
 type forkCandidateRebase struct {
 	Version     int                `json:"version"`
 	Fork        forkspace.Identity `json:"fork"`
 	CandidateID string             `json:"candidate_id"`
 	Onto        string             `json:"onto"`
 	Branch      string             `json:"branch"`
+	// Cause is why the land asked for the rebase: one of the RebaseCause values.
+	Cause string `json:"cause,omitempty"`
 	// Verification is the checks the rebase pass's agent reported running on the rebased tree
 	// VerifiedTree, recorded by the host from the pass's final reply; empty until a pass reports.
 	Verification string    `json:"verification,omitempty"`
@@ -42,10 +59,12 @@ type forkCandidateRebase struct {
 
 // ForkCandidateRebase is an open rebase request: the parent commit the reviewed round is to be
 // rebased onto, and the parent branch that commit was the head of when the host recorded it.
-// Verification is what the rebase pass reported checking on the tree VerifiedTree, if it did.
+// Cause is why the land asked for it. Verification is what a pass of the fork's loop reported
+// checking on the tree VerifiedTree, if one did.
 type ForkCandidateRebase struct {
 	Onto         string
 	Branch       string
+	Cause        string
 	Verification string
 	VerifiedTree string
 }
@@ -58,6 +77,7 @@ func validRebaseRequest(rebase forkCandidateRebase, identity forkspace.Identity)
 	return rebase.Version == forkCandidateRebaseVersion && rebase.Fork == identity && validAssignmentID(rebase.CandidateID) &&
 		rebase.Onto != "" && validCommitID(rebase.Onto) &&
 		rebase.Branch != "" && ValidTaskText(rebase.Branch, false, forkCandidateBranchLimit) && !rebase.CreatedAt.IsZero() &&
+		(rebase.Cause == RebaseCauseConflict || rebase.Cause == RebaseCauseChanged || rebase.Cause == RebaseCauseSkipped) &&
 		(rebase.Verification == "") == (rebase.VerifiedTree == "") && validCommitID(rebase.VerifiedTree) &&
 		(rebase.Verification == "" || ValidTaskText(rebase.Verification, true, forkRebaseVerificationLimit))
 }
@@ -96,7 +116,8 @@ func buildsOnReviewedRound(repo string, manifest forkCandidateManifest, reviewed
 		return straightLine(workspace, reviewedHead, head)
 	}
 	rebase, err := openForkCandidateRebase(repo, manifest)
-	if err != nil || rebase == nil || head == rebase.Onto {
+	// A skipped commit's request waits for a person, not a rebase, so nothing may build on its onto.
+	if err != nil || rebase == nil || rebase.Cause == RebaseCauseSkipped || head == rebase.Onto {
 		return false, err
 	}
 	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", rebase.Onto, head); err != nil {
@@ -135,9 +156,9 @@ func activeRebaseManifest(repo string, candidate ForkCandidate) (forkCandidateMa
 	return manifest, nil
 }
 
-func newForkCandidateRebase(identity forkspace.Identity, candidateID, onto, branch string) forkCandidateRebase {
+func newForkCandidateRebase(identity forkspace.Identity, candidateID, onto, branch, cause string) forkCandidateRebase {
 	return forkCandidateRebase{
-		Version: forkCandidateRebaseVersion, Fork: identity, CandidateID: candidateID, Onto: onto, Branch: branch,
+		Version: forkCandidateRebaseVersion, Fork: identity, CandidateID: candidateID, Onto: onto, Branch: branch, Cause: cause,
 		CreatedAt: time.Now().UTC(),
 	}
 }
@@ -170,30 +191,64 @@ func writeForkCandidateRebase(repo string, rebase forkCandidateRebase) error {
 	return root.Rename(name, filepath.Base(forkCandidateRebasePath(repo, rebase.Fork)))
 }
 
-// RequestForkCandidateRebaseLocked records that the active reviewed candidate's commits conflict
-// with the parent commit onto, the head of branch, so the fork's loop rebases them there and reviews
-// the result as a new round. It replaces any earlier request. The caller holds the fork lifecycle
+// RequestForkCandidateRebaseLocked records that the active reviewed candidate's commits cannot land
+// on the parent commit onto, the head of branch, for cause (a RebaseCause value), so the fork's loop
+// rebases them there and reviews the result as a new round; a skipped commit's request stops the
+// loop for a person instead. It replaces any earlier request. The caller holds the fork lifecycle
 // lock and has retired its land journal. What may land does not change: the reviewed candidate stays
 // active until the next round is published.
-func RequestForkCandidateRebaseLocked(repo string, candidate ForkCandidate, onto, branch string) error {
+func RequestForkCandidateRebaseLocked(repo string, candidate ForkCandidate, onto, branch, cause string) error {
 	if _, err := activeRebaseManifest(repo, candidate); err != nil {
 		return err
 	}
-	return writeForkCandidateRebase(repo, newForkCandidateRebase(candidate.Fork, candidate.ID, onto, branch))
+	return writeForkCandidateRebase(repo, newForkCandidateRebase(candidate.Fork, candidate.ID, onto, branch, cause))
+}
+
+// CloseForkCandidateRebaseLocked removes the active candidate's open rebase request, if it has one:
+// a later land of exactly the reviewed commits got past the land checks, so whatever the request
+// said (a conflict, a changed land, a skipped commit) is no longer true. Only fewer HEADs pass the
+// ancestry fence once it is gone. The caller holds the fork lifecycle lock.
+func CloseForkCandidateRebaseLocked(repo string, candidate ForkCandidate) error {
+	manifest, err := activeRebaseManifest(repo, candidate)
+	if err != nil {
+		return err
+	}
+	if open, err := openForkCandidateRebase(repo, manifest); err != nil || open == nil {
+		return err
+	}
+	root, err := forkspace.OpenStateRoot(repo, "", true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return root.Remove(filepath.Base(forkCandidateRebasePath(repo, candidate.Fork)))
+}
+
+// MarkForkCandidateRebaseSkipped records that the open request's rebase skipped a task's commit,
+// because the parent already has its change: no rebase keeps that commit, so from now on the loop
+// refuses before any agent runs, and merge and ls say the same.
+func MarkForkCandidateRebaseSkipped(repo string, candidate ForkCandidate) error {
+	return updateOpenForkCandidateRebase(repo, candidate, func(open *forkCandidateRebase) forkCandidateRebase {
+		next := *open
+		next.Cause = RebaseCauseSkipped
+		return next
+	})
 }
 
 // RefreshForkCandidateRebase moves the open request of the active candidate to onto, where branch is
 // now, so the rebase pass about to start rebases onto the parent the next merge meets, and the next
-// review covers what lands from there. It changes nothing once the request is closed.
+// review covers what lands from there. It keeps the request's cause and changes nothing once the
+// request is closed.
 func RefreshForkCandidateRebase(repo string, candidate ForkCandidate, onto, branch string) error {
-	return updateOpenForkCandidateRebase(repo, candidate, func(*forkCandidateRebase) forkCandidateRebase {
-		return newForkCandidateRebase(candidate.Fork, candidate.ID, onto, branch)
+	return updateOpenForkCandidateRebase(repo, candidate, func(open *forkCandidateRebase) forkCandidateRebase {
+		return newForkCandidateRebase(candidate.Fork, candidate.ID, onto, branch, open.Cause)
 	})
 }
 
-// RecordForkCandidateRebaseVerification keeps what the rebase pass reported checking on the rebased
-// tree with the open request, so the next review of exactly that tree has the rebase's own
-// verification: the reviewed round's handoff predates the conflict resolution.
+// RecordForkCandidateRebaseVerification keeps what a pass of the fork's loop (its rebase pass, or the
+// check pass after a rebase made by hand) reported checking on the rebased tree with the open
+// request, so the next review of exactly that tree has the rebase's own verification: the reviewed
+// round's handoff predates the rebase.
 func RecordForkCandidateRebaseVerification(repo string, candidate ForkCandidate, tree, verification string) error {
 	return updateOpenForkCandidateRebase(repo, candidate, func(open *forkCandidateRebase) forkCandidateRebase {
 		next := *open
@@ -228,29 +283,7 @@ func updateOpenForkCandidateRebase(repo string, candidate ForkCandidate, change 
 // Both sides are read from raw objects with the audits' own trailer parser, so a shallow file, graft
 // or replacement the box writes cannot change what either counts.
 func RebaseBindingProblems(workspace, onto, before, after string) ([]string, error) {
-	count := func(head string) (map[string]int, error) {
-		commits, err := rawCommitsOutside(workspace, onto, head)
-		if err != nil {
-			return nil, err
-		}
-		counts := map[string]int{}
-		for _, commit := range commits {
-			if len(commit.taskValues) == 0 && !commit.taskBindingInvalid {
-				continue
-			}
-			key := strings.Join(commit.taskValues, ", ")
-			if commit.taskBindingInvalid {
-				key = "a malformed trailer (" + key + ")"
-			}
-			counts[key]++
-		}
-		return counts, nil
-	}
-	was, err := count(before)
-	if err != nil {
-		return nil, err
-	}
-	is, err := count(after)
+	was, is, err := rebaseBindingCounts(workspace, onto, before, after)
 	if err != nil {
 		return nil, err
 	}
@@ -271,6 +304,80 @@ func RebaseBindingProblems(workspace, onto, before, after string) ([]string, err
 		}
 	}
 	return problems, nil
+}
+
+// bindingKey is the binding a raw commit's Coop-Task trailers make, "" for none.
+func bindingKey(commit rawReachableAuditCommit) string {
+	if len(commit.taskValues) == 0 && !commit.taskBindingInvalid {
+		return ""
+	}
+	key := strings.Join(commit.taskValues, ", ")
+	if commit.taskBindingInvalid {
+		key = "a malformed trailer (" + key + ")"
+	}
+	return key
+}
+
+// rebaseBindingCounts counts the commits of each binding over onto..before and onto..after.
+func rebaseBindingCounts(workspace, onto, before, after string) (map[string]int, map[string]int, error) {
+	count := func(head string) (map[string]int, error) {
+		commits, err := rawCommitsOutside(workspace, onto, head)
+		if err != nil {
+			return nil, err
+		}
+		counts := map[string]int{}
+		for _, commit := range commits {
+			if key := bindingKey(commit); key != "" {
+				counts[key]++
+			}
+		}
+		return counts, nil
+	}
+	was, err := count(before)
+	if err != nil {
+		return nil, nil, err
+	}
+	is, err := count(after)
+	if err != nil {
+		return nil, nil, err
+	}
+	return was, is, nil
+}
+
+// RebaseDroppedTaskCommits is those of the commits shas, from the fork's own commits before its
+// rebase (onto..before), that bind a task the rebase onto..after left with fewer commits: a rebase
+// that skipped them lost their task's binding. A commit without a trailer, or one whose task kept
+// its commits, is not one. Read from raw objects, like RebaseBindingProblems.
+func RebaseDroppedTaskCommits(workspace, onto, before, after string, shas []string) ([]string, error) {
+	was, is, err := rebaseBindingCounts(workspace, onto, before, after)
+	if err != nil {
+		return nil, err
+	}
+	return boundCommitsAmong(workspace, onto, before, shas, func(key string) bool { return is[key] < was[key] })
+}
+
+// TaskBoundCommits is those of the commits shas, among onto..head, that carry a Coop-Task binding.
+func TaskBoundCommits(workspace, onto, head string, shas []string) ([]string, error) {
+	return boundCommitsAmong(workspace, onto, head, shas, func(string) bool { return true })
+}
+
+func boundCommitsAmong(workspace, onto, head string, shas []string, keep func(key string) bool) ([]string, error) {
+	commits, err := rawCommitsOutside(workspace, onto, head)
+	if err != nil {
+		return nil, err
+	}
+	wanted := make(map[string]bool, len(shas))
+	for _, sha := range shas {
+		wanted[sha] = true
+	}
+	var bound []string
+	for _, commit := range commits {
+		if key := bindingKey(commit); wanted[commit.sha] && key != "" && keep(key) {
+			bound = append(bound, commit.sha)
+		}
+	}
+	sort.Strings(bound)
+	return bound, nil
 }
 
 // rawCommitsOutside is every commit in head's history that is not in below's, from raw objects; below
@@ -310,5 +417,5 @@ func ReadForkCandidateRebase(repo string, identity forkspace.Identity) (ForkCand
 	if err != nil || rebase == nil {
 		return ForkCandidateRebase{}, false, err
 	}
-	return ForkCandidateRebase{Onto: rebase.Onto, Branch: rebase.Branch, Verification: rebase.Verification, VerifiedTree: rebase.VerifiedTree}, true, nil
+	return ForkCandidateRebase{Onto: rebase.Onto, Branch: rebase.Branch, Cause: rebase.Cause, Verification: rebase.Verification, VerifiedTree: rebase.VerifiedTree}, true, nil
 }

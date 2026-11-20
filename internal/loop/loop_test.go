@@ -280,6 +280,36 @@ func TestForkRebasePassRunsOneBoxOverADoneQueue(t *testing.T) {
 	}
 }
 
+// A check-only pass over a finished rebase (one a person made by hand) runs the gate and the
+// whitespace check and changes nothing: it never rebases, and a failure is reported, not fixed. A
+// rebase asked for because the land would have changed says why, and every rebase pass is told to let
+// git skip a commit the parent already has rather than keep it empty.
+func TestForkRebasePromptsSayWhatEachPassMayDo(t *testing.T) {
+	onto := strings.Repeat("cd", 20)
+	check := forkRebasePrompt(RebaseSpec{Branch: "beta", Onto: onto, ParentBranch: "main", Gate: "make check", CheckOnly: true})
+	for _, want := range []string{"Rebase check pass", "`make check`", "git diff --check " + onto + " HEAD", "Change nothing", "do not fix it", "refuses this pass if HEAD", rebaseCheckPrefix} {
+		if !strings.Contains(check, want) {
+			t.Errorf("check prompt does not say %q:\n%s", want, check)
+		}
+	}
+	if strings.Contains(check, "git rebase "+onto) || strings.Contains(check, "conflict") {
+		t.Errorf("check prompt asks for a rebase:\n%s", check)
+	}
+	changed := forkRebasePrompt(RebaseSpec{Branch: "beta", Onto: onto, ParentBranch: "main", Changed: true})
+	if !strings.Contains(changed, "already has part of their change") || strings.Contains(changed, "conflict with the parent branch") {
+		t.Errorf("changed-land rebase prompt:\n%s", changed)
+	}
+	for _, prompt := range []string{changed, forkRebasePrompt(RebaseSpec{Branch: "beta", Onto: onto, ParentBranch: "main"})} {
+		if !strings.Contains(prompt, "git rebase --skip") || !strings.Contains(prompt, "never keep an empty commit") {
+			t.Errorf("rebase prompt does not say to let a skipped commit go:\n%s", prompt)
+		}
+	}
+	review := forkCandidateReviewPrompt("/repo", []string{"q"}, CandidateReviewSpec{CandidateID: "c", Head: "h", Tree: "t", Round: 2, TaskIDs: []string{"a"}, RebasedOnto: onto, RebaseVerification: rebaseCheckPrefix + "make check — exit 0"}, "")
+	if strings.Contains(review, "resolving the conflict") || !strings.Contains(review, "by the fork's agent or by a person") || !strings.Contains(review, "Coop did not run or verify them") {
+		t.Errorf("rebased review prompt:\n%s", review)
+	}
+}
+
 // The checks a rebase pass reports are its final message's lines that start with the prefix: never
 // the prompt's template, a line that merely mentions the prefix, or one naming the report's markers.
 func TestRebaseChecksKeepsOnlyReportedChecks(t *testing.T) {
