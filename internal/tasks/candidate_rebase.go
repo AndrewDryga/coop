@@ -291,7 +291,15 @@ func updateOpenForkCandidateRebase(repo string, candidate ForkCandidate, change 
 // Both sides are read from raw objects with the audits' own trailer parser, so a shallow file, graft
 // or replacement the box writes cannot change what either counts.
 func RebaseBindingProblems(workspace, onto, before, after string) ([]string, error) {
-	was, is, err := rebaseBindingCounts(workspace, onto, before, after)
+	return CopiedBindingProblems(workspace, onto, before, onto, after)
+}
+
+// CopiedBindingProblems is RebaseBindingProblems for commits copied from one base to another: the
+// bindings of from..before against those of onto..after. An isolated fork's private rebase copies
+// its unpublished commits from the published boundary onto the parent's HEAD, which shares no
+// history with them.
+func CopiedBindingProblems(workspace, from, before, onto, after string) ([]string, error) {
+	was, is, err := bindingCounts(workspace, from, before, onto, after)
 	if err != nil {
 		return nil, err
 	}
@@ -326,10 +334,10 @@ func bindingKey(commit rawReachableAuditCommit) string {
 	return key
 }
 
-// rebaseBindingCounts counts the commits of each binding over onto..before and onto..after.
-func rebaseBindingCounts(workspace, onto, before, after string) (map[string]int, map[string]int, error) {
-	count := func(head string) (map[string]int, error) {
-		commits, err := rawCommitsOutside(workspace, onto, head)
+// bindingCounts counts the commits of each binding over from..before and onto..after.
+func bindingCounts(workspace, from, before, onto, after string) (map[string]int, map[string]int, error) {
+	count := func(below, head string) (map[string]int, error) {
+		commits, err := rawCommitsOutside(workspace, below, head)
 		if err != nil {
 			return nil, err
 		}
@@ -341,11 +349,11 @@ func rebaseBindingCounts(workspace, onto, before, after string) (map[string]int,
 		}
 		return counts, nil
 	}
-	was, err := count(before)
+	was, err := count(from, before)
 	if err != nil {
 		return nil, nil, err
 	}
-	is, err := count(after)
+	is, err := count(onto, after)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -357,7 +365,7 @@ func rebaseBindingCounts(workspace, onto, before, after string) (map[string]int,
 // that skipped them lost their task's binding. A commit without a trailer, or one whose task kept
 // its commits, is not one. Read from raw objects, like RebaseBindingProblems.
 func RebaseDroppedTaskCommits(workspace, onto, before, after string, shas []string) ([]string, error) {
-	was, is, err := rebaseBindingCounts(workspace, onto, before, after)
+	was, is, err := bindingCounts(workspace, onto, before, onto, after)
 	if err != nil {
 		return nil, err
 	}

@@ -439,9 +439,6 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	if err := checkIsolatedIntroductions(repo, candidate.dir, candidate.parent.Head, candidate.head); err != nil {
 		return mergeOutcome{}, err
 	}
-	if confirm != nil && !confirm(candidate) {
-		return mergeOutcome{skipped: true}, nil
-	}
 	taskCandidate, hasCandidate, err := tasks.ReadForkCandidate(repo, identity)
 	if err != nil {
 		return mergeOutcome{}, err
@@ -469,7 +466,15 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 				mergeCommitsCause(merges)+" Nothing was merged. It is an isolated fork, so nothing of your branch may enter its box to straighten them.",
 				[2]string{"Discard its work, return its tasks to the queue and start a new isolated fork from your branch:", "coop fork rm " + name + " --force"})
 		}
+		if err := isolatedLandedAsReviewed(name, gitBranch(repo), candidate); err != nil {
+			return mergeOutcome{}, err
+		}
 		original = &taskCandidate
+	}
+	// Asked only now: the reviewed-round checks above read and refuse, and change nothing a person's
+	// answer protects, so a merge they will refuse never asks first. The gate runs after the answer.
+	if confirm != nil && !confirm(candidate) {
+		return mergeOutcome{skipped: true}, nil
 	}
 	if err := c.gateIsolatedCandidate(repo, img, candidate, false); err != nil {
 		return mergeOutcome{}, err

@@ -95,7 +95,16 @@ starts. Their private rebase's conflict (`isolatedConflictError`, from unmerged 
 signing and other failures keep the old guidance) names the two ways out (change the branch, or
 discard and re-fork) and writes a request with the `isolated-conflict` cause only so ls shows
 "conflicts" with those ways; the loop ignores it, the fence admits nothing by it, and a merge whose
-private rebase applies closes it.
+private rebase applies closes it. The private rebase's join commits keep it from replaying published
+source but not from skipping a source commit whose patch the parent gained since the boundary, so a
+reviewed round's merge runs `isolatedLandedAsReviewed` in the private clone: when the parent's tree
+is still the boundary's, the rebased tree must be the reviewed source tree (line edits drop
+positions); then the parent-to-rebased line edits must equal the boundary-to-source ones, and when
+commits dropped, `tasks.CopiedBindingProblems` (from..before against onto..after, raw) must find no
+lost binding. Every refusal records nothing and leaves ls unchanged, and all run before the merge's
+confirmation question (they only read), the gate after it (forkctl
+TestIsolatedLandRefusesAChangeTheRebaseWouldAlter, TestIsolatedLandRefusesASkippedTaskCommit,
+TestIsolatedLandOnAnUnmovedBranchNeedsTheReviewedTree).
 
 No round may hold a merge commit. A review reads the candidate's diff, but `git rebase` lands its
 commits one by one, flattening a merge and replaying every commit beneath it, so a change a merge
@@ -161,6 +170,10 @@ descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork
 ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
 
 ## Changelog
+- 2026-11-19 — an isolated fork's merge had no landed-as-reviewed check and the join commits did not
+  make one unnecessary: reviewed A (remove a line), B (add it back), C on a branch with A's patch
+  landed the line unseen; the merge now compares line edits and bindings and refuses (task
+  2026-11-19-confirm-an-isolated-fork-s-merge-lands-exactly-t).
 - 2026-11-19 — an isolated fork's conflict said "rework" and ls did not show it, and the card said
   its source shares no history with the parent; the refusal names the two ways out, ls shows it, and
   the history boundary is stated and tested (task 2026-11-19-say-plainly-what-a-conflicted-isolated-fork-can).

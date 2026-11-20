@@ -441,8 +441,10 @@ were when it was created, and co:op copies none of your branch's later commits i
 rebase the fork onto your branch for its agent. When its reviewed commits conflict with your branch, `coop fork ls`
 shows it as "conflicts with your branch" and the merge names two ways out: change your branch until
 the fork's commits apply and merge again, or discard its work with `coop fork rm <name> --force`
-and start a new isolated fork from your current branch. Don't cherry-pick its commits into your
-checkout by hand, since that skips the checks co:op runs on an isolated fork's commits, and don't
+and start a new isolated fork from your current branch. The merge gives the same two ways out when
+the reviewed commits apply but would not land exactly the reviewed change, for example because your
+branch already has part of it or has the change of a task's commit; `coop fork ls` doesn't show
+that case. Don't cherry-pick its commits into your checkout by hand, since that skips the checks co:op runs on an isolated fork's commits, and don't
 redo untrusted work in an ordinary fork, which gives the agent your checkout's Git storage.
 
 A fork whose branch moved after its final review shows as "changed after review" in `coop fork ls`,

@@ -15,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/gitdiff"
 	"github.com/AndrewDryga/coop/internal/hostsurface"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -141,6 +142,8 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 	// boundary and the parent HEAD, so published source is never replayed, and the rebased branch
 	// joins the source and the parent commit that published it, so those copies are never compared
 	// and a source commit that redoes a change the parent reverted is kept. Rebase replays no merge.
+	// The joins do not stop a skip from changing what the later commits land, so a reviewed round's
+	// merge compares the result with the reviewed change (isolatedLandedAsReviewed).
 	base, err := isolatedJoin(ctx, dir, parent.Tree, upstream, parent.Head)
 	if err != nil {
 		return isolatedCandidate{}, err
@@ -283,6 +286,66 @@ func (e *isolatedConflictError) refusal() error {
 			branch+" may enter its box later, so no agent can rebase it.",
 		[2]string{"Change " + branch + " until the fork's commits apply, then merge again:", "coop fork merge " + e.name},
 		[2]string{"Or discard its work and start a new isolated fork from " + branch + ":", "coop fork rm " + e.name + " --force"})
+}
+
+// isolatedLandedAsReviewed is landedAsReviewed for an isolated fork's private rebase, in its private
+// clone: the change from the parent's HEAD to the rebased head must make the same line edits as the
+// reviewed change, from the published boundary to the source's HEAD, and every Coop-Task binding
+// must keep its commits. The rebase skips a source commit whose patch the parent has since the
+// boundary was published, so reviewed commits that remove a line and add it back, on a branch that
+// also removed it, would land the line. No agent can rebase an isolated fork, so the ways out are a
+// person's, as after a conflict.
+func isolatedLandedAsReviewed(name, branch string, candidate isolatedCandidate) error {
+	dir := candidate.dir
+	unverifiable := func(err error) error {
+		return fmt.Errorf("%s: could not check that the merge lands exactly the reviewed change: %w; nothing merged", name, err)
+	}
+	words := parentBranchWords(branch)
+	// When the parent's tree is still the boundary's, the reviewed commits replay onto the very tree
+	// they were reviewed on and must make exactly the reviewed tree, as landedAsReviewed requires when
+	// the branch has not moved. Line edits alone ignore where in a file a line lands.
+	upstreamTree, err := observed(dir, "rev-parse", "--verify", candidate.upstream+"^{tree}")
+	if err != nil {
+		return unverifiable(err)
+	}
+	if upstreamTree == candidate.parent.Tree && candidate.tree != candidate.sourceTree {
+		return ui.CommandFailed("Fork "+name+"'s reviewed change would land changed on "+words,
+			"Applied to "+words+", which has nothing new since the fork's work was last published, its commits would make the tree "+candidate.tree[:12]+
+				" instead of the reviewed "+candidate.sourceTree[:12]+", content no review saw. Nothing was merged.",
+			[2]string{"Discard its work and start a new isolated fork from " + words + ":", "coop fork rm " + name + " --force"})
+	}
+	reviewed, err := lineEdits(dir, candidate.upstream, candidate.sourceHead)
+	if err != nil {
+		return unverifiable(err)
+	}
+	landed, err := lineEdits(dir, candidate.parent.Head, candidate.head)
+	if err != nil {
+		return unverifiable(err)
+	}
+	cause := ""
+	dropped, err := rebaseDroppedCommits(dir, candidate.parent.Head, candidate.head, candidate.upstream, candidate.sourceHead)
+	if err != nil {
+		return unverifiable(err)
+	}
+	if dropped {
+		problems, err := tasks.CopiedBindingProblems(dir, candidate.upstream, candidate.sourceHead, candidate.parent.Head, candidate.head)
+		if err != nil {
+			return unverifiable(err)
+		}
+		if len(problems) > 0 {
+			cause = words + " already has the change of one of the fork's reviewed commits that belongs to a task, so that commit drops out and its task is left without a commit of its own. " + strings.Join(problems, " ")
+		}
+	}
+	if cause == "" && reviewed != landed {
+		cause = "Applied to " + words + ", its commits would not make exactly the reviewed change, for example because " + words + " already has part of it."
+	}
+	if cause == "" {
+		return nil
+	}
+	return ui.CommandFailed("Fork "+name+"'s reviewed change would land changed on "+words,
+		cause+" Nothing was merged. It is an isolated fork: nothing of "+words+" may enter its box later, so no agent can rebase it and have it reviewed again.",
+		[2]string{"Change " + words + " until the fork's commits apply as reviewed, then merge again:", "coop fork merge " + name},
+		[2]string{"Or discard its work and start a new isolated fork from " + words + ":", "coop fork rm " + name + " --force"})
 }
 
 func isolatedRefusal(headline, why, action string) *ui.UsageError {

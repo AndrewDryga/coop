@@ -354,3 +354,119 @@ func TestLandAcceptsTheReviewedChangeOnAMovedBranch(t *testing.T) {
 		}
 	}
 }
+
+// The isolated port of TestLandRefusesAChangeTheRebaseWouldAlter. The private rebase's join commits
+// keep it from replaying published source, but not from skipping A, whose patch the branch has since
+// the fork was created, and then replaying B, which would put the line back on the branch. Nothing of
+// the branch may enter an isolated box, so the merge refuses with a person's two ways out and records
+// no rebase request for the loop.
+func TestIsolatedLandRefusesAChangeTheRebaseWouldAlter(t *testing.T) {
+	history := func(t *testing.T, ws, id string) {
+		for _, step := range []struct{ content, message string }{
+			{"", "remove the line"},
+			{"hi\n", "add the line back"},
+		} {
+			if err := os.WriteFile(filepath.Join(ws, "README.md"), []byte(step.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git(t, ws, "commit", "-qam", step.message)
+		}
+		if err := os.WriteFile(filepath.Join(ws, "g.txt"), []byte("g\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "add", "g.txt")
+		git(t, ws, "commit", "-qm", "add g\n\nCoop-Task: "+id)
+	}
+	repo, _, _, identity, c := prepareForkTaskCandidateHistory(t, "task-cherry-isolated", true, history, nil)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "commit", "-qam", "main removes the line as well") // the same patch as A, another commit
+	assertIsolatedChangedLandRefused(t, c, repo, identity, "would not make exactly the reviewed change")
+}
+
+// A reviewed task commit whose patch the branch already has drops out of the private rebase, and its
+// task keeps no commit: refused, as for an ordinary fork, before anything merges.
+func TestIsolatedLandRefusesASkippedTaskCommit(t *testing.T) {
+	removes := func(t *testing.T, ws, id string) {
+		if err := os.WriteFile(filepath.Join(ws, "README.md"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "commit", "-qam", "remove the line\n\nCoop-Task: "+id)
+	}
+	repo, _, _, identity, c := prepareForkTaskCandidateHistory(t, "task-skipped-isolated", true, removes, nil)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "commit", "-qam", "main removes the line as well")
+	assertIsolatedChangedLandRefused(t, c, repo, identity, "belongs to a task")
+}
+
+func assertIsolatedChangedLandRefused(t *testing.T, c *Control, repo string, identity forkspace.Identity, cause string) {
+	t.Helper()
+	parent := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	// The person is not asked to merge what the check then refuses.
+	unlock, err := forkspace.LockState(repo, identity.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked := false
+	outcome, err := c.mergeIsolatedLocked(repo, "", identity.Name, identity, false, false, func(isolatedCandidate) bool { asked = true; return true })
+	unlock()
+	if asked || outcome.landed || err == nil || !strings.Contains(err.Error(), cause) {
+		t.Fatalf("isolated merge with a confirmation = (%v, %v), asked %v; want the refusal before any question", outcome.landed, err, asked)
+	}
+	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "would land changed on main") || !strings.Contains(err.Error(), cause) ||
+		!strings.Contains(err.Error(), "coop fork rm "+identity.Name+" --force") || strings.Contains(err.Error(), "--loop") {
+		t.Fatalf("isolated merge whose rebase alters the reviewed change = (%v, %v)", landed, err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(repo, "README.md")); len(data) != 0 || forkspace.GitOut(repo, "rev-parse", "HEAD") != parent {
+		t.Fatalf("the parent changed: README %q", data)
+	}
+	if _, ok, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || ok {
+		t.Fatalf("an isolated refusal recorded a rebase request: %v, %v", ok, err)
+	}
+	if _, pending, err := readIsolatedIntent(repo, identity); err != nil || pending {
+		t.Fatalf("land journal after the refusal = %v, %v", pending, err)
+	}
+}
+
+// When the branch's tree is still the one the fork's commits were reviewed on, the merge must land
+// exactly the reviewed tree, as an ordinary fork's land requires when its branch has not moved.
+// Line edits alone cannot tell "x" added at the top of a file from "x" added at its bottom.
+func TestIsolatedLandOnAnUnmovedBranchNeedsTheReviewedTree(t *testing.T) {
+	repo := initRepo(t)
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, "list.txt"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a\nb\n")
+	git(t, repo, "add", "list.txt")
+	git(t, repo, "commit", "-qm", "list")
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	write("x\na\nb\n")
+	git(t, repo, "commit", "-qam", "reviewed: x on top")
+	source := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	git(t, repo, "reset", "-q", "--hard", base)
+	write("a\nb\nx\n")
+	git(t, repo, "commit", "-qam", "landed: x at the bottom")
+	landed := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	tree := func(commit string) string { return forkspace.GitOut(repo, "rev-parse", commit+"^{tree}") }
+	candidate := isolatedCandidate{dir: repo, upstream: base, sourceHead: source, sourceTree: tree(source),
+		parent: isolatedParent{Head: base, Tree: tree(base)}, head: landed, tree: tree(landed)}
+	if a, err := lineEdits(repo, base, source); err != nil {
+		t.Fatal(err)
+	} else if b, _ := lineEdits(repo, base, landed); a != b {
+		t.Fatalf("the fixture's line edits differ, so it does not test the tree check:\n%s\n%s", a, b)
+	}
+	if err := isolatedLandedAsReviewed("iso", "main", candidate); err == nil || !strings.Contains(err.Error(), "instead of the reviewed") {
+		t.Fatalf("a land onto an unmoved branch that changes the reviewed tree = %v", err)
+	}
+	candidate.head, candidate.tree = source, tree(source)
+	if err := isolatedLandedAsReviewed("iso", "main", candidate); err != nil {
+		t.Fatalf("the exact reviewed tree on an unmoved branch = %v", err)
+	}
+}
