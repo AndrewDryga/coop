@@ -156,3 +156,21 @@ func TestJobPresetCapabilityRequiresExactLiveDaemonProof(t *testing.T) {
 		}
 	}
 }
+
+// A controller sends a checkpoint naming an upstream revision only to a worker that can restore it.
+func TestCheckpointUpstreamCapabilityRequiresExactLiveProof(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want int
+	}{
+		{`{"checkpoint_upstream_versions":[1]}`, 1},
+		{`{}`, 0},
+		{`{"checkpoint_upstream_versions":[2]}`, 0},
+		{`{"checkpoint_upstream_versions":[1,2]}`, 0},
+	} {
+		got := LiveCapabilities(context.Background(), &capabilityAPI{response: json.RawMessage(test.body)})
+		if len(got) != test.want || (test.want == 1 && (got[0].Name != "checkpoint-upstream" || got[0].Version != "1")) {
+			t.Fatalf("capability for %s = %+v", test.body, got)
+		}
+	}
+}

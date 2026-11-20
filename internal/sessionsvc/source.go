@@ -40,11 +40,22 @@ func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Sess
 	if err == nil && job.Source == nil {
 		return emptyJobCommit, nil // sessionExecution verified the private empty baseline.
 	}
-	if err != nil || job.Source == nil || s.sourceRefresher == nil {
+	if err != nil {
 		return "", &session.Error{Code: session.CodeRepositoryUnavailable,
 			Detail: "current default revision requires a controller-authorized source refresh"}
 	}
-	head, err := s.sourceRefresher(ctx, job.JobRef, *job.Source, execution.Repository)
+	return s.refreshSessionSource(ctx, job, execution.Repository)
+}
+
+// refreshSessionSource asks the job's controller-granted source for its current default commit
+// and proves that commit is in the worker's own staged copy. Nothing the workspace holds, no ref
+// or config an agent can write, takes part.
+func (s *Service) refreshSessionSource(ctx context.Context, job workerproto.JobSpec, repository string) (string, error) {
+	if job.Source == nil || s.sourceRefresher == nil {
+		return "", &session.Error{Code: session.CodeRepositoryUnavailable,
+			Detail: "current default revision requires a controller-authorized source refresh"}
+	}
+	head, err := s.sourceRefresher(ctx, job.JobRef, *job.Source, repository)
 	if errors.Is(err, workerproto.ErrSourceGrantRefused) {
 		return "", &session.Error{Code: session.CodeInvalidSessionState,
 			Detail: "the controller refuses read access to the job's repository; asking again will not change that"}
@@ -52,7 +63,7 @@ func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Sess
 	if err != nil {
 		return "", &session.Error{Code: session.CodeRepositoryUnavailable, Detail: "could not refresh the job's default revision"}
 	}
-	actual, err := sessionWorkspaceCommitContext(ctx, execution.Repository, head)
+	actual, err := sessionWorkspaceCommitContext(ctx, repository, head)
 	if err != nil || !forkspace.ValidObjectID(head) || actual != head {
 		return "", &session.Error{Code: session.CodeRepositoryUnavailable, Detail: "refreshed default revision is unproven"}
 	}

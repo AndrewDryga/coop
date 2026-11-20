@@ -318,6 +318,9 @@ type sessionCapabilitiesDTO struct {
 	// the reviewed change only to a daemon that would not refuse the field.
 	ReviewCommitMessageVersions   []int `json:"review_commit_message_versions"`
 	ExistingPRPublicationVersions []int `json:"existing_pr_publication_versions"`
+	// CheckpointUpstreamVersions proves restore reads a bundle manifest's upstream_revision, so a
+	// controller sends a checkpoint that names one only to a worker that can restore it.
+	CheckpointUpstreamVersions []int `json:"checkpoint_upstream_versions"`
 }
 
 type sessionHTTPErrorBody struct {
@@ -383,6 +386,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			SessionEvidenceVersions:            []int{workerproto.SessionEvidenceVersion},
 			ReviewCommitMessageVersions:        []int{1},
 			ExistingPRPublicationVersions:      []int{1},
+			CheckpointUpstreamVersions:         []int{1},
 		})
 		return
 	case "/v1/capacity":

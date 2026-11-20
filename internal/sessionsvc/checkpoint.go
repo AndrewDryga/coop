@@ -286,6 +286,7 @@ func (s *Service) executeCheckpointWorkspace(
 	defer os.RemoveAll(stage)
 	checkpoint, manifest, bundle, err := buildWorkspaceCheckpoint(
 		ctx, stage, sess, req, op.ID, time.Now().UTC(),
+		func(ctx context.Context) (string, error) { return s.pinCurrentSessionParent(ctx, sess) },
 	)
 	if err != nil {
 		return CheckpointWorkspaceResult{}, s.failServiceOperation(ctx, op.ID, err)
@@ -332,6 +333,7 @@ func buildWorkspaceCheckpoint(
 	req CheckpointWorkspaceRequest,
 	operationID string,
 	createdAt time.Time,
+	upstreamHead func(context.Context) (string, error),
 ) (workerproto.WorkspaceCheckpoint, workerproto.WorkspaceCheckpointBundleManifest, *os.File, error) {
 	base, err := sessionWorkspaceCommitContext(ctx, sess.Repository, sess.BaseCommit)
 	if err != nil {
@@ -371,12 +373,51 @@ func buildWorkspaceCheckpoint(
 	}
 	defer os.Remove(repository.Name())
 	defer repository.Close()
-	var tree string
+	var tree, upstream string
 	digest := sha256.New()
-	err = withSessionTrackedTree(ctx, sess.Workspace, func(captured string, env []string) error {
-		tree = captured
-		return writeCheckpointRepository(ctx, sess.Workspace, base, committed, tree, env, io.MultiWriter(repository, digest))
-	})
+	export := func(defaultHead string) error {
+		if _, err := repository.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		if err := repository.Truncate(0); err != nil {
+			return err
+		}
+		digest.Reset()
+		return withSessionTrackedTree(ctx, sess.Workspace, func(captured string, env []string) error {
+			tree = captured
+			if defaultHead != "" {
+				found, err := checkpointUpstream(ctx, sess.Workspace, sess.Repository, base, committed, defaultHead, env)
+				if err != nil {
+					return err
+				}
+				if found == "" {
+					return errCheckpointNoUpstream
+				}
+				upstream = found
+			}
+			return writeCheckpointRepository(ctx, sess.Workspace, base, upstream, committed, tree, env, io.MultiWriter(repository, digest))
+		})
+	}
+	err = export("")
+	// Only a refused export asks the controller for the job's current default: a rebase onto it
+	// carries upstream history the restoring worker can fetch on its own, so those objects need
+	// not travel. Anything else still transported is scanned again, and a refusal stands. LFS
+	// payloads always travel, so a refusal there gains nothing from the default.
+	var refused *session.Error
+	if errors.As(err, &refused) && refused.Detail == checkpointCredentialDetail && upstreamHead != nil {
+		head, refreshErr := upstreamHead(ctx)
+		switch {
+		case refreshErr != nil:
+			err = checkpointUpstreamUnverified(refreshErr)
+		case head != base:
+			if retryErr := export(head); !errors.Is(retryErr, errCheckpointNoUpstream) {
+				err = retryErr
+			}
+		}
+		if errors.As(err, &refused) && refused.Detail == checkpointCredentialDetail {
+			err = &session.Error{Code: session.CodeInvalidSessionState, Detail: checkpointTaskCredentialDetail}
+		}
+	}
 	if err != nil {
 		return workerproto.WorkspaceCheckpoint{}, workerproto.WorkspaceCheckpointBundleManifest{}, nil, err
 	}
@@ -402,7 +443,7 @@ func buildWorkspaceCheckpoint(
 	checkpointRef := "checkpoint:" + checkpointSHA256([]byte(operationID + "\x00" + candidate + "\x00" + taskProjection.StateSHA256))[:32]
 	manifest := workerproto.WorkspaceCheckpointBundleManifest{
 		Version: workerproto.WorkspaceCheckpointVersion, CheckpointRef: checkpointRef,
-		RepositoryRef: req.RepositoryRef, BaseRevision: base, BranchRef: branch,
+		RepositoryRef: req.RepositoryRef, BaseRevision: base, UpstreamRevision: upstream, BranchRef: branch,
 		CommittedRevision: committed, CandidateTreeSHA256: candidate, Repository: &content, TrackedTree: tree,
 		UntrackedFiles: checkpointEntries(untracked), TaskProjection: taskProjection,
 	}

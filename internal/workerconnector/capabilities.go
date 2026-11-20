@@ -21,6 +21,8 @@ type sessionCapabilities struct {
 	// ReviewCommitMessageVersions proves a review accepts the controller's commit message.
 	ReviewCommitMessageVersions   []int `json:"review_commit_message_versions,omitempty"`
 	ExistingPRPublicationVersions []int `json:"existing_pr_publication_versions,omitempty"`
+	// CheckpointUpstreamVersions proves restore reads a checkpoint's upstream_revision.
+	CheckpointUpstreamVersions []int `json:"checkpoint_upstream_versions,omitempty"`
 }
 
 // LiveCapabilities adds implementation capabilities only after the exact local
@@ -75,6 +77,9 @@ func readCapabilities(ctx context.Context, api API) ([]workerproto.Capability, b
 	}
 	if proves(document.ExistingPRPublicationVersions, 1) {
 		result = append(result, workerproto.Capability{Name: "existing-pr-publication", Version: "1"})
+	}
+	if proves(document.CheckpointUpstreamVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "checkpoint-upstream", Version: "1"})
 	}
 	return result, true
 }

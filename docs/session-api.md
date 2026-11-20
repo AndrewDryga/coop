@@ -550,7 +550,7 @@ use up one of those review attempts.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1]}`. Check these versions before choosing which protocol features to use. |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1],"checkpoint_upstream_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
 
@@ -654,7 +654,7 @@ must leave `storage.reserve_bytes` free. These checks don't limit how much data 
 task writes in its workspace.
 
 Before reporting support for `job-setup:2`, `repository-freshness:2`, `session-evidence:1`,
-`controller-tools:1`, `project-runtime:1`, `job-preset:1` or `review-commit-message:1`, the connector checks the running daemon's
+`controller-tools:1`, `project-runtime:1`, `job-preset:1`, `review-commit-message:1` or `checkpoint-upstream:1`, the connector checks the running daemon's
 `GET /v1/capabilities` response for the matching version. If it can't verify a capability,
 it leaves it out of the next hello.
 
@@ -877,6 +877,8 @@ Repeating the exact binding leaves the session unchanged.
 A credential found in newly exported content refuses capture with HTTP 409
 `invalid_session_state`, including on replay of the same operation key. The workspace remains
 intact and no checkpoint bundle is published; correct the content before requesting a new capture.
+One case answers `503` instead, when the job's default branch couldn't be checked; the table
+under the v2 checkpoint description lists every answer.
 
 Other workspace states you can fix also refuse with `409 invalid_session_state` and say why:
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
@@ -904,6 +906,52 @@ match the descriptor.
 A v2 checkpoint streams Git objects with their types and verified LFS files. It includes new
 commits, the final tracked tree, untracked files and task state. Restoring it recreates the exact
 HEAD and working tree, but not the original split between staged and unstaged changes.
+
+A checkpoint leaves out Git objects the restoring worker can fetch on its own from the job's
+authorized source. That always covers the session's base. When the work was rebased onto, or merged,
+a newer commit of the job's default branch, it can cover that commit's history too. Capture looks
+for such a commit only after the export finds a credential. It then refreshes the job's source
+through the controller's grant, as review does, and uses the newest commit the work shares with
+the default branch. Refs, remotes and config in the workspace never count, because the agent can
+write them. Every object that still travels is scanned again, so a credential the task added
+refuses capture even if a later commit removed it. The bundle manifest names the commit as
+`upstream_revision`.
+
+Only the default branch counts. History from another branch, from a pull request or pinned commit
+past the session's base, and every LFS file, upstream ones included, travels and is scanned. The
+refusal says which case it met, never what matched:
+
+| Answer | Meaning |
+| --- | --- |
+| `409 invalid_session_state`, `... a credential that neither the session base nor the job's default branch holds` | The Git content is the task's own, or comes from one of the sources above. Fix the content. |
+| `409 invalid_session_state`, `... a credential in an LFS file` | An LFS file matched. LFS files always travel. |
+| `409 invalid_session_state`, `workspace checkpoint contains a credential` | An untracked file matched. |
+| `503 repository_unavailable`, `... could not be refreshed ...` | The default branch couldn't be checked right now. Retry with a new idempotency key. |
+| `409 invalid_session_state`, `... cannot be checked for it: ...` | The controller refuses read access to the job's repository, or the session no longer matches its job. Asking again won't change that. |
+
+Restore refreshes the replacement session's source the same way and requires that exact commit to
+be in the default branch's history. If the refresh fails, the worker's copy lacks the commit, or
+the branch no longer contains it, restore answers `503 repository_unavailable` before it changes
+any file. A refused grant answers `409 invalid_session_state`, which a retry won't change. After a
+`503`, retry with a new idempotency key on the same unused replacement session. A restore that
+resumes after a crash already proved the commit before it started changing files, so it checks
+only the worker's own copy and doesn't need the network again.
+
+A worker that can restore a bundle naming `upstream_revision` advertises `checkpoint-upstream:1`.
+Restore such a checkpoint only on such a worker. The manifest is the bundle's first member, so a
+controller can read the field there, or it can place every restore on a worker with the
+capability. A checkpoint from v15.0.0 has no `upstream_revision` and restores as before. A worker
+older than this change, v15.0.0 included, can't restore a bundle that names one. It reads the
+unknown field as a malformed manifest, answers `500 internal_error` and changes no file. Retrying
+there won't help.
+
+To recover a retained workspace whose capture was refused only because of credentials already in
+the upstream it was rebased onto, update both the worker that holds the workspace and the worker
+that will restore it. Then request a new capture of the same session with a new idempotency key,
+since the refused key replays its refusal. The session must still be idle and retained, and the
+controller must still grant read access to the job's source. Restore the new checkpoint as usual,
+and after a restore `503`, retry with a new key on the same unused replacement session. If capture
+is refused again, the table above says why.
 
 Changed submodule commits need a separate authorized process to keep and verify their data, so
 checkpoints refuse them, including intermediate submodule changes that were later reverted.

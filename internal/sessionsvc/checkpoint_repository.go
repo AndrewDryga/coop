@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +26,9 @@ import (
 
 // Raw typed objects, not a compressed Git pack or binary patch: the controller's
 // streaming credential scan must see even content later deleted from history.
-func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree string, env []string, output io.Writer) error {
+// upstream, when set, is a commit of the job's authorized source (see checkpointUpstream) that
+// restore fetches on its own, so its objects stay out of the transfer like the base's.
+func writeCheckpointRepository(ctx context.Context, workspace, base, upstream, head, tree string, env []string, output io.Writer) error {
 	command := func(args ...string) *exec.Cmd {
 		cmd := forkspace.TrustedGitCommand(ctx, workspace, env, args...)
 		cmd.Env = env
@@ -54,7 +57,11 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 	writer := tar.NewWriter(output)
 	// An explicit positive tree bypasses a commit-only exclusion. Restore fetches
 	// the authorized base independently, so subtract its tree closure too.
-	listing := command("rev-list", "--objects", "--no-object-names", head, tree, "^"+base, "^"+base+"^{tree}")
+	exclude := []string{"^" + base, "^" + base + "^{tree}"}
+	if upstream != "" {
+		exclude = append(exclude, "^"+upstream, "^"+upstream+"^{tree}")
+	}
+	listing := command(append([]string{"rev-list", "--objects", "--no-object-names", head, tree}, exclude...)...)
 	objects, err := listing.StdoutPipe()
 	if err != nil {
 		return err
@@ -170,13 +177,53 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, head, tree 
 			if err := checkpointTarHeader(writer, "lfs/"+pointer.OID, 0644, pointer.Size); err != nil {
 				return err
 			}
-			return copyCheckpointContent(ctx, writer, file, pointer.Size, pointer.OID)
+			err = copyCheckpointContent(ctx, writer, file, pointer.Size, pointer.OID)
+			if checkpointCredentialRefusal(err) {
+				// LFS payloads always travel, upstream ones too, so the answer says which kind it was.
+				return &session.Error{Code: session.CodeInvalidSessionState, Detail: checkpointLFSCredentialDetail}
+			}
+			return err
 		})
 	}
 	if err := visitCheckpointTrees(ctx, private, base, head, tree, visit); err != nil {
 		return err
 	}
 	return writer.Close()
+}
+
+// checkpointUpstream names the newest commit the workspace history shares with the job's
+// authorized default head, which the worker itself just refreshed into its private source copy.
+// It returns "" when that history adds nothing past the base. Only the private copy proves the
+// answer: an agent can write any ref, config or object in the workspace, but cannot make a commit
+// an ancestor of a default head the worker fetched from the controller-granted source.
+func checkpointUpstream(ctx context.Context, workspace, source, base, head, defaultHead string, env []string) (string, error) {
+	if !forkspace.ValidObjectID(defaultHead) {
+		return "", errors.New("invalid checkpoint upstream head")
+	}
+	common, err := sessionCompanionGitCommonDirContext(ctx, source)
+	if err != nil {
+		return "", err
+	}
+	// The snapshot store already reads the workspace's objects; the source's join them read-only
+	// for this one command, so a single merge-base sees both histories.
+	merge := forkspace.TrustedGitCommand(ctx, workspace,
+		append(slices.Clip(env), "GIT_ALTERNATE_OBJECT_DIRECTORIES="+filepath.Join(common, "objects")),
+		"merge-base", head, defaultHead)
+	output, err := merge.Output()
+	upstream := strings.TrimSpace(string(output))
+	if err != nil || !forkspace.ValidObjectID(upstream) || upstream == base {
+		return "", nil // no shared history past the base to leave out
+	}
+	for _, pair := range [][2]string{{base, upstream}, {upstream, defaultHead}} {
+		check, err := forkspace.GitCommandWithEnv(ctx, source, sessionCompanionGitEnv(), "merge-base", "--is-ancestor", pair[0], pair[1])
+		if err != nil {
+			return "", err
+		}
+		if check.Run() != nil {
+			return "", nil
+		}
+	}
+	return upstream, nil
 }
 
 func visitCheckpointTrees(ctx context.Context, repository, base, head, tree string, visit func(string) error) error {
@@ -344,6 +391,36 @@ func checkpointTarHeader(writer *tar.Writer, name string, mode, size int64) erro
 	})
 }
 
+// The refusal details never repeat what matched. Each says only where it was found.
+const (
+	checkpointCredentialDetail    = "workspace checkpoint contains a credential"
+	checkpointLFSCredentialDetail = checkpointCredentialDetail + " in an LFS file"
+	// Capture checked the job's default branch, and the matched Git content is in neither it nor the
+	// base: the task added it, or it came from another branch, a pull request or a pinned commit.
+	checkpointTaskCredentialDetail = checkpointCredentialDetail + " that neither the session base nor the job's default branch holds"
+)
+
+// errCheckpointNoUpstream says the job's default shares no history with the work past its base.
+var errCheckpointNoUpstream = errors.New("checkpoint has no authorized upstream to leave out")
+
+func checkpointCredentialRefusal(err error) bool {
+	var refusal *session.Error
+	return errors.As(err, &refusal) && strings.HasPrefix(refusal.Detail, checkpointCredentialDetail)
+}
+
+// checkpointUpstreamUnverified answers a credential refusal that a refresh of the job's source
+// might have lifted but could not run: retryable when the source was unreachable, final when the
+// controller refuses access or the session's job authority no longer holds.
+func checkpointUpstreamUnverified(refreshErr error) error {
+	var refusal *session.Error
+	if errors.As(refreshErr, &refusal) && refusal.Code == session.CodeInvalidSessionState {
+		return &session.Error{Code: session.CodeInvalidSessionState, Detail: checkpointCredentialDetail +
+			" past the session base, and the job's default branch cannot be checked for it: " + refusal.Detail}
+	}
+	return &session.Error{Code: session.CodeRepositoryUnavailable, Detail: checkpointCredentialDetail +
+		" past the session base, and the job's default branch could not be refreshed to check whether it came from there; retry with a new idempotency key"}
+}
+
 // Every byte is copied, hashed and scanned with bounded memory, including binary
 // files and very long lines. A partial read or a late disk error is never success.
 func copyCheckpointContent(ctx context.Context, output io.Writer, input io.Reader, size int64, digest string) error {
@@ -354,7 +431,7 @@ func copyCheckpointContent(ctx context.Context, output io.Writer, input io.Reade
 		return err
 	}
 	if found {
-		return &session.Error{Code: session.CodeInvalidSessionState, Detail: "workspace checkpoint contains a credential"}
+		return &session.Error{Code: session.CodeInvalidSessionState, Detail: checkpointCredentialDetail}
 	}
 	if counter.bytes != size || (digest != "" && fmt.Sprintf("%x", hash.Sum(nil)) != digest) {
 		return errors.New("workspace checkpoint content identity changed")

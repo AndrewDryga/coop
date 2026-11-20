@@ -127,7 +127,7 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 8 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 9 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
 	}
 	jobs, ok := document["job_spec_versions"].([]any)
@@ -153,6 +153,10 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 	messages, ok := document["review_commit_message_versions"].([]any)
 	if !ok || len(messages) != 1 || messages[0] != float64(1) {
 		t.Fatalf("review commit message versions = %#v", document["review_commit_message_versions"])
+	}
+	upstream, ok := document["checkpoint_upstream_versions"].([]any)
+	if !ok || len(upstream) != 1 || upstream[0] != float64(1) {
+		t.Fatalf("checkpoint upstream versions = %#v", document["checkpoint_upstream_versions"])
 	}
 	// The documented example is what a controller author copies; it must be the whole answer.
 	reference, err := os.ReadFile(filepath.Join("..", "..", "docs", "session-api.md"))

@@ -95,3 +95,84 @@ func TestCheckpointArchiveReadsGNUSizeWithoutAllocatingLargeMember(t *testing.T)
 		t.Fatalf("truncated large member: %v", err)
 	}
 }
+
+// The upstream revision is optional: a bundle without it keeps the v15.0.0 shape.
+func TestCheckpointManifestUpstreamRevisionIsOptionalAndExact(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/protocol/workspace-checkpoint-v2.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Bundle string `json:"bundle_base64"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := base64.StdEncoding.DecodeString(fixture.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := tar.NewReader(bytes.NewReader(bundle))
+	var document []byte
+	for document == nil {
+		header, err := reader.Next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Name == workspaceCheckpointManifestEntry {
+			if document, err = io.ReadAll(reader); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var original map[string]any
+	if err := json.Unmarshal(document, &original); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := original["upstream_revision"]; ok {
+		t.Fatal("the v2 golden must stay the shape without an upstream")
+	}
+	base, _ := original["base_revision"].(string)
+	other := "1111111111111111111111111111111111111111"
+	for name, tc := range map[string]struct {
+		value any
+		valid bool
+	}{
+		"newer commit": {other, true},
+		"the base":     {base, false},
+		"short id":     {other[:12], false},
+		"not a string": {float64(1), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := map[string]any{}
+			for key, field := range original {
+				value[key] = field
+			}
+			value["upstream_revision"] = tc.value
+			changed, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest, err := DecodeWorkspaceCheckpointBundleManifest(changed)
+			if tc.valid != (err == nil) || (tc.valid && manifest.UpstreamRevision != other) {
+				t.Fatalf("upstream %v: %q, %v", tc.value, manifest.UpstreamRevision, err)
+			}
+		})
+	}
+	legacy, err := os.ReadFile("../../testdata/protocol/workspace-checkpoint-bundle-v1.manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var historical map[string]any
+	if err := json.Unmarshal(legacy, &historical); err != nil {
+		t.Fatal(err)
+	}
+	historical["upstream_revision"] = other
+	changed, err := json.Marshal(historical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeWorkspaceCheckpointBundleManifest(changed); err == nil {
+		t.Fatal("a historical v1 manifest accepted an upstream revision")
+	}
+}

@@ -106,6 +106,12 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	if err != nil {
 		return fail(err)
 	}
+	if manifest.UpstreamRevision != "" {
+		recovering := op.State == session.OperationRunning || op.State == session.OperationUncertain
+		if err := s.fetchCheckpointUpstream(ctx, sess, repository, req.Checkpoint.BaseRevision, manifest.UpstreamRevision, recovering); err != nil {
+			return fail(err)
+		}
+	}
 	archive, err := os.Open(members[manifest.Repository.Entry])
 	if err != nil {
 		return fail(err)
@@ -193,11 +199,67 @@ func initializeCheckpointRepository(ctx context.Context, source, repository, bas
 	return command.Run()
 }
 
+// fetchCheckpointUpstream obtains the upstream commit a checkpoint left out, from this worker's
+// own copy of the job's source and only after the controller-granted refresh proves the commit is
+// in the source's default history now. A commit the source no longer has, or a refresh that
+// cannot run, refuses the restore before any workspace file changes.
+//
+// A resumed restore (recovering) proved all of that before its operation was marked running, and
+// the journaled request pins the same bundle. It checks only that the private copy still holds the
+// commit on top of the base: requiring the network again would fence the session for good if the
+// default branch were force-pushed between the crash and the retry.
+func (s *Service) fetchCheckpointUpstream(ctx context.Context, sess session.Session, repository, base, upstream string, recovering bool) error {
+	unavailable := func(why string) error {
+		if err := context.Cause(ctx); err != nil {
+			return err // the caller left; the operation stays unsettled for a same-key retry
+		}
+		return &session.Error{Code: session.CodeRepositoryUnavailable,
+			Detail: "checkpoint needs upstream commit " + upstream + " from the job's source, " + why}
+	}
+	pairs := [][2]string{{base, upstream}}
+	if !recovering {
+		job, err := sessionJobSpec(sess)
+		if err != nil {
+			return &session.Error{Code: session.CodeInvalidSessionState, Detail: "checkpoint needs upstream commit " + upstream + ", but the session has no job authority"}
+		}
+		head, err := s.refreshSessionSource(ctx, job, sess.Repository)
+		var refusal *session.Error
+		if errors.As(err, &refusal) && refusal.Code == session.CodeInvalidSessionState {
+			// The same final answer the service gives wherever the grant is refused.
+			return &session.Error{Code: session.CodeInvalidSessionState, Detail: "checkpoint needs upstream commit " + upstream + ": " + refusal.Detail}
+		}
+		if err != nil {
+			return unavailable("which could not be refreshed")
+		}
+		pairs = append(pairs, [2]string{upstream, head})
+	}
+	if actual, err := sessionWorkspaceCommitContext(ctx, sess.Repository, upstream); err != nil || actual != upstream {
+		return unavailable("which does not have it")
+	}
+	for _, pair := range pairs {
+		check, err := forkspace.GitCommandWithEnv(ctx, sess.Repository, sessionCompanionGitEnv(), "merge-base", "--is-ancestor", pair[0], pair[1])
+		if err != nil {
+			return unavailable("whose copy could not be read")
+		}
+		if check.Run() != nil {
+			return unavailable("whose default history no longer contains it")
+		}
+	}
+	if err := forkspace.GitFetchPinnedContext(ctx, sess.Repository, repository, upstream); err != nil {
+		return unavailable("whose copy could not be read")
+	}
+	return nil
+}
+
 func validateCheckpointRepository(ctx context.Context, repository string, checkpoint workerproto.WorkspaceCheckpoint, manifest workerproto.WorkspaceCheckpointBundleManifest) error {
-	for _, args := range [][]string{
+	checks := [][]string{
 		{"merge-base", "--is-ancestor", checkpoint.BaseRevision, checkpoint.CommittedRevision},
 		{"fsck", "--full", "--strict", "--unreachable", "--no-progress", checkpoint.CommittedRevision, manifest.TrackedTree},
-	} {
+	}
+	if manifest.UpstreamRevision != "" {
+		checks = append(checks, []string{"merge-base", "--is-ancestor", manifest.UpstreamRevision, checkpoint.CommittedRevision})
+	}
+	for _, args := range checks {
 		output, truncated, err := runSessionCompanionGitContext(ctx, repository, 4096, args...)
 		if err != nil || truncated || len(output) != 0 {
 			return errors.New("checkpoint repository object closure is invalid")

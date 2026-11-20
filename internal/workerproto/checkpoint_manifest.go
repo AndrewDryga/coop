@@ -20,11 +20,17 @@ const (
 // WorkspaceCheckpointBundleManifest names every byte in the portable tar artifact. Tar entry
 // names are host-generated and ordinal; original Git path bytes are base64 encoded so a checkpoint
 // neither loses non-UTF-8 names nor lets an archive path select a restore destination.
+//
+// UpstreamRevision is a newer commit of the job's authorized source that the work was rebased onto
+// or merged. Its objects are left out like the base's, and restore fetches and proves it from that
+// source first. It is omitted when nothing past the base was left out, so such a bundle keeps the
+// shape a worker that predates the field reads.
 type WorkspaceCheckpointBundleManifest struct {
 	Version             int                               `json:"version"`
 	CheckpointRef       string                            `json:"checkpoint_ref"`
 	RepositoryRef       string                            `json:"repository_ref"`
 	BaseRevision        string                            `json:"base_revision"`
+	UpstreamRevision    string                            `json:"upstream_revision,omitempty"`
 	BranchRef           string                            `json:"branch_ref"`
 	CommittedRevision   string                            `json:"committed_revision"`
 	CandidateTreeSHA256 string                            `json:"candidate_tree_sha256"`
@@ -132,6 +138,10 @@ func (m *WorkspaceCheckpointBundleManifest) validate() error {
 		!workspaceCheckpointRevisionPattern.MatchString(m.CommittedRevision) ||
 		!digestPattern.MatchString(m.CandidateTreeSHA256) {
 		return errors.New("checkpoint bundle workspace identity is invalid")
+	}
+	if m.UpstreamRevision != "" && (m.Version != WorkspaceCheckpointVersion ||
+		!workspaceCheckpointRevisionPattern.MatchString(m.UpstreamRevision) || m.UpstreamRevision == m.BaseRevision) {
+		return errors.New("checkpoint bundle upstream revision is invalid")
 	}
 	content := m.TrackedPatch
 	if m.Version == WorkspaceCheckpointLegacyVersion {

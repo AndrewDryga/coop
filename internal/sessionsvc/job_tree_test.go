@@ -204,7 +204,7 @@ func TestSessionWorkspacesContainIndependentRecursiveSources(t *testing.T) {
 	if _, err := fixture.GetChanges(ctx, created.ID); err == nil {
 		t.Fatal("inspection silently omitted nested work")
 	}
-	if _, _, _, err := buildWorkspaceCheckpoint(context.Background(), t.TempDir(), created, CheckpointWorkspaceRequest{}, "nested-checkpoint", time.Now()); err == nil || !strings.Contains(err.Error(), "nested work needs separate custody") {
+	if _, _, _, err := buildWorkspaceCheckpoint(context.Background(), t.TempDir(), created, CheckpointWorkspaceRequest{}, "nested-checkpoint", time.Now(), nil); err == nil || !strings.Contains(err.Error(), "nested work needs separate custody") {
 		t.Fatalf("checkpoint silently omitted nested work: %v", err)
 	}
 	if _, err := planSessionWorkspaceDiscard(created.Repository, created.Workspace, false, false); err == nil {
@@ -280,7 +280,7 @@ func TestCheckpointDoesNotDiscardCommittedNestedHistoryBehindAGitlink(t *testing
 	sessionWorkspaceGit(t, created.Workspace, "add", "vendor/child")
 	sessionWorkspaceGit(t, created.Workspace, "commit", "-qm", "parent gitlink")
 	request := CheckpointWorkspaceRequest{SessionID: created.ID, SessionRef: "session-work-1", ExpectedRevision: created.Revision, PlacementGeneration: 1, RepositoryRef: "test"}
-	if _, _, _, err := buildWorkspaceCheckpoint(context.Background(), t.TempDir(), created, request, "nested-committed-checkpoint", time.Now()); err == nil || !strings.Contains(err.Error(), "nested work needs separate custody") {
+	if _, _, _, err := buildWorkspaceCheckpoint(context.Background(), t.TempDir(), created, request, "nested-committed-checkpoint", time.Now(), nil); err == nil || !strings.Contains(err.Error(), "nested work needs separate custody") {
 		t.Fatalf("checkpoint did not refuse missing child history custody: %v", err)
 	}
 }
@@ -310,7 +310,7 @@ func TestNestedWorkCannotHideBehindIndexFlags(t *testing.T) {
 			if _, err := captureSessionReviewSource(created.Workspace, created.ForkName); err == nil {
 				t.Fatal("review trusted child index flags")
 			}
-			if _, _, _, err := buildWorkspaceCheckpoint(context.Background(), t.TempDir(), created, CheckpointWorkspaceRequest{}, "hidden-checkpoint", time.Now()); err == nil || !strings.Contains(err.Error(), "nested work needs separate custody") {
+			if _, _, _, err := buildWorkspaceCheckpoint(context.Background(), t.TempDir(), created, CheckpointWorkspaceRequest{}, "hidden-checkpoint", time.Now(), nil); err == nil || !strings.Contains(err.Error(), "nested work needs separate custody") {
 				t.Fatalf("checkpoint trusted child index flags: %v", err)
 			}
 			if _, err := planSessionWorkspaceDiscard(created.Repository, created.Workspace, false, false); err == nil {

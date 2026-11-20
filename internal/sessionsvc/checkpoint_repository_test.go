@@ -336,7 +336,7 @@ func TestCheckpointRepositoryKeepsDeletedHistoryLFSAndDirtyObjects(t *testing.T)
 	}
 	var output bytes.Buffer
 	err = withSessionTrackedTree(context.Background(), repository, func(tree string, env []string) error {
-		return writeCheckpointRepository(context.Background(), repository, base, head, tree, env, &output)
+		return writeCheckpointRepository(context.Background(), repository, base, "", head, tree, env, &output)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -390,7 +390,7 @@ func TestUnchangedCheckpointRestoresAuthorizedBaseWithoutExportingItsObjects(t *
 	base := gitOut(repository, "rev-parse", "HEAD")
 	var objects bytes.Buffer
 	err := withSessionTrackedTree(context.Background(), repository, func(tree string, env []string) error {
-		return writeCheckpointRepository(context.Background(), repository, base, base, tree, env, &objects)
+		return writeCheckpointRepository(context.Background(), repository, base, "", base, tree, env, &objects)
 	})
 	if err != nil {
 		t.Fatalf("unchanged authorized baseline entered credential scan: %v", err)
@@ -473,10 +473,14 @@ func TestCheckpointRejectsNewCredentialsEvenWhenDeletedBeforeHead(t *testing.T) 
 			head := gitOut(repository, "rev-parse", "HEAD")
 			var output bytes.Buffer
 			err := withSessionTrackedTree(context.Background(), repository, func(tree string, env []string) error {
-				return writeCheckpointRepository(context.Background(), repository, base, head, tree, env, &output)
+				return writeCheckpointRepository(context.Background(), repository, base, "", head, tree, env, &output)
 			})
 			if err == nil || !strings.Contains(err.Error(), "contains a credential") {
 				t.Fatalf("new %s credential was not refused: %v", kind, err)
+			}
+			// An LFS match says so: LFS files always travel, so a default-branch check cannot lift it.
+			if inLFS := strings.Contains(err.Error(), "in an LFS file"); inLFS != (kind == "deleted-lfs") {
+				t.Fatalf("%s refusal named LFS=%t: %v", kind, inLFS, err)
 			}
 		})
 	}

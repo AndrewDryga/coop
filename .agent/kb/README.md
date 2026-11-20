@@ -150,6 +150,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [session-operation-intents-cross-versions](session-operation-intents-cross-versions.md) — durable intents survive upgrades; replay requires frozen job authority and never reconstructs it from retired local policies
 - [session-companions-own-git-metadata](session-companions-own-git-metadata.md) — companion boxes mount only the pinned workspace, so each snapshot must own usable Git metadata rather than point back to its source checkout
 - [session-controller-task-git-custody](session-controller-task-git-custody.md) — confirmed engineering task bookkeeping is separate checkpoint custody, not product changes or a blanket hidden task folder
+- [session-checkpoint-object-custody](session-checkpoint-object-custody.md) — a checkpoint transports and scans only Git objects the restoring worker cannot fetch itself from the job's authorized source; an upstream past the base is proven by a controller-granted refresh, never by workspace refs
 - [review-host-owned-verdicts](review-host-owned-verdicts.md) — review boxes report bounded evidence; Coop alone applies validated task lifecycle changes
 - [signoff-scope-is-run-anchored](signoff-scope-is-run-anchored.md) — signoff subjects are a run-anchored folder diff; re-anchor only on receipt-consistent rounds, from the post-review done set
 - [task-state-is-the-folder](task-state-is-the-folder.md) — a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
