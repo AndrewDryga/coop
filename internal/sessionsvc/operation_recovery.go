@@ -216,6 +216,9 @@ func (s *Service) scheduleBackgroundOperation(operationID string) {
 		} else if latest, getErr := s.store.GetOperationByID(context.Background(), operationID); getErr == nil {
 			completed = latest.State != session.OperationRunning
 		}
+		if completed && op.Method == "PublishReview" {
+			s.prunePublicationJournal(ctx)
+		}
 		if err != nil && ctx.Err() == nil && !errors.Is(err, errPublishSessionBusy) {
 			code := session.CodeOf(err)
 			if code == "" {

@@ -413,3 +413,78 @@ func TestPublicationResultMustMatchRetainedIntent(t *testing.T) {
 		})
 	}
 }
+
+// The publisher's journal is pruned at start and after each publication settles, and only for keys
+// whose PublishReview row is final: such a row replays its saved answer to every later call with its
+// key. A running publication, another method's key and an unknown key read as unsettled.
+func TestPublicationJournalPrunesOnlySettledPublications(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "--allow-empty", "-qm", "base")
+	service := newReviewTestService(t, repo, 1024, ReviewGateFunc(func(context.Context, ReviewGateRequest) (ReviewGateResult, error) {
+		return ReviewGateResult{Configured: true, Passed: true}, nil
+	}))
+	defer service.Stop()
+	sess := createReviewSession(t, service, "journal-publish")
+	sessionWorkspaceWrite(t, filepath.Join(sess.Workspace, "result.txt"), "reviewed\n")
+	sessionWorkspaceGit(t, sess.Workspace, "add", "result.txt")
+	sessionWorkspaceGit(t, sess.Workspace, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "work")
+	ctx := t.Context()
+	review, err := service.RunReview(ctx, "journal-review", RunReviewRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := workerproto.PublishRequest{AuthorizationRef: "approved", CandidateHead: review.CandidateHead, CandidateTree: review.CandidateTree, Branch: "coop/fix", BaseBranch: "main", Title: "Fix", Body: "Reviewed work"}
+	release := make(chan struct{})
+	service.reviewPublisher = func(ctx context.Context, _ string, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return workerproto.PublishResult{}, ctx.Err()
+		}
+		return workerproto.PublishResult{Status: "published", Receipt: &workerproto.PublicationReceipt{Repository: intent.Repository.RepositoryRef, BranchRef: "refs/heads/coop/fix", CandidateTree: review.CandidateTree, CommitSHA: review.CandidateHead, PullRequestNumber: 7, PullRequestURL: "https://github.com/" + intent.Repository.GitHubRepository + "/pull/7"}}, nil
+	}
+	if op, err := service.PublishReview(ctx, "journal-running", sess.ID, review.OperationID, req); err != nil || op.State != session.OperationRunning {
+		t.Fatalf("admit: %+v %v", op, err)
+	}
+	changed := req
+	changed.CandidateHead = review.ParentHead
+	if _, err := service.PublishReview(ctx, "journal-refused", sess.ID, review.OperationID, changed); err == nil {
+		t.Fatal("a changed candidate was admitted")
+	}
+	keys := []string{"journal-running", "journal-refused", "journal-review", "journal-unknown"}
+	passes := make(chan map[string]bool, 4)
+	service.journalPruner = func(settled func(string) (bool, error)) (int, error) {
+		answers := make(map[string]bool, len(keys))
+		for _, key := range keys {
+			done, err := settled(key)
+			if err != nil {
+				return 0, err
+			}
+			answers[key] = done
+		}
+		passes <- answers
+		return 0, nil
+	}
+	if err := service.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	next := func() map[string]bool {
+		t.Helper()
+		select {
+		case answers := <-passes:
+			return answers
+		case <-time.After(30 * time.Second):
+			t.Fatal("the journal was not pruned")
+			return nil
+		}
+	}
+	want := map[string]bool{"journal-running": false, "journal-refused": true, "journal-review": false, "journal-unknown": false}
+	if got := next(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pass at start = %v, want %v", got, want)
+	}
+	close(release)
+	want["journal-running"] = true
+	if got := next(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pass after the publication settled = %v, want %v", got, want)
+	}
+}

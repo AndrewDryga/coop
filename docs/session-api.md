@@ -1677,6 +1677,17 @@ PR the App doesn't own appeared), the terminal code is `publication_push_outcome
 refusal found after the worker saw its branch at the candidate keeps its own code. The commit may already have been pushed. Check the
 frozen intent and GitHub history manually; do not automatically retarget or start another fix.
 
+The journal is one small file per publish intent in the worker's `publication-results` folder. The
+service removes a file only when two things hold: the file was last written more than 30 days ago,
+and the publication operation with the intent's idempotency key has finished, as `succeeded` or
+`failed`. Operations are never deleted, and a finished one answers every later request with its key,
+including a controller's redelivery, from its saved result without running the push again, so the
+file can no longer change an answer. The 30 days cover a state folder restored from an older copy.
+A file that belongs to a running or unknown operation stays. A file that co:op can't read and
+verify stays for good, since it may be the only evidence of a push. A temporary file that an
+interrupted write left behind goes once it is 30 days old. The check reads only files older than 30
+days, and runs when the service starts and after each publication finishes.
+
 If a push or PR response is lost, co:op checks the remote result before retrying. A candidate
 can't be discarded while publication is active. Later edits in the model workspace can't change
 what gets published.

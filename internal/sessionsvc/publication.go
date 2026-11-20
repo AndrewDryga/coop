@@ -16,6 +16,34 @@ import (
 // repository. It must reconcile remote effects before repeating them.
 type ReviewPublisher func(context.Context, string, workerproto.PublishIntent) (workerproto.PublishResult, error)
 
+// PublicationJournalPruner removes the publisher's saved evidence of publications whose service
+// operation settled reports final, and returns how many entries it removed.
+type PublicationJournalPruner func(settled func(commandKey string) (bool, error)) (int, error)
+
+// prunePublicationJournal runs at start and after each publication settles. A settled PublishReview
+// row replays its saved answer to every later call with its key, so the publisher's evidence for it
+// can no longer change an answer. Anything unknown counts as unsettled and stays.
+func (s *Service) prunePublicationJournal(ctx context.Context) {
+	if s.journalPruner == nil {
+		return
+	}
+	removed, err := s.journalPruner(func(key string) (bool, error) {
+		op, err := s.store.GetOperation(ctx, key)
+		if errors.Is(err, session.ErrOperationNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return op.Method == "PublishReview" && (op.State == session.OperationSucceeded || op.State == session.OperationFailed), nil
+	})
+	if err != nil && ctx.Err() == nil {
+		s.log.Warn("prune the publication journal", "removed", removed, "error", err)
+	} else if removed > 0 {
+		s.log.Info("pruned settled publication journal entries", "removed", removed)
+	}
+}
+
 func (s *Service) PublishReview(ctx context.Context, key, sessionID, reviewID string, req workerproto.PublishRequest) (session.Operation, error) {
 	if !validSessionPathComponent(sessionID) || !validSessionPathComponent(reviewID) {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "invalid publication identity"}

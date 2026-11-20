@@ -528,6 +528,9 @@ func serveLocalSession(ctx context.Context, cfg *config.Config, state, socket st
 		SourceRefresher: refresh,
 		ReviewPublisher: publish,
 		Host:            sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+		PublicationJournalPruner: func(settled func(string) (bool, error)) (int, error) {
+			return workerconnector.PrunePublicationProgress(state, time.Now(), settled)
+		},
 	}
 	service, err := sessionsvc.NewService(serviceConfig)
 	if err != nil {

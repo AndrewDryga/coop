@@ -326,6 +326,8 @@ type Config struct {
 	// StorageLimits overrides the storage policy derived from the volume's measured capacity.
 	StorageLimits *StorageLimits
 	Logger        *slog.Logger
+	// PublicationJournalPruner, when set, drops the publisher's evidence of settled publications.
+	PublicationJournalPruner PublicationJournalPruner
 }
 
 // errSessionServiceStopping is the cause a stopping service cancels its workers with. A turn it
@@ -387,6 +389,7 @@ type Service struct {
 	reviewGate          ReviewGate
 	sourceRefresher     SourceRefresher
 	reviewPublisher     ReviewPublisher
+	journalPruner       PublicationJournalPruner
 	stopTimeout         time.Duration
 	cleanupInterval     time.Duration
 	operationStaleAfter time.Duration
@@ -466,6 +469,7 @@ func NewService(cfg Config) (*Service, error) {
 		reviewGate:          cfg.ReviewGate,
 		sourceRefresher:     cfg.SourceRefresher,
 		reviewPublisher:     cfg.ReviewPublisher,
+		journalPruner:       cfg.PublicationJournalPruner,
 		stopTimeout:         cfg.StopTimeout,
 		cleanupInterval:     cfg.CleanupInterval,
 		operationStaleAfter: cfg.OperationStaleAfter,
@@ -879,6 +883,7 @@ func (s *Service) Start(parent context.Context) error {
 		_ = s.Stop()
 		return fmt.Errorf("reconcile interrupted session operations: %w", err)
 	}
+	s.prunePublicationJournal(ctx)
 	s.mu.Lock()
 	for _, sess := range sessions {
 		if sess.State == session.SessionDiscarded {
