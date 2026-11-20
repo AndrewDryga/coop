@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A restored checkpoint has its empty task queue folders again.** Restore dropped the empty
+  state folders, which `coop tasks lint` flags. The refusal for a fork commit your branch already
+  has now fits a terminal. A checkpoint's credential refusal still names no file path, on purpose:
+  an agent chooses file names, so a path could carry the value.
+
 ## 15.2.0
 
 - **Security: an isolated fork's merge lands exactly the reviewed change.** When your branch
