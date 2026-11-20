@@ -95,9 +95,15 @@ starts. Their private rebase's conflict (`isolatedConflictError`, from unmerged 
 signing and other failures keep the old guidance) names the two ways out (change the branch, or
 discard and re-fork) and writes a request with the `isolated-conflict` cause only so ls shows
 "conflicts" with those ways; a loop on the reviewed commit runs nothing for it and is refused with
-exit 1, the same ways out and the person's restart commands (`IsolatedConflictLoopError`, from
+exit 1, the same ways out and the person's restart commands (`IsolatedRefusalLoopError`, from
 `RefuseDivergedFork` before any start and from the loop's pass), so `--loop && merge` stops; the
-fence admits nothing by it, and a merge whose private rebase applies closes it. The publish header names
+fence admits nothing by it, and a merge whose private rebase applies closes it. A changed land's
+two-way refusal (`isolatedChangedError`) is recorded the same way with the `isolated-changed`
+cause, which ls shows as `changed`; `tasks.IsolatedRebaseCause` is the one test every loop, fence and
+drift site uses for both. ls reads either record only while the parent's HEAD is still its `onto`,
+the commit that merge met, so a changed branch shows ready until the next merge decides; the loop
+still refuses on the record alone (exit 1, no agent), but then says the branch changed since and
+names `coop fork merge`. The publish header names
 the fork's own commit and the new commit it publishes as, rebased onto the branch.
 The private rebase's join commits keep it from replaying published
 source but not from skipping a source commit whose patch the parent gained since the boundary, so a
@@ -105,7 +111,8 @@ reviewed round's merge runs `isolatedLandedAsReviewed` in the private clone: whe
 is still the boundary's, the rebased tree must be the reviewed source tree (line edits drop
 positions); then the parent-to-rebased line edits must equal the boundary-to-source ones, and when
 commits dropped, `tasks.CopiedBindingProblems` (from..before against onto..after, raw) must find no
-lost binding. Every refusal records nothing and leaves ls unchanged, and all run before the merge's
+lost binding. The two-way refusal records `isolated-changed` (above); the unmoved-tree one records
+nothing. All run before the merge's
 confirmation question (they only read), the gate after it (forkctl
 TestIsolatedLandRefusesAChangeTheRebaseWouldAlter, TestIsolatedLandRefusesASkippedTaskCommit,
 TestIsolatedLandOnAnUnmovedBranchNeedsTheReviewedTree).
@@ -190,6 +197,9 @@ rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the b
 reflog keeps.
 
 ## Changelog
+- 2026-11-20 — an isolated fork whose merge would land a changed change still showed ready in ls; the
+  refusal now records the display-only `isolated-changed` cause, and ls reads isolated records only
+  while the branch is where the merge met it (task 2026-11-20-show-in-coop-fork-ls-an-isolated-fork-whose-merg).
 - 2026-11-20 — proved a box-written `.git/shallow` in an isolated fork hides nothing from the scan
   (the old test wrote it into Coop's view and tested nothing); a cut into the fork's commits now
   gets a refusal naming the file instead of git's bare exit status (task

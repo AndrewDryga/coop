@@ -120,7 +120,13 @@ func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.Proj
 		if candidate, ok, err := tasks.ReadForkCandidate(repo, identity); err == nil && ok {
 			var open *tasks.ForkCandidateRebase
 			// A display: an unreadable request only reads as none.
-			if rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err == nil && requested {
+			rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity)
+			// An isolated fork's merge refusal held for the branch commit that merge met: once the branch
+			// moves, only the next merge can tell, so it reads as none until then.
+			if requested && tasks.IsolatedRebaseCause(rebase.Cause) && forkspace.GitOut(repo, "rev-parse", "HEAD") != rebase.Onto {
+				requested = false
+			}
+			if err == nil && requested {
 				open, rebaseBranch, rebaseCause = &rebase, rebase.Branch, rebase.Cause
 				// Count the fork's branch from where it meets the branch, as merge does: not from the
 				// fork's old base, which counts the branch's own changes once rebased, nor the work
@@ -339,6 +345,9 @@ func (s forkStatus) driftLine() string {
 		}
 		return "Conflicts with " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
 	case driftChanged:
+		if s.RebaseCause == tasks.RebaseCauseIsolatedChanged {
+			return "Changed: its reviewed change would land changed on " + parentBranchWords(s.RebaseBranch) + "; change it until the fork applies as reviewed, or discard it (coop fork rm " + s.Name + " --force) and start a new isolated fork"
+		}
 		return "Changed: its reviewed change would land changed on " + parentBranchWords(s.RebaseBranch) + "; rebase and review: coop fork " + s.Name + " --loop"
 	case driftSkipped:
 		return "Changed: " + parentBranchWords(s.RebaseBranch) + "'s history already has one of its task commits, which a rebase skips; coop fork merge " + s.Name + " says how to go on"

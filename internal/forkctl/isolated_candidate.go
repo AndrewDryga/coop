@@ -377,11 +377,21 @@ func isolatedLandedAsReviewed(name, branch string, candidate isolatedCandidate) 
 	if cause == "" {
 		return nil
 	}
-	return ui.CommandFailed("Fork "+name+"'s reviewed change would land changed on "+words,
+	return &isolatedChangedError{ui.CommandFailed("Fork "+name+"'s reviewed change would land changed on "+words,
 		cause+" Nothing was merged. It is an isolated fork: nothing of "+words+" may enter its box later, so no agent can rebase it and have it reviewed again.",
 		[2]string{"Change " + words + " until the fork's commits apply as reviewed, then merge again:", "coop fork merge " + name},
-		[2]string{"Or discard its work and start a new isolated fork from " + words + ":", "coop fork rm " + name + " --force"})
+		[2]string{"Or discard its work and start a new isolated fork from " + words + ":", "coop fork rm " + name + " --force"})}
 }
+
+// isolatedChangedError is isolatedLandedAsReviewed's refusal that names the same two ways out as an
+// isolated conflict, which the merge records for coop fork ls. The refusal of a replay onto the very
+// tree the commits were reviewed on, and a check that could not run, are not one.
+type isolatedChangedError struct{ refusal error }
+
+func (e *isolatedChangedError) Error() string { return e.refusal.Error() }
+
+// Unwrap is the refusal itself, so it prints as every other refusal does.
+func (e *isolatedChangedError) Unwrap() error { return e.refusal }
 
 func isolatedRefusal(headline, why, action string) *ui.UsageError {
 	return ui.CommandFailed(headline, why+"\n--force cannot bypass this check.", [2]string{"", action})

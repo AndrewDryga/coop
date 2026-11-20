@@ -318,17 +318,20 @@ func TestForkCandidateRebaseRequestAdmitsOnlyARebaseOntoItsParent(t *testing.T) 
 		defer unlock()
 		return RequestForkCandidateRebaseLocked(f.repo, candidate, onto, "parent", "")
 	}
-	// A skipped commit's request waits for a person: no rebase onto its parent commit is admitted.
-	unlock, err := forkspace.LockState(f.repo, f.identity.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := RequestForkCandidateRebaseLocked(f.repo, candidate, onto, "parent", RebaseCauseSkipped); err != nil {
-		t.Fatal(err)
-	}
-	unlock()
-	if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, rebased); err == nil || !strings.Contains(err.Error(), "no longer descends") {
-		t.Fatalf("a rebase under a skipped commit's request = %v; want the ancestry refusal", err)
+	// A skipped commit's request waits for a person, and an isolated fork's merge refusals are only
+	// records for ls: no rebase onto their parent commit is admitted.
+	for _, cause := range []string{RebaseCauseSkipped, RebaseCauseIsolatedConflict, RebaseCauseIsolatedChanged} {
+		unlock, err := forkspace.LockState(f.repo, f.identity.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := RequestForkCandidateRebaseLocked(f.repo, candidate, onto, "parent", cause); err != nil {
+			t.Fatal(err)
+		}
+		unlock()
+		if _, err := SupersedeStaleForkCandidate(f.repo, f.identity, rebased); err == nil || !strings.Contains(err.Error(), "no longer descends") {
+			t.Fatalf("a rebase under a %s request = %v; want the ancestry refusal", cause, err)
+		}
 	}
 	other := candidate
 	other.ID = newAssignmentID()

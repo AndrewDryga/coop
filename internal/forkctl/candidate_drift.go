@@ -40,9 +40,12 @@ func forkCandidateDrift(ws, name string, candidate tasks.ForkCandidate, head str
 	if rebase != nil && rebase.Cause == tasks.RebaseCauseSkipped {
 		return driftSkipped
 	}
-	// An isolated fork's conflict is only a record of the last merge: it conflicts while the branch is
+	// An isolated fork's merge refusal is only a record of the last merge: it holds while the branch is
 	// the reviewed commit, and anything else reads as if there were no request.
-	if rebase != nil && rebase.Cause == tasks.RebaseCauseIsolatedConflict {
+	if rebase != nil && tasks.IsolatedRebaseCause(rebase.Cause) {
+		if head == candidate.Head && rebase.Cause == tasks.RebaseCauseIsolatedChanged {
+			return driftChanged
+		}
 		if head == candidate.Head {
 			return driftConflicts
 		}
@@ -326,20 +329,39 @@ func GoBackLabel(ws, label string) string {
 	return strings.TrimSuffix(label, ":") + " (the abort drops conflict resolutions not yet committed):"
 }
 
-// IsolatedConflictLoopError is the fork loop's refusal of an isolated fork whose reviewed commits
-// conflicted with the parent branch at its last merge: no agent may rebase it, so the ways on are a
-// person's, the same two coop fork merge and coop fork ls name.
-func IsolatedConflictLoopError(ws, name, branch string) error {
-	words := parentBranchWords(branch)
+// IsolatedRefusalLoopError is the fork loop's refusal of an isolated fork whose reviewed commits
+// conflicted with the parent branch at its last merge, or would have landed changed (rebase.Cause):
+// no agent may rebase it, so the ways on are a person's, the same two coop fork merge and coop fork
+// ls name.
+//
+// Once the parent's HEAD (repo's) is no longer the commit that merge met, as coop fork ls then shows
+// the fork ready, it says the branch changed since and that a merge checks it again.
+func IsolatedRefusalLoopError(repo, ws, name string, rebase tasks.ForkCandidateRebase) error {
+	words := parentBranchWords(rebase.Branch)
 	agent := ReadForkAgent(ws)
 	if agent == "" {
 		agent = "<agent>"
 	}
-	return ui.CommandFailed("Fork "+name+"'s reviewed commits conflict with "+words,
-		"It is an isolated fork: nothing of "+words+" may enter its box, so no agent can rebase it. No agent ran, and nothing was reviewed or merged.",
-		[2]string{"Change " + words + " until the fork's commits apply, then merge again:", "coop fork merge " + name},
-		[2]string{"Or, if you choose to discard its work, remove the fork:", "coop fork rm " + name + " --force"},
-		[2]string{"Then start a new isolated fork from " + words + ":", "coop fork " + name + " " + agent + " --isolated"})
+	discard := [][2]string{
+		{"Or, if you choose to discard its work, remove the fork:", "coop fork rm " + name + " --force"},
+		{"Then start a new isolated fork from " + words + ":", "coop fork " + name + " " + agent + " --isolated"},
+	}
+	noAgent := "It is an isolated fork: nothing of " + words + " may enter its box, so no agent can rebase it. No agent ran, and nothing was reviewed or merged."
+	refused := "conflicted with " + words
+	if rebase.Cause == tasks.RebaseCauseIsolatedChanged {
+		refused = "would have landed changed on " + words
+	}
+	if forkspace.GitOut(repo, "rev-parse", "HEAD") != rebase.Onto {
+		return ui.CommandFailed("Fork "+name+" has nothing for its loop to do",
+			"Its reviewed commits "+refused+" at its last merge, and "+words+" has changed since. "+noAgent,
+			append([][2]string{{"Merge it to check it against " + words + " as it is now:", "coop fork merge " + name}}, discard...)...)
+	}
+	headline, apply := "Fork "+name+"'s reviewed commits conflict with "+words, "apply"
+	if rebase.Cause == tasks.RebaseCauseIsolatedChanged {
+		headline, apply = "Fork "+name+"'s reviewed change would land changed on "+words, "apply as reviewed"
+	}
+	return ui.CommandFailed(headline, noAgent,
+		append([][2]string{{"Change " + words + " until the fork's commits " + apply + ", then merge again:", "coop fork merge " + name}}, discard...)...)
 }
 
 // CheckRebase reports how far the fork's rebase onto the parent commit onto got, whoever ran it.
@@ -388,14 +410,14 @@ func RefuseDivergedFork(repo string, identity forkspace.Identity) error {
 	case requested && rebase.Cause == tasks.RebaseCauseSkipped:
 		// The loop refuses this before any agent runs; say it here, not after a "Started".
 		return SkippedCommitError(ws, identity.Name, candidate, rebase, nil, " No agent ran, and nothing was reviewed or merged.", head != candidate.Head)
-	case requested && rebase.Cause == tasks.RebaseCauseIsolatedConflict && head == candidate.Head:
+	case requested && tasks.IsolatedRebaseCause(rebase.Cause) && head == candidate.Head:
 		// No agent may rebase an isolated fork, so its loop has nothing to do: say so here, not after a
 		// "Started", and not with an exit a `&& coop fork merge` would take for success.
-		return IsolatedConflictLoopError(ws, identity.Name, rebase.Branch)
-	case requested && rebase.Cause != tasks.RebaseCauseIsolatedConflict:
+		return IsolatedRefusalLoopError(repo, ws, identity.Name, rebase)
+	case requested && !tasks.IsolatedRebaseCause(rebase.Cause):
 		return nil // the loop's to rebase or check, wherever the branch is
 	}
-	// An isolated fork's conflict record lets nothing build on the parent, so its branch is held to
+	// An isolated fork's refusal record lets nothing build on the parent, so its branch is held to
 	// the reviewed commit exactly as without one.
 	if forkCandidateDrift(ws, identity.Name, candidate, head, nil) != driftDiverged {
 		return nil

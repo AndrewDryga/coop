@@ -390,7 +390,7 @@ func TestLandAcceptsTheReviewedChangeOnAMovedBranch(t *testing.T) {
 // keep it from replaying published source, but not from skipping A, whose patch the branch has since
 // the fork was created, and then replaying B, which would put the line back on the branch. Nothing of
 // the branch may enter an isolated box, so the merge refuses with a person's two ways out and records
-// no rebase request for the loop.
+// it only for coop fork ls, never as a rebase for the loop.
 func TestIsolatedLandRefusesAChangeTheRebaseWouldAlter(t *testing.T) {
 	history := func(t *testing.T, ws, id string) {
 		for _, step := range []struct{ content, message string }{
@@ -455,11 +455,82 @@ func assertIsolatedChangedLandRefused(t *testing.T, c *Control, repo string, ide
 	if data, _ := os.ReadFile(filepath.Join(repo, "README.md")); len(data) != 0 || forkspace.GitOut(repo, "rev-parse", "HEAD") != parent {
 		t.Fatalf("the parent changed: README %q", data)
 	}
-	if _, ok, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || ok {
-		t.Fatalf("an isolated refusal recorded a rebase request: %v, %v", ok, err)
+	if rebase, ok, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || !ok || rebase.Cause != tasks.RebaseCauseIsolatedChanged || rebase.Onto != parent {
+		t.Fatalf("record after an isolated changed land = %+v, %v, %v; want the display-only isolated-changed cause", rebase, ok, err)
 	}
 	if _, pending, err := readIsolatedIntent(repo, identity); err != nil || pending {
 		t.Fatalf("land journal after the refusal = %v, %v", pending, err)
+	}
+	s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil))
+	if s.stateCell() != "changed" || !strings.Contains(s.driftLine(), "would land changed on main") ||
+		!strings.Contains(s.driftLine(), "coop fork rm "+identity.Name+" --force") || strings.Contains(s.driftLine(), "--loop") {
+		t.Fatalf("ls after an isolated changed land: state %q, %q; want changed with the merge's two ways out", s.stateCell(), s.driftLine())
+	}
+	// Like an isolated conflict, the record is no rebase request: a loop start on the reviewed commit
+	// gets the merge's refusal with no agent, and the fence admits no HEAD built on the parent.
+	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "would land changed on main") || !strings.Contains(err.Error(), "No agent ran") {
+		t.Fatalf("loop start after an isolated changed land = %v; want the refusal before any agent", err)
+	}
+}
+
+// coop fork ls shows an isolated fork whose merge would land a changed change as not mergeable only
+// while the branch is where that merge met it; the record admits nothing new through the ancestry
+// fence, and once the branch changes so the commits apply as reviewed, ls says ready and the merge
+// lands them and drops the record.
+func TestIsolatedChangedLandShowsInLsUntilTheBranchChanges(t *testing.T) {
+	history := func(t *testing.T, ws, id string) {
+		if err := os.WriteFile(filepath.Join(ws, "README.md"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "commit", "-qam", "remove the line")
+		if err := os.WriteFile(filepath.Join(ws, "README.md"), []byte("hi\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "commit", "-qam", "add the line back")
+		if err := os.WriteFile(filepath.Join(ws, "g.txt"), []byte("g\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "add", "g.txt")
+		git(t, ws, "commit", "-qm", "add g\n\nCoop-Task: "+id)
+	}
+	repo, ws, _, identity, c := prepareForkTaskCandidateHistory(t, "task-isolated-changed-ls", true, history, nil)
+	before := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "commit", "-qam", "main removes the line as well")
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil || !strings.Contains(err.Error(), "would land changed on main") {
+		t.Fatalf("isolated changed land = (%v, %v)", landed, err)
+	}
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "changed" {
+		t.Fatalf("ls after the refusal = %q, %q; want changed", s.stateCell(), s.driftLine())
+	}
+	// The fence admits nothing by the record (tasks' TestForkCandidateRebaseRequestAdmitsOnlyARebaseOntoItsParent):
+	// a branch rewritten off the reviewed commit is refused up front, as without it.
+	reviewed := forkspace.GitOut(ws, "rev-parse", "HEAD")
+	git(t, ws, "reset", "-q", "--hard", "HEAD~1")
+	isolatedTestCommit(t, ws, "other.txt", "other\n")
+	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "changed after its final review") {
+		t.Fatalf("loop start on a rewritten isolated fork = %v; want the up-front refusal", err)
+	}
+	git(t, ws, "reset", "-q", "--hard", reviewed)
+	// The person changes the branch so the reviewed commits apply as reviewed.
+	git(t, repo, "reset", "-q", "--hard", before)
+	isolatedTestCommit(t, repo, "later.txt", "later\n")
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "ready" || s.Drift != driftNone {
+		t.Fatalf("ls once the branch changed = %q, %q; want ready", s.stateCell(), s.driftLine())
+	}
+	// The loop agrees with ls: still no agent, but it says the branch changed and names the merge.
+	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "main has changed since") ||
+		!strings.Contains(err.Error(), "coop fork merge "+identity.Name) || !strings.Contains(err.Error(), "No agent ran") ||
+		strings.Contains(err.Error(), "Change main until") {
+		t.Fatalf("loop start once the branch changed = %v; want the changed-since answer naming the merge", err)
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); !landed || err != nil {
+		t.Fatalf("merge once the branch no longer changes the fork = (%v, %v)", landed, err)
+	}
+	if _, ok, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil || ok {
+		t.Fatalf("record after the land = %v, %v; want none", ok, err)
 	}
 }
 

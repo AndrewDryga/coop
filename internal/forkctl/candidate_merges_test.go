@@ -202,6 +202,10 @@ func TestIsolatedConflictNamesTheWaysOutAndShowsInLs(t *testing.T) {
 	git(t, repo, "add", "later.txt")
 	git(t, repo, "commit", "-qm", "the parent moves on without a conflict")
 	later := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if err := RefuseDivergedFork(repo, identity); err == nil || !strings.Contains(err.Error(), "conflicted with main at its last merge, and main has changed since") ||
+		!strings.Contains(err.Error(), "coop fork merge "+name) || !strings.Contains(err.Error(), "No agent ran") {
+		t.Fatalf("loop start once the branch changed = %v; want the changed-since answer naming the merge", err)
+	}
 	if landed, err := mergeOneForTest(t, c, repo, "", name, false); !landed || err != nil {
 		t.Fatalf("merge once the branch no longer conflicts = (%v, %v)", landed, err)
 	}

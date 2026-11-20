@@ -410,7 +410,8 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 	if err != nil {
 		return mergeOutcome{}, err
 	}
-	// The commits apply now, so an earlier merge's conflict record no longer holds.
+	// The commits apply now, so an earlier merge's conflict record no longer holds; a changed land is
+	// recorded again below if it still would not land as reviewed.
 	if reviewed, ok, err := tasks.ReadForkCandidate(repo, identity); err != nil {
 		return mergeOutcome{}, err
 	} else if ok {
@@ -467,6 +468,14 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 				[2]string{"Discard its work, return its tasks to the queue and start a new isolated fork from your branch:", "coop fork rm " + name + " --force"})
 		}
 		if err := isolatedLandedAsReviewed(name, gitBranch(repo), candidate); err != nil {
+			// Recorded only so ls says it would land changed; the loop and the fence act on nothing of it.
+			var changed *isolatedChangedError
+			if errors.As(err, &changed) {
+				if recordErr := tasks.RequestForkCandidateRebaseLocked(repo, taskCandidate, candidate.parent.Head, gitBranch(repo), tasks.RebaseCauseIsolatedChanged); recordErr != nil {
+					return mergeOutcome{}, errors.Join(recordErr, changed.refusal)
+				}
+				return mergeOutcome{}, changed.refusal
+			}
 			return mergeOutcome{}, err
 		}
 		original = &taskCandidate

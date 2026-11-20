@@ -40,7 +40,18 @@ const (
 	// only records the refusal for ls: nothing of the parent may enter an isolated box, so the loop
 	// runs no rebase for it and the fence admits nothing new.
 	RebaseCauseIsolatedConflict = "isolated-conflict"
+	// RebaseCauseIsolatedChanged: an isolated fork's reviewed commits apply to the parent but would
+	// not land exactly the reviewed change. Like an isolated conflict it only records the refusal for
+	// ls: the loop runs no rebase for it and the fence admits nothing new.
+	RebaseCauseIsolatedChanged = "isolated-changed"
 )
+
+// IsolatedRebaseCause reports whether cause is an isolated fork's merge refusal, which only records
+// what the last merge refused: no agent may rebase an isolated fork, so the loop runs nothing for it
+// and the ancestry fence admits nothing by it.
+func IsolatedRebaseCause(cause string) bool {
+	return cause == RebaseCauseIsolatedConflict || cause == RebaseCauseIsolatedChanged
+}
 
 // forkCandidateRebase records that a reviewed round's merge conflicted with the parent branch, so the
 // fork's loop rebases that round onto the parent's exact commit and reviews the result as the next
@@ -85,7 +96,7 @@ func validRebaseRequest(rebase forkCandidateRebase, identity forkspace.Identity)
 	return rebase.Version == forkCandidateRebaseVersion && rebase.Fork == identity && validAssignmentID(rebase.CandidateID) &&
 		rebase.Onto != "" && validCommitID(rebase.Onto) &&
 		rebase.Branch != "" && ValidTaskText(rebase.Branch, false, forkCandidateBranchLimit) && !rebase.CreatedAt.IsZero() &&
-		(rebase.Cause == RebaseCauseConflict || rebase.Cause == RebaseCauseChanged || rebase.Cause == RebaseCauseSkipped || rebase.Cause == RebaseCauseMerges || rebase.Cause == RebaseCauseIsolatedConflict) &&
+		(rebase.Cause == RebaseCauseConflict || rebase.Cause == RebaseCauseChanged || rebase.Cause == RebaseCauseSkipped || rebase.Cause == RebaseCauseMerges || IsolatedRebaseCause(rebase.Cause)) &&
 		(rebase.Verification == "") == (rebase.VerifiedTree == "") && validCommitID(rebase.VerifiedTree) &&
 		(rebase.Verification == "" || ValidTaskText(rebase.Verification, true, forkRebaseVerificationLimit))
 }
@@ -125,7 +136,7 @@ func buildsOnReviewedRound(repo string, manifest forkCandidateManifest, reviewed
 	}
 	rebase, err := openForkCandidateRebase(repo, manifest)
 	// A skipped commit's request waits for a person, not a rebase, so nothing may build on its onto.
-	if err != nil || rebase == nil || rebase.Cause == RebaseCauseSkipped || rebase.Cause == RebaseCauseIsolatedConflict || head == rebase.Onto {
+	if err != nil || rebase == nil || rebase.Cause == RebaseCauseSkipped || IsolatedRebaseCause(rebase.Cause) || head == rebase.Onto {
 		return false, err
 	}
 	if _, err := forkspace.GitOutErr(workspace, "merge-base", "--is-ancestor", rebase.Onto, head); err != nil {
