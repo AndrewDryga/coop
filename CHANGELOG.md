@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 15.2.1
 
 - **A restored checkpoint has its empty task queue folders again.** Restore dropped the empty
   state folders, which `coop tasks lint` flags. The refusal for a fork commit your branch already
