@@ -152,6 +152,10 @@ that cannot check the default branch right now answers 503; retry it with a new 
 <li><strong>Forks.</strong> A fork rebase request written for a merge-commit round, a changed land or a skipped
 commit is not readable by 15.0.0. Finish or discard such a fork before downgrading.</li>
 <li><strong><code>coop fork --loop</code> on a conflicted isolated fork exits 1.</strong> It used to exit 0.</li>
+<li><strong>A first Ctrl-C in <code>coop fork --loop</code> exits 130 after the running pass.</strong> It used to continue
+to the review. Run the loop again to review.</li>
+<li><strong>Session API, checkpoints.</strong> A restore whose upstream commit is not on the refreshed default
+branch now answers <code>409 invalid_session_state</code> instead of <code>503 repository_unavailable</code>.</li>
 </ul>
 </section><section class="doc-section reference-section" id="v1500-session-store-schema-27-has-no-way-back"><h2>v15.0.0: session store schema 27 has no way back</h2>
 <p>The worker&#39;s session store moves from schema 26 to 27 the first time this build opens it. Schema

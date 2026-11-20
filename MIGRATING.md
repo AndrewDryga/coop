@@ -19,6 +19,10 @@ Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 - **Forks.** A fork rebase request written for a merge-commit round, a changed land or a skipped
   commit is not readable by 15.0.0. Finish or discard such a fork before downgrading.
 - **`coop fork --loop` on a conflicted isolated fork exits 1.** It used to exit 0.
+- **A first Ctrl-C in `coop fork --loop` exits 130 after the running pass.** It used to continue
+  to the review. Run the loop again to review.
+- **Session API, checkpoints.** A restore whose upstream commit is not on the refreshed default
+  branch now answers `409 invalid_session_state` instead of `503 repository_unavailable`.
 
 ## v15.0.0: session store schema 27 has no way back
 

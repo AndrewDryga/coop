@@ -24,6 +24,21 @@
   exits 1 and names the two ways out. A shallow fork's merge refuses before printing a header,
   merge after a stopped review names a plain rerun, and `coop fork ls` no longer counts your
   branch's newer lines as the fork's removals after a failed merge gate.
+- **A first Ctrl-C in a fork loop does what its notice says.** The running rebase, check or
+  review pass finishes and keeps its result, then the loop stops before the next pass. Before, it
+  went on to the review or the rework.
+- **`coop fork ls` shows an isolated fork whose merge was refused.** A fork whose merge would not
+  land the reviewed change shows as changed, with the two ways out. An isolated fork of a shallow
+  clone no longer shows as changed, and a shallow file that cuts the fork's own commits is refused
+  by name instead of with a bare Git exit status.
+- **Fork runs no longer leave empty record folders behind**, and `coop fork rm` removes the
+  fork's continue note. A task attempt told to make its follow-up commit unbound is now told how
+  to finish.
+- **A worker prunes its publication journal.** A file goes once its publication has finished and
+  it is more than 30 days old.
+- **Restoring a checkpoint whose upstream commit left the default branch answers 409 at once.**
+  It used to answer a 503 that no retry could fix. A new idempotency key retries after the branch
+  holds the commit again.
 - **A checkpoint works after a rebase onto the job's newer default branch.** Capture refused
   such work when the newer branch held anything the credential scanner matched. It now leaves
   that branch's objects out, still scans everything it carries, and restore fetches them from the

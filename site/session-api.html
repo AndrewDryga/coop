@@ -1052,7 +1052,7 @@ refusal says which case it met, never what matched:</p>
 </tr>
 <tr>
 <td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>... a credential in an LFS file</code></td>
-<td>An LFS file matched. LFS files always travel.</td>
+<td>An LFS file matched. LFS files always travel, upstream ones too.</td>
 </tr>
 <tr>
 <td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>workspace checkpoint contains a credential</code></td>
@@ -1068,13 +1068,38 @@ refusal says which case it met, never what matched:</p>
 </tr>
 </tbody>
 </table></div></div>
+<p>LFS files stay in the checkpoint even when they come from the upstream commit. The worker&#39;s
+refresh downloads LFS content only for the job&#39;s selected commit and the current default head, not
+for every commit between the base and the upstream, so a restoring worker can&#39;t yet fetch and
+verify those files on its own. Leaving them out would also change what a worker advertising <code>checkpoint-upstream:1</code> must
+be able to restore.</p>
 <p>Restore refreshes the replacement session&#39;s source the same way and requires that exact commit to
-be in the default branch&#39;s history. If the refresh fails, the worker&#39;s copy lacks the commit, or
-the branch no longer contains it, restore answers <code>503 repository_unavailable</code> before it changes
-any file. A refused grant answers <code>409 invalid_session_state</code>, which a retry won&#39;t change. After a
-<code>503</code>, retry with a new idempotency key on the same unused replacement session. A restore that
-resumes after a crash already proved the commit before it started changing files, so it checks
-only the worker&#39;s own copy and doesn&#39;t need the network again.</p>
+be in the default branch&#39;s history. Every refusal comes before any file changes:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Workspace checkpoints table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Answer</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>503 repository_<wbr/>unavailable</code>, <code>... which could not be refreshed</code></td>
+<td>The default branch couldn&#39;t be checked right now, or the worker&#39;s copy couldn&#39;t be read. Retry with a new idempotency key on the same unused replacement session.</td>
+</tr>
+<tr>
+<td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>... which the job&#39;s default branch no longer holds ...</code></td>
+<td>The refresh worked, and the default branch no longer contains the commit, for example after a force-push. The refused key keeps this answer, and the replacement session stays unused. Retrying won&#39;t help while the branch lacks the commit. If the branch gets the commit back (a force-push undone, or a refresh that read a default head from just before a push), retry with a new idempotency key on the same session.</td>
+</tr>
+<tr>
+<td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>... the controller refuses read access ...</code> or <code>... has no job authority</code></td>
+<td>Asking again won&#39;t change that.</td>
+</tr>
+</tbody>
+</table></div></div>
+<p>A restore that resumes after a crash already proved the commit before it started changing files,
+so it checks only the worker&#39;s own copy and doesn&#39;t need the network again. If that copy lost the
+commit, it answers <code>503 repository_unavailable</code>.</p>
 <p>A worker that can restore a bundle naming <code>upstream_revision</code> advertises <code>checkpoint-upstream:1</code>.
 Restore such a checkpoint only on such a worker. The manifest is the bundle&#39;s first member, so a
 controller can read the field there, or it can place every restore on a worker with the
@@ -1794,6 +1819,16 @@ refused before it sees the branch at the candidate (permission revoked, the bran
 PR the App doesn&#39;t own appeared), the terminal code is <code>publication_push_outcome_unverified</code>. A
 refusal found after the worker saw its branch at the candidate keeps its own code. The commit may already have been pushed. Check the
 frozen intent and GitHub history manually; do not automatically retarget or start another fix.</p>
+<p>The journal is one small file per publish intent in the worker&#39;s <code>publication-results</code> folder. The
+service removes a file only when two things hold: the file was last written more than 30 days ago,
+and the publication operation with the intent&#39;s idempotency key has finished, as <code>succeeded</code> or
+<code>failed</code>. Operations are never deleted, and a finished one answers every later request with its key,
+including a controller&#39;s redelivery, from its saved result without running the push again, so the
+file can no longer change an answer. The 30 days cover a state folder restored from an older copy.
+A file that belongs to a running or unknown operation stays. A file that co:op can&#39;t read and
+verify stays for good, since it may be the only evidence of a push. A temporary file that an
+interrupted write left behind goes once it is 30 days old. The check reads only files older than 30
+days, and runs when the service starts and after each publication finishes.</p>
 <p>If a push or PR response is lost, co:op checks the remote result before retrying. A candidate
 can&#39;t be discarded while publication is active. Later edits in the model workspace can&#39;t change
 what gets published.</p>

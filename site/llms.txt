@@ -1468,7 +1468,9 @@ OPTIONS
   records and any empty record folders. A repository counts as gone only when
   it and its forks folder are missing but the folder that held it still holds
   other files and is on the same disk as the folder above it; any other
-  repository keeps its records. A repository you moved loses them.
+  repository keeps its records. A repository you moved loses them. Records
+  that name no repository, such as those of a fork that never took a task,
+  stay too: Coop cannot tell whose they are.
 
 EXAMPLES
   coop fork rm myfork
