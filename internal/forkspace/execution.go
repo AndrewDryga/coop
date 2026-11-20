@@ -495,16 +495,16 @@ func noteExecution(repo, folder, id string) func() {
 	if !validExecutionID(id) {
 		return func() {}
 	}
-	root, err := OpenStateRoot(repo, folder, true)
+	err := createInStateFolder(repo, folder, func(root *os.Root) error {
+		f, err := root.OpenFile(id, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	})
 	if err != nil {
 		return func() {}
 	}
-	defer root.Close()
-	f, err := root.OpenFile(id, os.O_WRONLY|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return func() {}
-	}
-	_ = f.Close()
 	return func() { forgetExecutionNote(repo, folder, id) }
 }
 
@@ -523,8 +523,9 @@ func forgetExecutionNote(repo, folder, id string) {
 	if err != nil {
 		return
 	}
-	defer root.Close()
 	_ = root.Remove(id)
+	_ = root.Close()
+	pruneEmptyStateFolders(repo, folder)
 }
 
 // BeginExecution publishes one execution before its sandbox starts. The caller must EndExecution
@@ -599,28 +600,28 @@ func BeginExecution(repo string, spec ExecutionSpec) (ExecutionRecord, error) {
 	if err != nil {
 		return ExecutionRecord{}, err
 	}
-	root, err := openExecutionRegistry(repo, true)
-	if err != nil {
-		return ExecutionRecord{}, err
-	}
-	defer root.Close()
 	name := id + ".json"
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	err = createInStateFolder(repo, executionFolder, func(root *os.Root) error {
+		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return err
+		}
+		writeErr := error(nil)
+		if _, err := f.Write(append(body, '\n')); err != nil {
+			writeErr = err
+		} else {
+			writeErr = f.Sync()
+		}
+		if err := f.Close(); err != nil {
+			writeErr = errors.Join(writeErr, err)
+		}
+		if writeErr != nil {
+			_ = root.Remove(name)
+		}
+		return writeErr
+	})
 	if err != nil {
 		return ExecutionRecord{}, err
-	}
-	writeErr := error(nil)
-	if _, err := f.Write(append(body, '\n')); err != nil {
-		writeErr = err
-	} else {
-		writeErr = f.Sync()
-	}
-	if err := f.Close(); err != nil {
-		writeErr = errors.Join(writeErr, err)
-	}
-	if writeErr != nil {
-		_ = root.Remove(name)
-		return ExecutionRecord{}, writeErr
 	}
 	return record, nil
 }
@@ -673,6 +674,7 @@ func EndExecution(repo string, expected ExecutionRecord) error {
 	closeErr := root.Close()
 	forgetExecutionNote(repo, launchHolderFolder, expected.ID)
 	forgetExecutionNote(repo, launchWaiterFolder, expected.ID)
+	pruneEmptyStateFolders(repo, executionFolder)
 	return errors.Join(removeErr, closeErr)
 }
 

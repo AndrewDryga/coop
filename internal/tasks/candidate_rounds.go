@@ -364,6 +364,7 @@ func writeForkCandidateManifest(repo string, manifest forkCandidateManifest) err
 	if len(body)+1 > forkCandidateLimit {
 		return errors.New("fork candidate manifest exceeds its size limit")
 	}
+	// The fork's lifecycle lock file keeps the records folder non-empty, so no release removes it.
 	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
 		return err

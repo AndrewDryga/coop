@@ -17,8 +17,52 @@ import (
 // os.Root without following a link at any step: the folder is opened by descriptor first (made,
 // owner-only, when create), and the root must then be that same folder, so every open, rename and
 // removal through it stays there even if a name on the way is swapped afterwards. Without create, a
-// missing folder is os.ErrNotExist.
-func OpenStateRoot(repo, sub string, create bool) (*os.Root, error) {
+// missing folder is os.ErrNotExist. With create, a folder a release removed while it was being
+// opened (pruneEmptyStateFolders) is opened again: it is gone, or another writer made a new one at
+// its name.
+func OpenStateRoot(repo, sub string, create bool) (root *os.Root, err error) {
+	if !create {
+		return openStateRoot(repo, sub, false)
+	}
+	for range stateFolderAttempts {
+		if root, err = openStateRoot(repo, sub, true); !stateFolderRemoved(err) {
+			return root, err
+		}
+	}
+	return nil, stateFolderGone(repo, err)
+}
+
+// errStatePathChanged is a folder of the fork records that was another folder by the time it was
+// opened by name: removed while empty and made again by another writer, or swapped by someone else.
+var errStatePathChanged = errors.New("fork state path changed while opening")
+
+// stateFolderRemoved says err is what a writer gets when a release removed its empty folder under it.
+func stateFolderRemoved(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, errStatePathChanged)
+}
+
+// stateFolderGone is the plain answer when a folder kept being removed under a writer after every
+// attempt: other Coop processes ending their runs remove it once it is empty.
+func stateFolderGone(repo string, err error) error {
+	if gone := (*stateFolderGoneError)(nil); errors.As(err, &gone) {
+		return gone
+	}
+	return &stateFolderGoneError{dir: StateDir(repo), err: err}
+}
+
+type stateFolderGoneError struct {
+	dir string
+	err error
+}
+
+func (e *stateFolderGoneError) Error() string {
+	return "Coop's fork records folder " + e.dir + " changed under Coop " + fmt.Sprint(stateFolderAttempts) +
+		" times while it wrote there. Other Coop runs that end at the same moment remove it when it is empty. Run the command again."
+}
+
+func (e *stateFolderGoneError) Unwrap() error { return e.err }
+
+func openStateRoot(repo, sub string, create bool) (*os.Root, error) {
 	dir, err := openStateFolder(repo, sub, create)
 	if err != nil {
 		return nil, err
@@ -35,7 +79,7 @@ func OpenStateRoot(repo, sub string, create bool) (*os.Root, error) {
 	}
 	if got, err := root.Stat("."); err != nil || !os.SameFile(want, got) {
 		_ = root.Close()
-		return nil, errors.Join(err, fmt.Errorf("fork state path %q changed while opening", path))
+		return nil, errors.Join(err, fmt.Errorf("%w: %q", errStatePathChanged, path))
 	}
 	return root, nil
 }

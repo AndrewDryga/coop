@@ -39,7 +39,11 @@ func TestLaunchWaitsShowsOnlyTheLiveWaitsOfAFork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The ended waits took their folder with them, so the dead process's note makes it again.
 	dead := filepath.Join(StateDir(repo), forkLaunchWaitFolder, "dead.json")
+	if err := os.MkdirAll(filepath.Dir(dead), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(dead, body, 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -2,8 +2,8 @@
 name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
-sources: [internal/forkspace/state_root.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go, internal/forkctl/rm.go, internal/forkctl/worktree_clean.go, internal/forkspace/discard_stage.go, internal/ui/confirm.go, internal/forkspace/gone_records.go, internal/forkctl/gone_records.go]
-updated: 2026-11-19
+sources: [internal/forkspace/state_root.go, internal/forkspace/reservation.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go, internal/forkctl/rm.go, internal/forkctl/worktree_clean.go, internal/forkspace/discard_stage.go, internal/ui/confirm.go, internal/forkspace/gone_records.go, internal/forkctl/gone_records.go]
+updated: 2026-11-20
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
 folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
@@ -206,8 +206,22 @@ to a process or a container, or prints, it is supervision.
   mode. A fork's anchor is a hard link, so a fork needs the forks folder and the private folder on
   one disk (`requireOneDisk` refuses otherwise, naming both).
 - No record stores the project's path, so a project deleted without `coop fork rm` keeps its
-  records folder forever. Every execution makes `executions/` (a workspace reservation makes
-  `reservations/`) and removes only its own file, so most leftovers are folders with no file at all:
+  records folder forever. Builds before 2026-11-20 made `executions/` for every execution (a
+  workspace reservation `reservations/`, a launch note `launch-holders/`/`launch-waiters/`, a
+  waiting fork box `fork-launch-waits/`) and removed only their own file, so most leftovers are
+  folders with no file at all. Now each end (`EndExecution`, `forgetExecutionNote`,
+  `RemoveWorkspaceReservationIfMatchesLocked`, `NoteLaunchWait`'s done and `LaunchWaits` removing a
+  dead note) runs
+  `pruneEmptyStateFolders`: rmdir of its subfolder, then of the project's records folder, each only
+  when empty, so a lock file (any fork's lifecycle lock) keeps the records folder. No single lock
+  covers these folders (each fork's records use its own lifecycle lock, a plain loop's none), so the
+  writers retry instead: making a file in a removed folder fails with ENOENT on Linux and macOS
+  (checked 2026-11-20), and `createInStateFolder`, `createStateFile` and `OpenStateRoot(create)`
+  open or make the folder again, up to three times, also when it was made again at its name between
+  the descriptor open and the by-name open (`errStatePathChanged`); after that the writer gets a
+  plain "run the command again" (`stateFolderGoneError`). Writers in the records folder itself
+  (`replaceStateFile`, `mkdirStateTemp`, the candidate writers) rely on the fork's lifecycle lock
+  file, which they hold, keeping it non-empty. Measured before that:
   on 2026-11-19 this Mac held 3665 folders (3.0 MB), 3554 of them without a single file, 49 provably
   of deleted /private/tmp projects (1.2 MB) and 58 whose project no record names (mostly lock files
   only). `coop fork rm --gone` (`forkspace.GoneForkRecords`/`RemoveGoneForkRecords`,
@@ -291,6 +305,10 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-20 — an ended execution, launch note or reservation now removes its empty folder and an
+  empty project records folder (rmdir only; writers make a removed folder again on ENOENT), so new
+  runs leave no empty folders; `rm --gone` still sweeps the old ones (task
+  2026-11-20-stop-every-fork-execution-and-reservation-leavin).
 - 2026-11-19 — records of deleted projects were kept forever; measured, and `coop fork rm --gone`
   added as the person's command that lists and removes them (task
   2026-11-19-clean-up-fork-records-whose-repository-is-gone).

@@ -627,6 +627,8 @@ func (c *Control) gateIsolatedCandidate(repo, img string, candidate isolatedCand
 
 // mkdirStateTemp makes a new owner-only folder in the fork records through that folder's own
 // handle, never by name, and returns its path.
+// The fork's lifecycle lock file, which the caller holds, keeps the records folder non-empty, so no
+// release removes it (pruneEmptyStateFolders) before the file is made.
 func mkdirStateTemp(repo, prefix string) (string, error) {
 	state, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {

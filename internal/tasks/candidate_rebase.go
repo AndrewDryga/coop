@@ -190,6 +190,7 @@ func writeForkCandidateRebase(repo string, rebase forkCandidateRebase) error {
 	if err != nil {
 		return err
 	}
+	// The fork's lifecycle lock file keeps the records folder non-empty, so no release removes it.
 	root, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
 		return err
@@ -235,6 +236,7 @@ func CloseForkCandidateRebaseLocked(repo string, candidate ForkCandidate) error 
 	if open, err := openForkCandidateRebase(repo, manifest); err != nil || open == nil {
 		return err
 	}
+	// The fork's lifecycle lock file keeps the records folder non-empty, so no release removes it.
 	root, err := forkspace.OpenStateRoot(repo, "", true)
 	if err != nil {
 		return err

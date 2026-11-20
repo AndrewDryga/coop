@@ -2,6 +2,7 @@ package forkspace
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"slices"
@@ -36,19 +37,20 @@ func NoteLaunchWait(repo, fork string, boxes []string) func() {
 	if !ValidExistingName(fork) || err != nil {
 		return func() {}
 	}
-	root, err := OpenStateRoot(repo, forkLaunchWaitFolder, true)
-	if err != nil {
-		return func() {}
-	}
-	defer root.Close()
 	name := randid.Hex(16) + ".json"
-	f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	err = createInStateFolder(repo, forkLaunchWaitFolder, func(root *os.Root) error {
+		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return err
+		}
+		_, writeErr := f.Write(body)
+		if closeErr := f.Close(); writeErr != nil || closeErr != nil {
+			_ = root.Remove(name)
+			return errors.Join(writeErr, closeErr)
+		}
+		return nil
+	})
 	if err != nil {
-		return func() {}
-	}
-	_, writeErr := f.Write(body)
-	if closeErr := f.Close(); writeErr != nil || closeErr != nil {
-		_ = root.Remove(name)
 		return func() {}
 	}
 	return func() {
@@ -56,8 +58,9 @@ func NoteLaunchWait(repo, fork string, boxes []string) func() {
 		if err != nil {
 			return
 		}
-		defer root.Close()
 		_ = root.Remove(name)
+		_ = root.Close()
+		pruneEmptyStateFolders(repo, forkLaunchWaitFolder)
 	}
 }
 
@@ -75,6 +78,12 @@ func LaunchWaits(repo, fork string) (boxes []string, waiting bool) {
 	}
 	names, _ := dir.Readdirnames(launchWaitScan)
 	_ = dir.Close()
+	pruned := false
+	defer func() {
+		if pruned {
+			pruneEmptyStateFolders(repo, forkLaunchWaitFolder)
+		}
+	}()
 	for _, name := range names {
 		f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 		if err != nil {
@@ -89,6 +98,7 @@ func LaunchWaits(repo, fork string) (boxes []string, waiting bool) {
 		switch identity := ProcessIdentityOf(note.PID, note.Token); {
 		case identity.ProvesGone():
 			_ = root.Remove(name)
+			pruned = true
 		case identity == ProcessIdentityMatch && note.Fork == fork:
 			waiting = true
 			for _, box := range note.Boxes {

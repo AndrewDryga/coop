@@ -127,11 +127,12 @@ func ReserveWorkspaceLocked(repo string, record WorkspaceReservation) error {
 	if err := ValidateGenerationWorkspace(repo, record.Fork); err != nil {
 		return err
 	}
-	root, err := OpenStateRoot(repo, reservationFolder, true)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
+	return createInStateFolder(repo, reservationFolder, func(root *os.Root) error {
+		return publishWorkspaceReservation(root, record)
+	})
+}
+
+func publishWorkspaceReservation(root *os.Root, record WorkspaceReservation) error {
 	name := reservationName(record.Fork)
 	if current, err := readWorkspaceReservationFile(root, name); err == nil {
 		if reflect.DeepEqual(current, record) || sameWorkspaceReservationOwner(current, record) {
@@ -269,6 +270,7 @@ func RemoveWorkspaceReservationIfMatchesLocked(repo string, expected WorkspaceRe
 	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	pruneEmptyStateFolders(repo, reservationFolder)
 	return nil
 }
 

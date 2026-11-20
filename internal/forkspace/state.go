@@ -504,13 +504,76 @@ func openStateFile(dirfd int, name, path string, flag int) (*os.File, error) {
 
 // createStateFile opens base in repo's fork records folder through openStateDir's handle, creating
 // it if it is missing. It is an owner-only regular file, or refused as OpenStateFile refuses a reader's.
-func createStateFile(repo, base string, flag int) (*os.File, error) {
-	dir, err := openStateDir(repo)
-	if err != nil {
-		return nil, err
+// The folder is made again when a release removed it, empty, between opening and creating
+// (pruneEmptyStateFolders).
+func createStateFile(repo, base string, flag int) (f *os.File, err error) {
+	for range stateFolderAttempts {
+		var dir *os.File
+		if dir, err = openStateDir(repo); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if err == nil {
+			f, err = openStateFile(int(dir.Fd()), base, filepath.Join(dir.Name(), base), flag|os.O_CREATE)
+			_ = dir.Close()
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return f, err
+		}
 	}
-	defer dir.Close()
-	return openStateFile(int(dir.Fd()), base, filepath.Join(dir.Name(), base), flag|os.O_CREATE)
+	return nil, stateFolderGone(repo, err)
+}
+
+// stateFolderAttempts bounds how often a writer makes a record folder again that a release removed
+// under it. Each removal needs the folder empty again, so a second attempt all but always succeeds.
+const stateFolderAttempts = 3
+
+// createInStateFolder runs create in repo's record folder sub, made if missing, and again in a new
+// one when a release removed the folder, empty, before create made its file there: making a file in
+// a removed folder fails with ENOENT on Linux and macOS, so nothing is ever written into one.
+func createInStateFolder(repo, sub string, create func(*os.Root) error) (err error) {
+	for range stateFolderAttempts {
+		var root *os.Root
+		if root, err = OpenStateRoot(repo, sub, true); err == nil {
+			err = create(root)
+			_ = root.Close()
+		}
+		if !stateFolderRemoved(err) {
+			return err
+		}
+	}
+	return stateFolderGone(repo, err)
+}
+
+// pruneEmptyStateFolders removes repo's record folders subs, then repo's record folder itself, each
+// only when it holds nothing, so an ended execution or reservation leaves no empty folder behind.
+// rmdir removes an empty folder or nothing: a record, and a lock file another process may hold,
+// always stay. No one lock covers these folders (each fork's records take its own lifecycle lock, a
+// plain loop's executions none), so the writers that make them retry instead
+// (createInStateFolder, createStateFile, OpenStateRoot). A failure only leaves a folder behind.
+func pruneEmptyStateFolders(repo string, subs ...string) {
+	project, err := openExistingStateDir(repo)
+	if err != nil {
+		return
+	}
+	for _, sub := range subs {
+		_ = unix.Unlinkat(int(project.Fd()), sub, unix.AT_REMOVEDIR)
+	}
+	_ = project.Close()
+	root, err := PrivateStateRoot()
+	if err != nil {
+		return
+	}
+	base, err := safefile.OpenRoot(root)
+	if err != nil {
+		return
+	}
+	defer base.Close()
+	forks, err := openStateChild(base, filepath.Join(root, "forks"), "forks", false)
+	if err != nil {
+		return
+	}
+	defer forks.Close()
+	_ = unix.Unlinkat(int(forks.Fd()), forkRecordsKey(repo), unix.AT_REMOVEDIR)
 }
 
 // OpenLog opens a fork's log for a loop's output. Earlier runs' output stays, and a run that starts
@@ -616,6 +679,8 @@ func WriteWorkerState(repo, name string, state WorkerState) error {
 
 // replaceStateFile atomically replaces the file base in repo's fork records with data: it is written
 // under another name, renamed into place and, on failure, removed, all through openStateDir's handle.
+// The fork's lifecycle lock file, which the caller holds, keeps the records folder non-empty, so no
+// release removes it (pruneEmptyStateFolders) before the file is made.
 func replaceStateFile(repo, base string, data []byte) error {
 	dir, err := openStateDir(repo)
 	if err != nil {
