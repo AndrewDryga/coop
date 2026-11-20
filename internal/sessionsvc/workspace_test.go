@@ -334,8 +334,13 @@ func TestSessionWorkspaceRetryChecksOwnerBeforeHydration(t *testing.T) {
 					current.OwnerStoreID = ""
 					var body []byte
 					body, err = json.Marshal(current)
+					// Removing the reservation above removed its folder too, once empty.
+					reservations := filepath.Join(forkspace.StateDir(repo), "reservations")
 					if err == nil {
-						err = os.WriteFile(filepath.Join(forkspace.StateDir(repo), "reservations", created.Name+"."+string(created.Fork.Generation)+".json"), body, 0o600)
+						err = os.MkdirAll(reservations, 0o700)
+					}
+					if err == nil {
+						err = os.WriteFile(filepath.Join(reservations, created.Name+"."+string(created.Fork.Generation)+".json"), body, 0o600)
 					}
 				} else {
 					err = forkspace.ReserveWorkspaceLocked(repo, current)
