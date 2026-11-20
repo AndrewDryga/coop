@@ -41,8 +41,8 @@ func (s *Service) pinCurrentSessionParent(ctx context.Context, sess session.Sess
 		return emptyJobCommit, nil // sessionExecution verified the private empty baseline.
 	}
 	if err != nil {
-		return "", &session.Error{Code: session.CodeRepositoryUnavailable,
-			Detail: "current default revision requires a controller-authorized source refresh"}
+		// A job document that does not decode is final, as on restore (fetchCheckpointUpstream).
+		return "", &session.Error{Code: session.CodeInvalidSessionState, Detail: "session has no job authority"}
 	}
 	return s.refreshSessionSource(ctx, job, execution.Repository)
 }

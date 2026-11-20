@@ -2,6 +2,7 @@ package sessionsvc
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -202,7 +203,11 @@ func initializeCheckpointRepository(ctx context.Context, source, repository, bas
 // fetchCheckpointUpstream obtains the upstream commit a checkpoint left out, from this worker's
 // own copy of the job's source and only after the controller-granted refresh proves the commit is
 // in the source's default history now. A commit the source no longer has, or a refresh that
-// cannot run, refuses the restore before any workspace file changes.
+// cannot run, refuses the restore before any workspace file changes. Only a refresh that could
+// not run, or a copy Git could not read, is worth a retry: once the refresh brought the current
+// default into the copy (full history, never shallow), a commit missing from it or outside the
+// default's history is gone from that branch, and retrying would only spend another refresh until
+// the branch holds it again; then a new key restores into the same unused session.
 //
 // A resumed restore (recovering) proved all of that before its operation was marked running, and
 // the journaled request pins the same bundle. It checks only that the private copy still holds the
@@ -215,6 +220,13 @@ func (s *Service) fetchCheckpointUpstream(ctx context.Context, sess session.Sess
 		}
 		return &session.Error{Code: session.CodeRepositoryUnavailable,
 			Detail: "checkpoint needs upstream commit " + upstream + " from the job's source, " + why}
+	}
+	gone := func(why string) error {
+		if recovering {
+			return unavailable(why)
+		}
+		return &session.Error{Code: session.CodeInvalidSessionState,
+			Detail: "checkpoint needs upstream commit " + upstream + ", which the job's default branch no longer holds; this key keeps that answer, and a new key can restore into the same unused session once the branch holds the commit again"}
 	}
 	pairs := [][2]string{{base, upstream}}
 	if !recovering {
@@ -233,22 +245,44 @@ func (s *Service) fetchCheckpointUpstream(ctx context.Context, sess session.Sess
 		}
 		pairs = append(pairs, [2]string{upstream, head})
 	}
+	// Only git's own clean "no such object" answer is final; a lookup that failed for any other
+	// reason (no git, a full descriptor table, a corrupt pack) proves nothing about the source.
+	if checkpointCommitMissing(ctx, sess.Repository, upstream) {
+		return gone("which does not have it")
+	}
 	if actual, err := sessionWorkspaceCommitContext(ctx, sess.Repository, upstream); err != nil || actual != upstream {
-		return unavailable("which does not have it")
+		return unavailable("whose copy could not be read")
 	}
 	for _, pair := range pairs {
 		check, err := forkspace.GitCommandWithEnv(ctx, sess.Repository, sessionCompanionGitEnv(), "merge-base", "--is-ancestor", pair[0], pair[1])
 		if err != nil {
 			return unavailable("whose copy could not be read")
 		}
-		if check.Run() != nil {
-			return unavailable("whose default history no longer contains it")
+		var exit *exec.ExitError
+		if err := check.Run(); errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return gone("whose default history no longer contains it")
+		} else if err != nil {
+			return unavailable("whose copy could not be read")
 		}
 	}
 	if err := forkspace.GitFetchPinnedContext(ctx, sess.Repository, repository, upstream); err != nil {
 		return unavailable("whose copy could not be read")
 	}
 	return nil
+}
+
+// checkpointCommitMissing reports git's answer for an object the repository does not hold:
+// `cat-file -e` exits 1 and prints nothing. A failed start, a signal, exit 128 or any message
+// (a corrupt pack, an unreadable object) is not that answer.
+func checkpointCommitMissing(ctx context.Context, repository, commit string) bool {
+	check, err := forkspace.GitCommandWithEnv(ctx, repository, append(sessionCompanionGitEnv(), "LC_ALL=C"), "cat-file", "-e", commit)
+	if err != nil {
+		return false
+	}
+	var stderr bytes.Buffer
+	check.Stdout, check.Stderr = nil, &stderr
+	var exit *exec.ExitError
+	return errors.As(check.Run(), &exit) && exit.ExitCode() == 1 && stderr.Len() == 0 && ctx.Err() == nil
 }
 
 func validateCheckpointRepository(ctx context.Context, repository string, checkpoint workerproto.WorkspaceCheckpoint, manifest workerproto.WorkspaceCheckpointBundleManifest) error {

@@ -6,8 +6,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -281,6 +283,11 @@ func TestRebasedCheckpointRestoreRefusesAnUnprovenUpstream(t *testing.T) {
 			}
 			worker := c.freshWorker(t)
 			code := session.CodeRepositoryUnavailable
+			if tc == "missing" || tc == "rewritten" {
+				// The refresh worked and the default provably lacks the commit: a retry would only
+				// spend another controller refresh, so the answer is final.
+				code = session.CodeInvalidSessionState
+			}
 			switch tc {
 			case "refresh-fails":
 				worker.sourceRefresher = func(context.Context, string, workerproto.JobSource, string) (string, error) {
@@ -295,9 +302,13 @@ func TestRebasedCheckpointRestoreRefusesAnUnprovenUpstream(t *testing.T) {
 				rewrite() // the staged copy still holds the commit, but the default no longer does
 			}
 			target := c.target(t, worker, tc+"-target", offer)
+			refreshes := *c.refresh
 			_, err := restoreCheckpoint(worker, tc+"-restore", target, captured, bundle)
 			if session.CodeOf(err) != code || !strings.Contains(err.Error(), upstream) {
 				t.Fatalf("unproven upstream restore = %v, want %s", err, code)
+			}
+			if (tc == "missing" || tc == "rewritten") && (!strings.Contains(err.Error(), "no longer holds") || *c.refresh != refreshes+1) {
+				t.Fatalf("a commit the default lacks answered %v after %d refreshes, want a final answer after one", err, *c.refresh-refreshes)
 			}
 			if strings.Contains(err.Error(), "ghp_") {
 				t.Fatal("restore refusal repeated credential-shaped content")
@@ -317,6 +328,94 @@ func TestRebasedCheckpointRestoreRefusesAnUnprovenUpstream(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A session without a usable job authority cannot have its default checked. Capture and restore
+// both answer 409 there and name the cause, since asking again cannot give the session a job.
+func TestRebasedCheckpointWithoutJobAuthorityAnswers409(t *testing.T) {
+	t.Run("capture", func(t *testing.T) {
+		c := newUpstreamCheckpointCase(t, "offer:no-job-capture")
+		c.rebaseOnUpstream(t, false)
+		clearHistoricalJob(t, c.service.Store(), c.source.ID)
+		_, err := c.capture(t, "no-job-capture")
+		if session.CodeOf(err) != session.CodeInvalidSessionState || !strings.Contains(err.Error(), "cannot be checked for it: session has no durable job authority") ||
+			strings.Contains(err.Error(), "ghp_") {
+			t.Fatalf("capture without a job authority = %v, want 409", err)
+		}
+	})
+	t.Run("restore", func(t *testing.T) {
+		c := newUpstreamCheckpointCase(t, "offer:no-job-restore")
+		c.rebaseOnUpstream(t, false)
+		captured, bundle := c.captureBundle(t, "no-job-restore-capture")
+		worker := c.freshWorker(t)
+		target := c.target(t, worker, "no-job-restore-target", "offer:no-job-restore")
+		clearHistoricalJob(t, worker.Store(), target.ID)
+		_, err := restoreCheckpoint(worker, "no-job-restore", target, captured, bundle)
+		if session.CodeOf(err) != session.CodeInvalidSessionState || !strings.Contains(err.Error(), "but the session has no job authority") {
+			t.Fatalf("restore without a job authority = %v, want 409", err)
+		}
+	})
+}
+
+// The final answer for a commit the default lost leaves the replacement session unused: once the
+// branch holds the commit again (an accidental force-push undone), a new idempotency key restores
+// into the same session, while the refused key keeps its answer.
+func TestRestoreAfterTheDefaultRegainsTheUpstreamTakesANewKey(t *testing.T) {
+	c := newUpstreamCheckpointCase(t, "offer:regained")
+	upstream, _ := c.rebaseOnUpstream(t, false)
+	captured, bundle := c.captureBundle(t, "regained-capture")
+	worker := c.freshWorker(t)
+	target := c.target(t, worker, "regained-target", "offer:regained")
+	sessionWorkspaceGit(t, c.upstream, "reset", "-q", "--hard", c.base)
+	c.advanceUpstream(t, "other.txt", "other\n", "accidental force-push")
+	if _, err := restoreCheckpoint(worker, "regained-restore", target, captured, bundle); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("restore after the force-push = %v, want 409", err)
+	}
+	unused, err := worker.Store().GetSession(context.Background(), target.ID)
+	if err != nil || unused.Revision != target.Revision || gitOut(target.Workspace, "rev-parse", "HEAD") != c.base {
+		t.Fatalf("the refused restore changed the session: revision %d (was %d), %v", unused.Revision, target.Revision, err)
+	}
+	sessionWorkspaceGit(t, c.upstream, "reset", "-q", "--hard", upstream)
+	if _, err := restoreCheckpoint(worker, "regained-restore", target, captured, bundle); session.CodeOf(err) != session.CodeInvalidSessionState {
+		t.Fatalf("the refused key answered %v, want its saved 409", err)
+	}
+	restored, err := restoreCheckpoint(worker, "regained-restore-again", target, captured, bundle)
+	if err != nil || restored.ID != target.ID || gitOut(target.Workspace, "rev-parse", "HEAD") != captured.Checkpoint.CommittedRevision {
+		t.Fatalf("a new key after the default regained the commit = %v", err)
+	}
+}
+
+// Only git's clean "no such object" answer is final. A lookup git could not answer, here a git
+// that fails with a message, stays the retryable 503.
+func TestRestoreUpstreamLookupFailureStaysRetryable(t *testing.T) {
+	c := newUpstreamCheckpointCase(t, "offer:lookup")
+	c.rebaseOnUpstream(t, false)
+	captured, bundle := c.captureBundle(t, "lookup-capture")
+	sessionWorkspaceGit(t, c.upstream, "reset", "-q", "--hard", c.base)
+	c.advanceUpstream(t, "other.txt", "other\n", "rewritten default")
+	worker := c.freshWorker(t) // stages a source that never had the upstream commit
+	target := c.target(t, worker, "lookup-target", "offer:lookup")
+	missing := strings.Repeat("1", 40)
+	if !checkpointCommitMissing(context.Background(), c.upstream, missing) {
+		t.Fatal("git's own answer for a missing commit did not read as missing")
+	}
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	script := fmt.Appendf(nil, "#!/bin/sh\nfor arg in \"$@\"; do [ \"$arg\" = cat-file ] && { echo 'fatal: packfile is corrupt' >&2; exit 128; }; done\nexec %q \"$@\"\n", realGit)
+	if err := os.WriteFile(filepath.Join(bin, "git"), script, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err = restoreCheckpoint(worker, "lookup-restore", target, captured, bundle)
+	if session.CodeOf(err) != session.CodeRepositoryUnavailable || !strings.Contains(err.Error(), "whose copy could not be read") {
+		t.Fatalf("a failed lookup answered %v, want 503", err)
+	}
+	if checkpointCommitMissing(context.Background(), c.upstream, missing) {
+		t.Fatal("a failing git read as a missing commit")
 	}
 }
 

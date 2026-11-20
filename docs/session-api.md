@@ -924,18 +924,29 @@ refusal says which case it met, never what matched:
 | Answer | Meaning |
 | --- | --- |
 | `409 invalid_session_state`, `... a credential that neither the session base nor the job's default branch holds` | The Git content is the task's own, or comes from one of the sources above. Fix the content. |
-| `409 invalid_session_state`, `... a credential in an LFS file` | An LFS file matched. LFS files always travel. |
+| `409 invalid_session_state`, `... a credential in an LFS file` | An LFS file matched. LFS files always travel, upstream ones too. |
 | `409 invalid_session_state`, `workspace checkpoint contains a credential` | An untracked file matched. |
 | `503 repository_unavailable`, `... could not be refreshed ...` | The default branch couldn't be checked right now. Retry with a new idempotency key. |
 | `409 invalid_session_state`, `... cannot be checked for it: ...` | The controller refuses read access to the job's repository, or the session no longer matches its job. Asking again won't change that. |
 
+LFS files stay in the checkpoint even when they come from the upstream commit. The worker's
+refresh downloads LFS content only for the job's selected commit and the current default head, not
+for every commit between the base and the upstream, so a restoring worker can't yet fetch and
+verify those files on its own. Leaving them out would also change what a worker advertising `checkpoint-upstream:1` must
+be able to restore.
+
 Restore refreshes the replacement session's source the same way and requires that exact commit to
-be in the default branch's history. If the refresh fails, the worker's copy lacks the commit, or
-the branch no longer contains it, restore answers `503 repository_unavailable` before it changes
-any file. A refused grant answers `409 invalid_session_state`, which a retry won't change. After a
-`503`, retry with a new idempotency key on the same unused replacement session. A restore that
-resumes after a crash already proved the commit before it started changing files, so it checks
-only the worker's own copy and doesn't need the network again.
+be in the default branch's history. Every refusal comes before any file changes:
+
+| Answer | Meaning |
+| --- | --- |
+| `503 repository_unavailable`, `... which could not be refreshed` | The default branch couldn't be checked right now, or the worker's copy couldn't be read. Retry with a new idempotency key on the same unused replacement session. |
+| `409 invalid_session_state`, `... which the job's default branch no longer holds ...` | The refresh worked, and the default branch no longer contains the commit, for example after a force-push. The refused key keeps this answer, and the replacement session stays unused. Retrying won't help while the branch lacks the commit. If the branch gets the commit back (a force-push undone, or a refresh that read a default head from just before a push), retry with a new idempotency key on the same session. |
+| `409 invalid_session_state`, `... the controller refuses read access ...` or `... has no job authority` | Asking again won't change that. |
+
+A restore that resumes after a crash already proved the commit before it started changing files,
+so it checks only the worker's own copy and doesn't need the network again. If that copy lost the
+commit, it answers `503 repository_unavailable`.
 
 A worker that can restore a bundle naming `upstream_revision` advertises `checkpoint-upstream:1`.
 Restore such a checkpoint only on such a worker. The manifest is the bundle's first member, so a
