@@ -1343,9 +1343,11 @@ EXAMPLES
   coop fork review myfork
   coop fork merge myfork
   coop fork merge --all</code></pre></div></section><section class="doc-section reference-section" id="coop-fork-rm-delete-a-fork-and-its-local-work"><h2>coop fork rm: delete a fork and its local work</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork rm: delete a fork and its local work code example" tabindex="0"><code>Usage: coop fork rm &lt;name&gt; [&lt;options&gt;]
+       coop fork rm --gone [--yes]
 
 OPTIONS
   -f, --force  stop active work and discard uncommitted or unmerged changes
+  --gone       remove the fork records of repositories that no longer exist
   -y, --yes    skip confirmation
 
   Deleting a fork removes its files and local session data, plus its service
@@ -1353,9 +1355,18 @@ OPTIONS
   Assigned tasks return to the project queue. Proposed tasks that have not been
   imported are discarded; tasks already imported into the project are kept.
 
+  Coop keeps each project&#39;s fork records until you delete its forks. With
+  --gone, run from anywhere at a terminal (--yes does not replace a person), it
+  lists the repositories that no longer exist and asks before removing their
+  records and any empty record folders. A repository counts as gone only when
+  it and its forks folder are missing but the folder that held it still holds
+  other files and is on the same disk as the folder above it; any other
+  repository keeps its records. A repository you moved loses them.
+
 EXAMPLES
   coop fork rm myfork
-  coop fork rm myfork --force</code></pre></div></section><section class="doc-section reference-section" id="coop-fork-stop-stop-a-forks-background-loop"><h2>coop fork stop: stop a fork&#39;s background loop</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork stop: stop a fork&#39;s background loop code example" tabindex="0"><code>Usage: coop fork stop &lt;name&gt;
+  coop fork rm myfork --force
+  coop fork rm --gone</code></pre></div></section><section class="doc-section reference-section" id="coop-fork-stop-stop-a-forks-background-loop"><h2>coop fork stop: stop a fork&#39;s background loop</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop fork stop: stop a fork&#39;s background loop code example" tabindex="0"><code>Usage: coop fork stop &lt;name&gt;
 
   Stops the worker and its running boxes. The fork&#39;s work and assigned task stay
   available so you can continue it later.

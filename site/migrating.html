@@ -104,6 +104,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#unreleased-new-session-api-answers-checkpoint-bundles-and-fork-requests">Unreleased: new session API answers, checkpoint bundles and fork requests</a></li>
 <li><a href="#v1500-session-store-schema-27-has-no-way-back">v15.0.0: session store schema 27 has no way back</a></li>
 <li><a href="#v1500-changed-session-api-answers-service-variables-and-fork-merges">v15.0.0: changed session API answers, service variables and fork merges</a></li>
 <li><a href="#v1400-stricter-defaults-changed-exit-codes-and-session-api-answers">v14.0.0: stricter defaults, changed exit codes and session API answers</a></li>
@@ -135,6 +136,23 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
+</section><section class="doc-section reference-section" id="unreleased-new-session-api-answers-checkpoint-bundles-and-fork-requests"><h2>Unreleased: new session API answers, checkpoint bundles and fork requests</h2>
+<ul>
+<li><strong>Session API, publication.</strong> A new-PR publish can now be refused with
+<code>publication_branch_has_closed_pull_request</code>, with <code>closed_pull_request {number, url}</code>, and with
+<code>publication_push_outcome_unverified</code>. Treat any <code>error_code</code> you don&#39;t recognise on a <code>refused</code>
+publication as a final refusal: don&#39;t retry it, and publish to a new branch. Ignore fields you
+don&#39;t recognise. The same new-PR request sent again after a confirmed publish now replays
+<code>published</code> instead of checking the branch again.</li>
+<li><strong>Session API, checkpoints.</strong> A checkpoint of work rebased onto a newer default-branch commit
+carries an <code>upstream_revision</code> in its manifest. Both the capturing and the restoring worker must
+have this version; a 15.0.0 worker answers <code>500 internal_error</code> to such a bundle and changes
+nothing. Send those restores only to workers that advertise <code>checkpoint-upstream:1</code>. A capture
+that cannot check the default branch right now answers 503; retry it with a new idempotency key.</li>
+<li><strong>Forks.</strong> A fork rebase request written for a merge-commit round, a changed land or a skipped
+commit is not readable by 15.0.0. Finish or discard such a fork before downgrading.</li>
+<li><strong><code>coop fork --loop</code> on a conflicted isolated fork exits 1.</strong> It used to exit 0.</li>
+</ul>
 </section><section class="doc-section reference-section" id="v1500-session-store-schema-27-has-no-way-back"><h2>v15.0.0: session store schema 27 has no way back</h2>
 <p>The worker&#39;s session store moves from schema 26 to 27 the first time this build opens it. Schema
 27 only adds two indexes and drops a duplicate one; no session data changes. Once converted, a

@@ -9,6 +9,32 @@
 - **Controllers can assign named presets to reviews and coding jobs.** Export an approved global
   recipe with `coop presets NAME --export-job`. Each job keeps the selected prompts and accounts.
   Read-only reviews can consult peers. Turn history reports which peers answered or failed.
+- **Security: an isolated fork's merge lands exactly the reviewed change.** When your branch
+  already had one of an isolated fork's commits, git skipped that commit and the merge could land
+  a line nobody reviewed. `coop fork merge` now compares what would land with what was reviewed
+  and refuses a difference, before it asks you to confirm. 15.0.0 and earlier are affected.
+- **A new isolated fork has no Git remote pointing at your checkout.** A `git fetch` inside it
+  cannot reach your repository. An existing isolated fork keeps its remote; `docs/forks.md` names
+  the command that removes it.
+- **`coop fork rm --gone` removes the records of deleted repositories.** It lists what it would
+  remove and asks first. It needs a person at a terminal, and it keeps every record it cannot
+  prove is orphaned, such as one for a repository on a disk that is not connected.
+- **Fork messages agree with each other.** Every "go back" advice starts with
+  `git rebase --abort` when a rebase is in progress. A loop on a conflicted isolated fork now
+  exits 1 and names the two ways out. A shallow fork's merge refuses before printing a header,
+  merge after a stopped review names a plain rerun, and `coop fork ls` no longer counts your
+  branch's newer lines as the fork's removals after a failed merge gate.
+- **A checkpoint works after a rebase onto the job's newer default branch.** Capture refused
+  such work when the newer branch held anything the credential scanner matched. It now leaves
+  that branch's objects out, still scans everything it carries, and restore fetches them from the
+  job's source. A refusal says where the match was. Workers advertise `checkpoint-upstream:1`.
+- **A first publish reports an unverified push, and replays a confirmed one.** A new-PR publish
+  refused after an earlier try may have pushed now answers `publication_push_outcome_unverified`,
+  and the same request after a confirmed publish replays `published`.
+- **A branch with someone else's closed pull request gets its own refusal.** A new-PR publish
+  answers `publication_branch_has_closed_pull_request` and names that pull request.
+- **A worker backs off when the controller cannot answer a source grant.** It asks again after
+  5 seconds, then 10, then every 15, instead of about once a second.
 - **A fork rebased by hand reaches its review without a wasted round.** After you rebase a fork
   yourself, `coop fork <name> --loop` runs one check-only pass, which runs the checks and changes
   nothing, and then the review. Before, the first review failed as stale.

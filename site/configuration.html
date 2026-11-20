@@ -457,7 +457,8 @@ variables:</p>
 <li>Service approvals, the files co:op hides from services, and the records it uses to clean up after
 a run that stopped without cleaning up. An approval you give in one shell applies in every other.</li>
 <li>Fork records, and the locks that stop two launches from starting a project&#39;s services at once.
-Locks kept in two places couldn&#39;t stop anything.</li>
+Locks kept in two places couldn&#39;t stop anything. <code>coop fork rm --gone</code> removes the records of
+repositories that no longer exist.</li>
 <li><a href="loop.html#task-locks-and-claims">Task leases</a>, so two loops never work the same task.</li>
 <li>The <a href="session-api.html">worker&#39;s</a> session store and its control socket, where a worker keeps the
 identity it reconnects with. Use <code>--state</code> to choose another folder.</li>

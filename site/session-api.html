@@ -653,7 +653,7 @@ use up one of those review attempts.</p>
 <tr>
 <td><code>GET</code></td>
 <td><code>/v1/capabilities</code></td>
-<td><code>{&#34;job_<wbr/>spec_<wbr/>versions&#34;:[2],&#34;project_<wbr/>runtime_<wbr/>versions&#34;:[1],&#34;job_<wbr/>preset_<wbr/>versions&#34;:[1],&#34;controller_<wbr/>tools_<wbr/>versions&#34;:[1],&#34;repository_<wbr/>freshness_<wbr/>receipt_<wbr/>versions&#34;:[2],&#34;session_<wbr/>evidence_<wbr/>versions&#34;:[1],&#34;review_<wbr/>commit_<wbr/>message_<wbr/>versions&#34;:[1],&#34;existing_<wbr/>pr_<wbr/>publication_<wbr/>versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
+<td><code>{&#34;job_<wbr/>spec_<wbr/>versions&#34;:[2],&#34;project_<wbr/>runtime_<wbr/>versions&#34;:[1],&#34;job_<wbr/>preset_<wbr/>versions&#34;:[1],&#34;controller_<wbr/>tools_<wbr/>versions&#34;:[1],&#34;repository_<wbr/>freshness_<wbr/>receipt_<wbr/>versions&#34;:[2],&#34;session_<wbr/>evidence_<wbr/>versions&#34;:[1],&#34;review_<wbr/>commit_<wbr/>message_<wbr/>versions&#34;:[1],&#34;existing_<wbr/>pr_<wbr/>publication_<wbr/>versions&#34;:[1],&#34;checkpoint_<wbr/>upstream_<wbr/>versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -748,7 +748,7 @@ starts accepting them again only when use drops to <code>storage.low_watermark_b
 must leave <code>storage.reserve_bytes</code> free. These checks don&#39;t limit how much data an already-running
 task writes in its workspace.</p>
 <p>Before reporting support for <code>job-setup:2</code>, <code>repository-freshness:2</code>, <code>session-evidence:1</code>,
-<code>controller-tools:1</code>, <code>project-runtime:1</code>, <code>job-preset:1</code> or <code>review-commit-message:1</code>, the connector checks the running daemon&#39;s
+<code>controller-tools:1</code>, <code>project-runtime:1</code>, <code>job-preset:1</code>, <code>review-commit-message:1</code> or <code>checkpoint-upstream:1</code>, the connector checks the running daemon&#39;s
 <code>GET /v1/capabilities</code> response for the matching version. If it can&#39;t verify a capability,
 it leaves it out of the next hello.</p>
 <p>Worker protocol v2 reports supported features, runtime capacity and optional disk measurements.
@@ -892,9 +892,12 @@ The job fails if history or LFS files are missing, submodule commit references d
 there isn&#39;t enough disk space. When GitHub answers that a commit or ref the job names doesn&#39;t
 exist, the worker tries 3 times in all, with a fresh grant each time, because a commit pushed a
 moment ago can be missing for a short while. Then the create command fails with <code>invalid_command</code>
-and the detail &#34;a commit or ref the job names is not on GitHub&#34;. A network or GitHub server error
-is tried again for as long as the command is delivered. A job with <code>source: null</code> uses an isolated
-empty workspace.</p>
+and the detail &#34;private Coop API request was rejected before it was sent: a commit or ref the job
+names is not on GitHub&#34;. A network or GitHub server error is tried again for as long as the command
+is delivered. So is a source grant the controller can&#39;t answer for now (a 5xx, 408 or 429, or no
+answer): the worker holds the create and asks again after 5 seconds, then 10, then every 15, so a
+controller that is down for a minute gets about six grant requests per pending create. A job with
+<code>source: null</code> uses an isolated empty workspace.</p>
 <h4 id="session-endpoints">Session endpoints</h4>
 <p>The public session response identifies the fixed repository source, <code>job_ref</code>, <code>job_digest</code>, model
 target, execution mode, project exposure settings, saved network settings and repository freshness.
@@ -997,7 +1000,9 @@ Repeating the exact binding leaves the session unchanged.</p>
 </table></div></div>
 <p>A credential found in newly exported content refuses capture with HTTP 409
 <code>invalid_session_state</code>, including on replay of the same operation key. The workspace remains
-intact and no checkpoint bundle is published; correct the content before requesting a new capture.</p>
+intact and no checkpoint bundle is published; correct the content before requesting a new capture.
+One case answers <code>503</code> instead, when the job&#39;s default branch couldn&#39;t be checked; the table
+under the v2 checkpoint description lists every answer.</p>
 <p>Other workspace states you can fix also refuse with <code>409 invalid_session_state</code> and say why:
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
 large untracked files, a missing or changed bound task, or a restore that must finish first.
@@ -1021,6 +1026,69 @@ match the descriptor.</p>
 <p>A v2 checkpoint streams Git objects with their types and verified LFS files. It includes new
 commits, the final tracked tree, untracked files and task state. Restoring it recreates the exact
 HEAD and working tree, but not the original split between staged and unstaged changes.</p>
+<p>A checkpoint leaves out Git objects the restoring worker can fetch on its own from the job&#39;s
+authorized source. That always covers the session&#39;s base. When the work was rebased onto, or merged,
+a newer commit of the job&#39;s default branch, it can cover that commit&#39;s history too. Capture looks
+for such a commit only after the export finds a credential. It then refreshes the job&#39;s source
+through the controller&#39;s grant, as review does, and uses the newest commit the work shares with
+the default branch. Refs, remotes and config in the workspace never count, because the agent can
+write them. Every object that still travels is scanned again, so a credential the task added
+refuses capture even if a later commit removed it. The bundle manifest names the commit as
+<code>upstream_revision</code>.</p>
+<p>Only the default branch counts. History from another branch, from a pull request or pinned commit
+past the session&#39;s base, and every LFS file, upstream ones included, travels and is scanned. The
+refusal says which case it met, never what matched:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Workspace checkpoints table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Answer</th>
+<th scope="col">Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>... a credential that neither the session base nor the job&#39;s default branch holds</code></td>
+<td>The Git content is the task&#39;s own, or comes from one of the sources above. Fix the content.</td>
+</tr>
+<tr>
+<td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>... a credential in an LFS file</code></td>
+<td>An LFS file matched. LFS files always travel.</td>
+</tr>
+<tr>
+<td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>workspace checkpoint contains a credential</code></td>
+<td>An untracked file matched.</td>
+</tr>
+<tr>
+<td><code>503 repository_<wbr/>unavailable</code>, <code>... could not be refreshed ...</code></td>
+<td>The default branch couldn&#39;t be checked right now. Retry with a new idempotency key.</td>
+</tr>
+<tr>
+<td><code>409 invalid_<wbr/>session_<wbr/>state</code>, <code>... cannot be checked for it: ...</code></td>
+<td>The controller refuses read access to the job&#39;s repository, or the session no longer matches its job. Asking again won&#39;t change that.</td>
+</tr>
+</tbody>
+</table></div></div>
+<p>Restore refreshes the replacement session&#39;s source the same way and requires that exact commit to
+be in the default branch&#39;s history. If the refresh fails, the worker&#39;s copy lacks the commit, or
+the branch no longer contains it, restore answers <code>503 repository_unavailable</code> before it changes
+any file. A refused grant answers <code>409 invalid_session_state</code>, which a retry won&#39;t change. After a
+<code>503</code>, retry with a new idempotency key on the same unused replacement session. A restore that
+resumes after a crash already proved the commit before it started changing files, so it checks
+only the worker&#39;s own copy and doesn&#39;t need the network again.</p>
+<p>A worker that can restore a bundle naming <code>upstream_revision</code> advertises <code>checkpoint-upstream:1</code>.
+Restore such a checkpoint only on such a worker. The manifest is the bundle&#39;s first member, so a
+controller can read the field there, or it can place every restore on a worker with the
+capability. A checkpoint from v15.0.0 has no <code>upstream_revision</code> and restores as before. A worker
+older than this change, v15.0.0 included, can&#39;t restore a bundle that names one. It reads the
+unknown field as a malformed manifest, answers <code>500 internal_error</code> and changes no file. Retrying
+there won&#39;t help.</p>
+<p>To recover a retained workspace whose capture was refused only because of credentials already in
+the upstream it was rebased onto, update both the worker that holds the workspace and the worker
+that will restore it. Then request a new capture of the same session with a new idempotency key,
+since the refused key replays its refusal. The session must still be idle and retained, and the
+controller must still grant read access to the job&#39;s source. Restore the new checkpoint as usual,
+and after a restore <code>503</code>, retry with a new key on the same unused replacement session. If capture
+is refused again, the table above says why.</p>
 <p>Changed submodule commits need a separate authorized process to keep and verify their data, so
 checkpoints refuse them, including intermediate submodule changes that were later reverted.</p>
 <p>Checkpoint processing limits memory use and metadata size, but it sets no fixed limit on the data
@@ -1661,6 +1729,9 @@ status again, as other mutations do. It never answers <code>202</code> for a pub
 <li><code>conflict</code>, with the verified existing PR and its observed remote head</li>
 <li><code>refused</code>, with a stable error code</li>
 </ul>
+<p>Treat any <code>error_code</code> you don&#39;t recognise on a <code>refused</code> publication as a final refusal: don&#39;t
+retry it, and publish to a new branch. Ignore fields you don&#39;t recognise in a publication result;
+later versions may add codes and fields.</p>
 <p>The worker requests fresh credentials from your authenticated controller at
 <code>POST /v1/coop-workers/jobs/{job_ref}/publication-grants</code>. The request identifies the session,
 job digest, review operation, original command key, repository and exact publication request.
@@ -1677,12 +1748,29 @@ A refusal in this mode doesn&#39;t always mean nothing was written. The worker l
 first. When there is none, it pushes the branch and looks again before it opens one, because an
 earlier attempt may have opened it, so <code>publication_existing_pull_request_changed</code> can arrive
 after the push. The worker checks the PR GitHub returns after it opened the draft PR or updated
-its title and body, so <code>publication_pull_request_mismatch</code> can arrive after both writes. A retry
-after a lost response can likewise end in a refusal, such as <code>publication_authorization_revoked</code>,
-after an earlier attempt pushed. The branch and PR stay on GitHub. A personal token, or an <code>actor_id</code> that isn&#39;t the App&#39;s bot, gives exactly this
-result. Fix the grant, then check GitHub before you publish again: a later publish to the same
-branch is refused with <code>publication_existing_pull_request_changed</code> while a PR the App doesn&#39;t own
-exists for it, even a closed one, so close that PR and publish to a new branch.</p>
+its title and body, so <code>publication_pull_request_mismatch</code> can arrive after both writes. The
+branch and PR stay on GitHub. A personal token, or an <code>actor_id</code> that isn&#39;t the App&#39;s bot, gives
+exactly this result. A retry after a lost response that is refused before it sees the branch on
+GitHub reports <code>publication_push_outcome_unverified</code> instead, because an earlier attempt may have
+pushed (see below). Fix the grant, then check GitHub before you publish again: a later publish to the same
+branch is refused with <code>publication_existing_pull_request_changed</code> while an open PR the App doesn&#39;t
+own exists for it, so close that PR and publish to a new branch.</p>
+<p>The worker never adopts, reopens or pushes to a branch whose PR someone else opened, even after
+that PR is closed. When every PR GitHub lists for the branch is closed and none is the App&#39;s own,
+the publish is refused with <code>publication_branch_has_closed_pull_request</code>, and the result names the
+newest of them. The worker looks before it pushes, so this refusal normally comes before anything
+is written. It looks again after the push, before it opens a PR, so when such a PR appears in
+between, the refusal comes after the branch was pushed but never after a PR write. Only the first
+100 PRs for the branch are read; when there are that many, the refusal is
+<code>publication_existing_pull_request_changed</code> instead, since an open PR could be among the rest:</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Publish a reviewed candidate code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;status&#34;: &#34;refused&#34;,
+  &#34;error_code&#34;: &#34;publication_branch_has_closed_pull_request&#34;,
+  &#34;closed_pull_request&#34;: {&#34;number&#34;: 3, &#34;url&#34;: &#34;https://github.com/example/repo/pull/3&#34;}
+}
+</code></pre></div>
+<p>Publish to a new branch. A PR of the App&#39;s own that someone closed still refuses as
+<code>publication_existing_pull_request_changed</code>, so a publish never reopens what a person closed.</p>
 <p>To update an existing PR owned by a person, send <code>mode: &#34;existing_pull_request&#34;</code>, its exact
 number, branch, base branch and <code>expected_head</code>. This requires a review whose <code>parent_head</code>
 equals both that expected head and the job&#39;s selected commit, with a passed check and a publishable
@@ -1699,10 +1787,12 @@ original branch, commit and PR identity. Its state is <code>changed_after_push</
 <code>unverified_after_push</code>, with the bounded observed refs, repository IDs, head and PR state when
 available. A controller must report the warning and must not treat this as permission to resolve
 review threads or continue automatic edits.</p>
-<p>The worker journals an attempted push before Git runs and retains confirmed results independently
-of command acknowledgements. A confirmed result replays without new credentials. If an earlier
-attempt has no confirmed result and permission is then revoked or the branch changes, the terminal
-code is <code>publication_push_outcome_unverified</code>. The commit may already have been pushed. Check the
+<p>In both modes the worker journals an attempted push before Git runs and retains confirmed results
+independently of command acknowledgements. A confirmed result replays without new credentials,
+even if the branch has changed since. If an earlier attempt has no confirmed result and a later one is
+refused before it sees the branch at the candidate (permission revoked, the branch changed, or a
+PR the App doesn&#39;t own appeared), the terminal code is <code>publication_push_outcome_unverified</code>. A
+refusal found after the worker saw its branch at the candidate keeps its own code. The commit may already have been pushed. Check the
 frozen intent and GitHub history manually; do not automatically retarget or start another fix.</p>
 <p>If a push or PR response is lost, co:op checks the remote result before retrying. A candidate
 can&#39;t be discarded while publication is active. Later edits in the model workspace can&#39;t change

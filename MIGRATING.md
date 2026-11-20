@@ -3,6 +3,23 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
+## Unreleased: new session API answers, checkpoint bundles and fork requests
+
+- **Session API, publication.** A new-PR publish can now be refused with
+  `publication_branch_has_closed_pull_request`, with `closed_pull_request {number, url}`, and with
+  `publication_push_outcome_unverified`. Treat any `error_code` you don't recognise on a `refused`
+  publication as a final refusal: don't retry it, and publish to a new branch. Ignore fields you
+  don't recognise. The same new-PR request sent again after a confirmed publish now replays
+  `published` instead of checking the branch again.
+- **Session API, checkpoints.** A checkpoint of work rebased onto a newer default-branch commit
+  carries an `upstream_revision` in its manifest. Both the capturing and the restoring worker must
+  have this version; a 15.0.0 worker answers `500 internal_error` to such a bundle and changes
+  nothing. Send those restores only to workers that advertise `checkpoint-upstream:1`. A capture
+  that cannot check the default branch right now answers 503; retry it with a new idempotency key.
+- **Forks.** A fork rebase request written for a merge-commit round, a changed land or a skipped
+  commit is not readable by 15.0.0. Finish or discard such a fork before downgrading.
+- **`coop fork --loop` on a conflicted isolated fork exits 1.** It used to exit 0.
+
 ## v15.0.0: session store schema 27 has no way back
 
 The worker's session store moves from schema 26 to 27 the first time this build opens it. Schema
