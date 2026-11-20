@@ -1,0 +1,82 @@
+{
+  "digest": "89b910830dbb52895d503c4c10631d884afd86906906601fe993f17b1a19f263",
+  "job": {
+    "version": 2,
+    "job_ref": "job:one",
+    "source": {
+      "repository_ref": "repo:one",
+      "github_repository": "example/repository",
+      "github_repository_id": 17,
+      "binding": {
+        "version": 1,
+        "kind": "default",
+        "requested": {
+          "kind": "default"
+        },
+        "remote_identity": "origin",
+        "default_ref": "refs/heads/main",
+        "default_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "selected_ref": "refs/heads/main",
+        "selected_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "base_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "admitted_tree": "cccccccccccccccccccccccccccccccccccccccc",
+        "resolved_at": "2026-09-26T12:00:00Z"
+      },
+      "submodules": []
+    },
+    "companions": [],
+    "targets": [
+      "codex:gpt-6-sol@default"
+    ],
+    "mode": "normal",
+    "repository_read_only": true,
+    "egress": {
+      "mode": "none",
+      "rules": [],
+      "export_destinations": false
+    },
+    "limits": {
+      "max_turns": 100,
+      "max_queued_turns": 20,
+      "max_queued_bytes": 1048576,
+      "turn_timeout_ms": 3600000,
+      "warm_idle_timeout_ms": 0,
+      "max_patch_bytes": 1048576
+    },
+    "environment": {
+      "CI": "1"
+    },
+    "check": {
+      "argv": [
+        "make",
+        "test"
+      ],
+      "environment": {
+        "DATABASE_URL": "postgres://test"
+      }
+    },
+    "resources": {
+      "cpu_millis": 2000,
+      "memory_bytes": 4294967296,
+      "pids": 512
+    },
+    "preset": {
+      "version": 1,
+      "name": "review",
+      "lead_prompt": "Review the requested change.",
+      "roles": [
+        {
+          "name": "reader",
+          "mode": "consult",
+          "targets": [
+            "claude:opus@review"
+          ],
+          "when": [
+            "check behavior"
+          ],
+          "prompt": "Read the diff and report findings."
+        }
+      ]
+    }
+  }
+}

@@ -269,6 +269,18 @@ func ValidName(name string) bool {
 // preset's roles/*.md resolve under the global folder). Every error names the preset
 // and what to fix.
 func Load(repo, globalDir, name string) (*Preset, error) {
+	return loadFrom(repo, globalDir, name, false)
+}
+
+// LoadGlobal reads an operator-owned recipe without consulting the current checkout.
+func LoadGlobal(globalDir, name string) (*Preset, error) {
+	if !filepath.IsAbs(globalDir) {
+		return nil, errors.New("the global preset directory must be absolute")
+	}
+	return loadFrom("", globalDir, name, true)
+}
+
+func loadFrom(repo, globalDir, name string, globalOnly bool) (*Preset, error) {
 	if !ValidName(name) {
 		return nil, &LoadError{Name: name, NotFound: true, Detail: []string{
 			fmt.Sprintf("%q is not a usable preset name.", name),
@@ -276,7 +288,7 @@ func Load(repo, globalDir, name string) (*Preset, error) {
 			"Rename its folder to use this preset.",
 		}}
 	}
-	source, err := openPresetSource(repo, globalDir, name)
+	source, err := openPresetSource(repo, globalDir, name, globalOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -304,15 +316,18 @@ type presetSource struct {
 	policy       *shadowpath.Snapshot
 }
 
-func openPresetSource(repo, globalDir, name string) (*presetSource, error) {
+func openPresetSource(repo, globalDir, name string, globalOnly bool) (*presetSource, error) {
 	type candidate struct {
 		base, rel, path, repoRel string
 	}
-	candidates := []candidate{{
-		base: repo, rel: filepath.Join(filepath.FromSlash(Dir), name),
-		path:    filepath.Join(repo, filepath.FromSlash(Dir), name),
-		repoRel: filepath.ToSlash(filepath.Join(filepath.FromSlash(Dir), name)),
-	}}
+	var candidates []candidate
+	if !globalOnly {
+		candidates = append(candidates, candidate{
+			base: repo, rel: filepath.Join(filepath.FromSlash(Dir), name),
+			path:    filepath.Join(repo, filepath.FromSlash(Dir), name),
+			repoRel: filepath.ToSlash(filepath.Join(filepath.FromSlash(Dir), name)),
+		})
+	}
 	if globalDir != "" {
 		candidates = append(candidates, candidate{base: globalDir, rel: name, path: filepath.Join(globalDir, name)})
 	}
@@ -361,6 +376,9 @@ func openPresetSource(repo, globalDir, name string) (*presetSource, error) {
 		}
 		return &presetSource{dir: dir, path: candidate.path, data: data,
 			repoRelative: candidate.repoRel, policy: policy}, nil
+	}
+	if globalOnly {
+		return nil, &LoadError{Name: name, Path: filepath.Join(globalDir, name, "preset.yaml"), NotFound: true, Detail: []string{"No preset with this name exists in the global preset directory."}}
 	}
 	return nil, &LoadError{Name: name, Path: filepath.Join(repo, filepath.FromSlash(Dir), name, "preset.yaml"), NotFound: true, Detail: []string{
 		fmt.Sprintf("No preset %q exists.", name),

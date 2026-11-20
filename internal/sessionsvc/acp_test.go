@@ -4381,3 +4381,57 @@ func TestReadSessionACPLineJoinsFramesLongerThanItsBuffer(t *testing.T) {
 		t.Fatalf("long frame = %q, %v", line, err)
 	}
 }
+
+func TestFrozenReviewerUsesOnlyTheSelectedPeerAccount(t *testing.T) {
+	fixture := newSessionACPFixture(t, "normal")
+	bound := fixture.session
+	job, err := sessionJobSpec(bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.Preset = &workerproto.JobPreset{Version: 1, Name: "review", Roles: []workerproto.JobPresetRole{
+		{Name: "reviewer", Mode: "consult", Targets: []string{"gemini@studio"}, When: []string{}},
+	}}
+	bound.JobDocument, err = job.CanonicalDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound.JobDigest, err = job.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini, _ := agents.Get("gemini")
+	target, err := agents.ParseTarget(bound.Target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead, _ := agents.Get(target.Provider)
+	if err := box.SaveHostCredential(&config.Config{ConfigDir: fixture.source}, gemini, "studio", []byte("peer-test-key")); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := fixture.runner.projectCredentials(bound, target, lead, time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer projection.remove()
+	defaults := readFile(t, filepath.Join(fixture.private, "defaults"))
+	if !strings.Contains(defaults, "gemini=studio\n") || len(strings.Split(strings.TrimSpace(defaults), "\n")) != 2 {
+		t.Fatalf("projected defaults omitted or widened the review recipe: %q", defaults)
+	}
+	if _, _, found, err := box.LoadHostCredential(&config.Config{ConfigDir: fixture.private}, gemini, "studio"); err != nil || found {
+		t.Fatalf("peer secret was copied to a private box mount: found=%v, err=%v", found, err)
+	}
+	// A daemon restart loses the in-memory list of mounts. Rebuild the cleanup
+	// set from the sealed job, including the other provider's instruction file.
+	peerInstruction := filepath.Join(fixture.private, "gemini", "profiles", "studio", gemini.InstructionFile())
+	if err := os.WriteFile(peerInstruction, []byte("prior turn"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.runner.cleanupSessionCredentials(bound); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(peerInstruction); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("peer instructions survived recovery cleanup")
+	}
+
+}

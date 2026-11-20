@@ -550,7 +550,7 @@ use up one of those review attempts.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1]}`. Check these versions before choosing which protocol features to use. |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
 
@@ -654,7 +654,7 @@ must leave `storage.reserve_bytes` free. These checks don't limit how much data 
 task writes in its workspace.
 
 Before reporting support for `job-setup:2`, `repository-freshness:2`, `session-evidence:1`,
-`controller-tools:1`, `project-runtime:1` or `review-commit-message:1`, the connector checks the running daemon's
+`controller-tools:1`, `project-runtime:1`, `job-preset:1` or `review-commit-message:1`, the connector checks the running daemon's
 `GET /v1/capabilities` response for the matching version. If it can't verify a capability,
 it leaves it out of the next hello.
 
@@ -747,6 +747,22 @@ advertising `project-runtime:1`, proven by `project_runtime_versions: [1]` on th
 The runtime's `environment` holds frozen project defaults, with a 64 KiB limit measured as escaped
 JSON. Candidate `review.env` overrides those defaults. The job's root `environment` and
 `check.environment` remain controller authority and override candidate values.
+
+A job can also include a version 1 `preset`. Its `name`, `lead_prompt` and ordered
+`roles` are frozen alongside the job's lead `targets`. Each role carries `name`,
+`mode`, `targets`, routing hints in `when`, and the contents of its `prompt`.
+Every target names one explicit account. A read-only job can use consult or
+native roles. A delegate needs a writable job. The connector proves
+`job-preset:1` before a controller places one. To export a global recipe with
+its current prompts and default accounts, run `coop presets NAME --export-job`.
+The output contains the job's `targets` and `preset` fields. Publish a new export
+when approving a changed recipe. Admitted jobs keep their original contents.
+
+After each prompt, the worker records a `preset.peer` event for each configured role.
+Each event names the role, its mode, its reported status and its failed attempt count.
+Consult and delegate wrappers report calls from that prompt, including unsuccessful attempts before a fallback.
+Statuses are `answered`, `failed`, `not_called` and `unknown`. Native roles and incomplete reports
+show `unknown`. The same worker process can handle several prompts, each with its own report.
 
 Work gets its own Compose project and default network, and services get finite job resource caps.
 At least one service must join the default network; custom-only network topologies are refused

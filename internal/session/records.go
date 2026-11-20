@@ -152,6 +152,7 @@ const (
 	// prompt showed only its own half: the output contract, a correction and
 	// the output-folder note reached the model unrecorded (2026-10-15).
 	EventPromptSent EventType = "prompt.sent"
+	EventPresetPeer EventType = "preset.peer"
 
 	// Activity events narrate what the model did inside a turn. Everything
 	// above is a lifecycle fact Coop decided; these are observations of the

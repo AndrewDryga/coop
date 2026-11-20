@@ -1233,7 +1233,15 @@ func (a *app) forkACP(name string, rest []string) (int, error) {
 			return 2, err
 		}
 	}
-	if presetName != "" {
+	frozen, err := box.ControllerPresetForChild(a.cfg.ConfigDir, t, repositoryReadOnly)
+	if err != nil {
+		return 1, err
+	}
+	if frozen != nil {
+		// The daemon already selected this exact rung. A bare fallback must not
+		// inherit the first rung's model or effort.
+		a.preset = frozen
+	} else if presetName != "" {
 		p, err := a.loadRunPreset("coop fork", presetName)
 		if err != nil {
 			refusal := savedForkErr(name, "preset", presetName, err)

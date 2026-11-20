@@ -23,6 +23,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/session"
@@ -83,6 +84,7 @@ type executionConfig struct {
 	Repository         string
 	Companions         []executionCompanion
 	Targets            []agents.Target
+	Preset             *preset.Preset
 	OmitEnv            bool
 	OmitMCP            bool
 	RepositoryReadOnly bool

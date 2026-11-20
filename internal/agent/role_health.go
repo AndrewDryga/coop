@@ -11,6 +11,22 @@ import (
 // skip an exact target that already proved permanently unusable.
 func RoleHealthShell() string {
 	return loginRejectedShell() + `
+coop_peer_begin() {
+    coop_peer_report=
+    [ -n "${COOP_PRESET_REPORT_ROOT:-}" ] && [ -n "$1" ] || return 0
+    [ -f "$COOP_PRESET_REPORT_ROOT/.active-preset-turn" ] || return 0
+    IFS=' ' read -r coop_turn coop_leaf < "$COOP_PRESET_REPORT_ROOT/.active-preset-turn" || return 0
+    case "$coop_turn" in ''|*[!a-zA-Z0-9_-]*) return 0 ;; esac
+    case "$coop_leaf" in .peer-*) ;; *) return 0 ;; esac
+    case "$coop_leaf" in *[!a-z0-9.-]*) return 0 ;; esac
+    coop_peer_report=$COOP_PRESET_REPORT_ROOT/$coop_turn/$coop_leaf
+    coop_peer_status "$1" started
+}
+
+coop_peer_status() {
+    [ -n "${coop_peer_report:-}" ] && [ -f "$coop_peer_report" ] && [ ! -L "$coop_peer_report" ] || return 0
+    printf '%s %s %s\n' "$1" "$$" "$2" >> "$coop_peer_report" || :
+}
 coop_role_file_ready() {
 	[ -n "${COOP_RUN_ID:-}" ] || return 1
 	case "$COOP_RUN_ID" in *[!a-zA-Z0-9._-]*) return 1 ;; esac
@@ -28,6 +44,7 @@ coop_role_file_ready() {
 }
 
 coop_role_health() {
+    coop_peer_status "$1" "$6"
 	coop_role_file_ready || return 0
 	coop_role_row=$(jq -cn --arg run "$COOP_RUN_ID" --arg role "$1" --arg mode "$2" \
 		--arg provider "$3" --arg model "$4" --arg target "$5" --arg outcome "$6" \

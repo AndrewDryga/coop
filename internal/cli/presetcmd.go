@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 // cmdPresets is the presets view, path-grammar like credentials: bare lists every
@@ -22,6 +24,9 @@ import (
 // credentials/routing. Presets are edited as YAML files; the one write is `coop presets init`,
 // which scaffolds a new one.
 func (a *app) cmdPresets(args []string) (int, error) {
+	if len(args) == 2 && args[1] == "--export-job" {
+		return a.exportJobPreset(args[0])
+	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
 		return -1, err
@@ -45,6 +50,48 @@ func (a *app) cmdPresets(args []string) (int, error) {
 		return a.showPreset(repo, args[0])
 	}
 	return a.listPresets(repo)
+}
+
+// An operator exports the recipe they approved, with its prompt contents and
+// concrete accounts. A receiving controller can inspect and pin the document.
+func (a *app) exportJobPreset(name string) (int, error) {
+	p, err := preset.LoadGlobal(a.cfg.GlobalPresetsDir(), name)
+	if err != nil {
+		return 1, err
+	}
+	targets := func(ladder []agents.Target) []string {
+		var result []string
+		for _, target := range ladder {
+			accounts := target.Accounts
+			if len(accounts) == 0 {
+				accounts = []string{a.cfg.DefaultProfileOf(target.Provider)}
+			}
+			for _, account := range accounts {
+				target.Accounts = []string{account}
+				result = append(result, target.String())
+			}
+		}
+		return result
+	}
+	lead := targets(p.LeadTargets)
+	job := workerproto.JobPreset{Version: 1, Name: p.Name, LeadPrompt: p.LeadPromptText, Roles: []workerproto.JobPresetRole{}}
+	for _, role := range p.Roles {
+		if role.Subagent != "" {
+			return 1, fmt.Errorf("role %s references a local subagent that cannot be frozen; use a role prompt file", role.Name)
+		}
+		job.Roles = append(job.Roles, workerproto.JobPresetRole{Name: role.Name, Mode: role.Mode, Targets: targets(role.Targets), When: append([]string{}, role.When...), Prompt: role.PromptText})
+	}
+	if _, err := job.Recipe(lead, false); err != nil {
+		return 1, err
+	}
+	document := struct {
+		Targets []string              `json:"targets"`
+		Preset  workerproto.JobPreset `json:"preset"`
+	}{lead, job}
+	if err := json.NewEncoder(os.Stdout).Encode(document); err != nil {
+		return 1, err
+	}
+	return 0, nil
 }
 
 // listPresets compares the presets a run can name: one row each, so the reader can pick between

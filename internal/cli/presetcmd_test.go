@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -590,5 +591,47 @@ func TestCmdPresetsInitExitsOneWhenItCannotWrite(t *testing.T) {
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
 	if code, err := a.cmdPresets([]string{"init", "review"}); code != 1 || err == nil || !strings.Contains(err.Error(), `Could not create preset "review"`) {
 		t.Errorf("presets init into a read-only folder = (%d, %v), want exit 1", code, err)
+	}
+}
+
+func TestPresetJobExportReadsOnlyTheConfiguredGlobalRecipe(t *testing.T) {
+	global := t.TempDir()
+	t.Setenv("COOP_PRESETS_DIR", global)
+	repo := presetsRepo(t)
+	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	// The checkout contains frontier. Export cannot discover a recipe there.
+	if code, err := a.cmdPresets([]string{"frontier", "--export-job"}); err == nil || code == 0 {
+		t.Fatal("exported a checkout-only recipe")
+	}
+	dir := filepath.Join(global, "frontier")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	spec := "lead: {agent: codex, prompt: lead.md}\nroles:\n  reader: {mode: consult, agent: claude:opus}\n"
+	if err := os.WriteFile(filepath.Join(dir, "preset.yaml"), []byte(spec), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lead.md"), []byte("Read the reviewed change."), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw := captureStdout(t, func() {
+		if code, err := a.cmdPresets([]string{"frontier", "--export-job"}); code != 0 || err != nil {
+			t.Fatalf("export = %d, %v", code, err)
+		}
+	})
+	var exported struct {
+		Targets []string `json:"targets"`
+		Preset  struct {
+			LeadPrompt string `json:"lead_prompt"`
+			Roles      []struct {
+				Targets []string `json:"targets"`
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(raw), &exported); err != nil {
+		t.Fatal(err)
+	}
+	if len(exported.Targets) != 1 || exported.Targets[0] != "codex@default" || exported.Preset.LeadPrompt != "Read the reviewed change." || len(exported.Preset.Roles) != 1 || exported.Preset.Roles[0].Targets[0] != "claude:opus@default" {
+		t.Fatalf("export changed the global recipe: %s", raw)
 	}
 }

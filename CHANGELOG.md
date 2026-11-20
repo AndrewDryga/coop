@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Controllers can assign named presets to reviews and coding jobs.** Export an approved global
+  recipe with `coop presets NAME --export-job`. Each job keeps the selected prompts and accounts.
+  Read-only reviews can consult peers. Turn history reports which peers answered or failed.
 - **A fork rebased by hand reaches its review without a wasted round.** After you rebase a fork
   yourself, `coop fork <name> --loop` runs one check-only pass, which runs the checks and changes
   nothing, and then the review. Before, the first review failed as stale.

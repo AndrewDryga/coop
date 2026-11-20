@@ -157,6 +157,8 @@ eval "targets=\${COOP_DELEGATE_${key}_TARGETS:-}"
 eval "contract=\${COOP_DELEGATE_${key}_CONTRACT:-}"
 [ -n "$targets" ] || die "unknown delegate role: $role (delegate roles come from the preset's mode: delegate entries)"
 
+@@ROLE_HEALTH@@
+coop_peer_begin "$role"
 attempt_dir=${TMPDIR:-/tmp}/coop-delegate-${key}-$$
 mkdir "$attempt_dir" || die "cannot create attempt directory: $attempt_dir"
 active_pid_file=$attempt_dir/active-pid
@@ -215,7 +217,6 @@ prompt=$(cat "$prompt_file")
 exec </dev/null
 
 @@RATE_LIMIT@@
-@@ROLE_HEALTH@@
 @@PRELUDES@@
 
 load_target() {

@@ -84,11 +84,15 @@ func sessionJobSpec(bound session.Session) (workerproto.JobSpec, error) {
 // sessionHasProjectRuntime is a custody check, not admission: historical documents keep their
 // cleanup path without being decoded through a newer execution contract.
 func sessionHasProjectRuntime(bound session.Session) bool {
+	return sessionHasJobField(bound, "runtime")
+}
+
+func sessionHasJobField(bound session.Session, field string) bool {
 	var document map[string]json.RawMessage
 	if json.Unmarshal(bound.JobDocument, &document) != nil {
 		return false
 	}
-	value := document["runtime"]
+	value := document[field]
 	return len(value) != 0 && string(value) != "null"
 }
 
@@ -139,6 +143,12 @@ func (s *Service) resolveJobExecution(ctx context.Context, job workerproto.JobSp
 		return executionConfig{}, err
 	}
 	policy.Targets = targets
+	if job.Preset != nil {
+		policy.Preset, err = job.Preset.Recipe(job.Targets, job.RepositoryReadOnly)
+		if err != nil {
+			return executionConfig{}, err
+		}
+	}
 	rules, err := jobEgressRules(job)
 	if err != nil {
 		return executionConfig{}, err

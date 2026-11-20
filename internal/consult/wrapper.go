@@ -278,12 +278,16 @@ clear_failed_resume() {
 	publish_state "" "$contextfile" || die "cannot clear uncertain continuation session"
 }
 
+`)
+	b.WriteString(agents.RoleHealthShell())
+	b.WriteString(`
 # A preset consult role carries its own target ladder/persona via COOP_CONSULT_<ROLE>_*;
 # otherwise the name IS the peer agent.
 eval "targets=\${COOP_CONSULT_${key}_TARGETS:-}"
 eval "persona=\${COOP_CONSULT_${key}_CONTRACT:-}"
 if [ -n "$targets" ]; then
 	role=$name
+    coop_peer_begin "$role"
 else
 	targets=$name
 	persona=
@@ -430,7 +434,6 @@ else
 fi
 `)
 	b.WriteString(agents.ShellRateLimitDetector())
-	b.WriteString(agents.RoleHealthShell())
 	if p := preludes(as); p != "" {
 		b.WriteString(p + "\n")
 	}

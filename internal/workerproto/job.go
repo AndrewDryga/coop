@@ -34,6 +34,7 @@ type JobSpec struct {
 	Check              JobCheck          `json:"check"`
 	Resources          JobResources      `json:"resources"`
 	Runtime            *JobRuntime       `json:"runtime,omitempty"`
+	Preset             *JobPreset        `json:"preset,omitempty"`
 }
 
 // JobRuntime is the narrow project setup a controller resolved at the frozen source. Empty
@@ -227,9 +228,24 @@ func requireJobFields(document []byte) error {
 		return value, nil
 	}
 	root, err := object(document, []string{"version", "job_ref", "companions", "targets", "mode",
-		"repository_read_only", "egress", "limits", "environment", "check", "resources"}, "source", "runtime")
+		"repository_read_only", "egress", "limits", "environment", "check", "resources"}, "source", "runtime", "preset")
 	if err != nil {
 		return err
+	}
+	if raw, ok := root["preset"]; ok {
+		preset, err := object(raw, []string{"version", "name", "lead_prompt", "roles"})
+		if err != nil {
+			return fmt.Errorf("job preset: %w", err)
+		}
+		var roles []json.RawMessage
+		if err := json.Unmarshal(preset["roles"], &roles); err != nil || roles == nil {
+			return errors.New("job preset roles must be an array")
+		}
+		for _, role := range roles {
+			if _, err := object(role, []string{"name", "mode", "when", "targets", "prompt"}); err != nil {
+				return fmt.Errorf("job preset role: %w", err)
+			}
+		}
 	}
 	if raw, ok := root["runtime"]; ok {
 		if _, err := object(raw, []string{"version", "dockerfile", "compose", "environment"}); err != nil {
@@ -402,6 +418,11 @@ func (s JobSpec) Validate() error {
 	for _, target := range s.Targets {
 		if len(target) == 0 || len(target) > 256 {
 			return errors.New("invalid job target")
+		}
+	}
+	if s.Preset != nil {
+		if _, err := s.Preset.Recipe(s.Targets, s.RepositoryReadOnly); err != nil {
+			return err
 		}
 	}
 	if s.Source != nil {

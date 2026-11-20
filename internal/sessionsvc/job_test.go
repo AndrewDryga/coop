@@ -594,3 +594,23 @@ func TestJobEgressRuleRefusalNamesTheRuleAndTheProblem(t *testing.T) {
 		t.Errorf("rule without a provider = %v", err)
 	}
 }
+
+func TestReviewNetworkIncludesOnlyItsFrozenRoles(t *testing.T) {
+	service, _ := newHTTPTestSessionService(t)
+	defer service.Stop()
+	job := service.Job
+	job.Targets = []string{"codex:gpt-5@work"}
+	job.RepositoryReadOnly = true
+	job.Preset = &workerproto.JobPreset{Version: 1, Name: "review", Roles: []workerproto.JobPresetRole{
+		{Name: "reader", Mode: "consult", When: []string{}, Targets: []string{"claude:opus@review"}, Prompt: "Read the change."},
+	}}
+	policy, err := service.resolveJobExecution(context.Background(), job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := sessionNetworkAdmissionSpec(nil, policy, "/worktree", "review", nil)
+	if !spec.RepoReadOnly || spec.Preset == nil || spec.ConsultLead != "codex" || len(spec.Preset.Roles) != 1 ||
+		spec.Preset.Roles[0].Targets[0].String() != "claude:opus@review" {
+		t.Fatal("network admission lost the job's read-only source, lead, or approved consult target")
+	}
+}

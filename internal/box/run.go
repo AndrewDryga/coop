@@ -2617,7 +2617,7 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 			mounts = append(mounts, extraMount{cp, dst})
 			extraArgs = append(extraArgs,
 				"-e", "COOP_DELEGATE_"+key+"_CONTRACT="+dst,
-				"-e", "COOP_DELEGATE_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role),
+				"-e", "COOP_DELEGATE_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role, spec.ControllerJob),
 			)
 		}
 	}
@@ -2667,16 +2667,21 @@ func presetRoleMounts(cfg *config.Config, spec RunSpec, artifacts compositionArt
 			mounts = append(mounts, extraMount{cp, dst})
 			extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_CONTRACT="+dst)
 		}
-		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role))
+		extraArgs = append(extraArgs, "-e", "COOP_CONSULT_"+key+"_TARGETS="+resolvedRoleTargetList(cfg, &role, spec.ControllerJob))
 	}
 	return
 }
 
 // resolvedRoleTargetList is the role's wrapper ladder: its resolved targets in wire form.
-func resolvedRoleTargetList(cfg *config.Config, role *preset.Role) string {
+func resolvedRoleTargetList(cfg *config.Config, role *preset.Role, projectedAccounts bool) string {
 	targets := resolvedRoleTargets(cfg, role)
 	parts := make([]string, len(targets))
 	for i, target := range targets {
+		if projectedAccounts {
+			// The controller job already bound the provider to this account.
+			// The in-box wrapper takes only provider, model, and effort.
+			target.Accounts = nil
+		}
 		parts[i] = target.String()
 	}
 	return strings.Join(parts, " ")
@@ -3599,6 +3604,9 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 		if !jobTimezone {
 			args = append(args, "-e", "TZ="+tz)
 		}
+	}
+	if spec.ControllerJob && spec.Preset != nil && spec.SessionOutputRoot != "" {
+		args = append(args, "-e", "COOP_PRESET_REPORT_ROOT="+filepath.Join(workdir, ".coop-output"))
 	}
 	args = append(args, limits...) // resource/privilege caps (docker; nil elsewhere)
 	args = append(args, RenderMounts(mounts, decoy, decoyDir)...)

@@ -299,7 +299,7 @@ func (e *Executor) collectActivity(ctx context.Context, maximumBytes int) ([]wor
 
 func operatorActivityEvent(kind string) bool {
 	switch kind {
-	case "tool.started", "tool.completed", "model.plan", "model.thought", "model.progress", "permission.decided", "activity.elided", "provider.backoff", "provider.alive", "network", "prompt.sent":
+	case "tool.started", "tool.completed", "model.plan", "model.thought", "model.progress", "permission.decided", "activity.elided", "provider.backoff", "provider.alive", "preset.peer", "network", "prompt.sent":
 		return true
 	default:
 		return false
@@ -367,6 +367,18 @@ func publicActivityPayload(kind string, raw json.RawMessage) (json.RawMessage, b
 		narrated.text("title", value["title"], maximumNarrationTitleBytes)
 	case "activity.elided":
 		copyPublicInteger(public, "dropped", value["dropped"])
+	case "preset.peer":
+		role, ok := value["role"].(string)
+		if !ok || !workerproto.ValidJobRoleName(role) || secretReason(role) != "" {
+			return nil, false
+		}
+		public["role"] = role
+		copyEnum(public, "mode", value["mode"], "consult", "delegate", "native")
+		copyEnum(public, "status", value["status"], "answered", "failed", "not_called", "unknown")
+		copyPublicInteger(public, "failed_attempts", value["failed_attempts"])
+		if len(public) != 4 {
+			return nil, false
+		}
 	case "provider.backoff":
 		copyPublicInteger(public, "attempt", value["attempt"])
 		copyPublicInteger(public, "retry_after_seconds", value["retry_after_seconds"])

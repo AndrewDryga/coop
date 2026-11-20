@@ -135,3 +135,24 @@ func TestProjectRuntimeCapabilityRequiresExactLiveDaemonProof(t *testing.T) {
 		}
 	}
 }
+
+func TestJobPresetCapabilityRequiresExactLiveDaemonProof(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want bool
+	}{
+		{`{"job_preset_versions":[1]}`, true},
+		{`{}`, false},
+		{`{"job_preset_versions":[2]}`, false},
+		{`{"job_preset_versions":[1,2]}`, false},
+		{`{"job_preset_versions":[1],"unknown":true}`, false},
+	} {
+		found := false
+		for _, capability := range LiveCapabilities(context.Background(), &capabilityAPI{response: json.RawMessage(test.body)}) {
+			found = found || capability.Name == "job-preset" && capability.Version == "1"
+		}
+		if found != test.want {
+			t.Fatalf("job preset capability for %s = %t, want %t", test.body, found, test.want)
+		}
+	}
+}

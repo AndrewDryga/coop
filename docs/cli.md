@@ -485,10 +485,11 @@ Learn how presets work: coop help presets
 coop presets: configure multiple models and providers to work together
 
 Usage:
-  coop presets                list presets
-  coop presets <name>         show a preset
-  coop presets init [<name>]  create a preset (default: frontier)
-  coop help <name>            explain a preset
+  coop presets                      list presets
+  coop presets <name>               show a preset
+  coop presets <name> --export-job  export a global recipe for a controller
+  coop presets init [<name>]        create a preset (default: frontier)
+  coop help <name>                  explain a preset
 
 CREATE A PRESET
   coop presets init

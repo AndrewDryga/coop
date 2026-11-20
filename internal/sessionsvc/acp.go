@@ -34,6 +34,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/session"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 const (
@@ -1567,7 +1568,15 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if sameOrBelow(privateRoot, sourceRoot) || sameOrBelow(sourceRoot, privateRoot) {
 		return nil, acpFailure(sessionACPCredentialError, "private credential root overlaps source credentials")
 	}
-	privateProfile := filepath.Join(privateRoot, target.Provider, "profiles", account)
+	target.Accounts = []string{account}
+	job, err := sessionJobSpec(bound)
+	if err != nil {
+		return nil, err
+	}
+	accounts, err := projectedJobAccounts(job, target)
+	if err != nil {
+		return nil, err
+	}
 	mcpSnapshot, err := sessionMCPSnapshot(bound)
 	if err != nil {
 		return nil, err
@@ -1576,6 +1585,17 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 		return nil, acpFailure(sessionACPCredentialError, "private credential root is unsafe")
 	}
 	projection := &sessionACPProjection{privateRoot: privateRoot}
+	if job.Preset != nil {
+		data, _, err := box.EncodeControllerPreset(bound.JobDigest, job)
+		if err != nil {
+			return projection, err
+		}
+		path := filepath.Join(privateRoot, box.ControllerPresetFile)
+		projection.files = append(projection.files, path)
+		if err := writeCredentialArtifact(path, data); err != nil {
+			return projection, acpFailure(sessionACPProcessError, "private controller preset could not be written")
+		}
+	}
 	conf := filepath.Join(privateRoot, ".coop-conf-disabled")
 	projection.files = append(projection.files, conf)
 	if err := writeCredentialArtifact(conf, nil); err != nil {
@@ -1584,43 +1604,72 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 	if err := r.projectSessionConfigFiles(sourceRoot, bound, projection, mcpSnapshot); err != nil {
 		return projection, err
 	}
+	startupDeadline := boxCredentialDeadline(bound, deadline)
+	var defaults strings.Builder
+	for _, selected := range accounts {
+		provider := agent
+		if selected.Provider != target.Provider {
+			var ok bool
+			provider, ok = agents.Get(selected.Provider)
+			if !ok {
+				return projection, acpFailure(sessionACPCredentialError, "preset role provider is unavailable")
+			}
+		}
+		if err := r.prepareProjectedAccount(projection, selected, provider, startupDeadline); err != nil {
+			return projection, err
+		}
+		defaults.WriteString(selected.Provider + "=" + selected.Account() + "\n")
+	}
+	// A child sees only the provider defaults for the accounts this box needs.
+	path := filepath.Join(privateRoot, "defaults")
+	projection.files = append(projection.files, path)
+	if err := writePrivateConfig(path, []byte(defaults.String())); err != nil {
+		return projection, acpFailure(sessionACPCredentialError, "private account selection could not be written")
+	}
+	return projection, nil
+}
+
+func projectedJobAccounts(job workerproto.JobSpec, lead agents.Target) ([]agents.Target, error) {
+	if job.Preset == nil {
+		return []agents.Target{lead}, nil
+	}
+	recipe, err := job.Preset.Recipe(job.Targets, job.RepositoryReadOnly)
+	if err != nil {
+		return nil, err
+	}
+	return workerproto.PresetAccounts(recipe, lead)
+}
+
+func (r *sessionTurnRunner) prepareProjectedAccount(projection *sessionACPProjection, target agents.Target, agent agents.Agent, startupDeadline time.Time) error {
+	if !validSessionPathComponent(target.Provider) || !validSessionPathComponent(target.Account()) {
+		return acpFailure(sessionACPCredentialError, "selected credential account is invalid")
+	}
+	privateProfile := filepath.Join(projection.privateRoot, target.Provider, "profiles", target.Account())
 	if err := ensurePrivateDirectory(privateProfile); err != nil {
-		return projection, acpFailure(sessionACPCredentialError, "private credential account is unsafe")
+		return acpFailure(sessionACPCredentialError, "private credential account is unsafe")
 	}
 	instructionFile := agent.InstructionFile()
 	if !validArtifactName(instructionFile) {
-		return projection, acpFailure(sessionACPCredentialError, "provider instruction filename is invalid")
+		return acpFailure(sessionACPCredentialError, "provider instruction filename is invalid")
 	}
 	privateInstruction := filepath.Join(privateProfile, instructionFile)
 	if err := removeProjectedSessionFile(privateInstruction); err != nil {
-		return projection, acpFailure(sessionACPCredentialError, "private provider instructions are unsafe")
+		return acpFailure(sessionACPCredentialError, "private provider instructions are unsafe")
 	}
 	// The box overlays the trusted generated instructions read-only. Keep the underlying
 	// session-private path absent so a prior turn cannot author its next trusted frame.
 	projection.files = append(projection.files, privateInstruction)
-	startupDeadline := boxCredentialDeadline(bound, deadline)
 	prepareCtx, cancel := context.WithDeadline(context.Background(), startupDeadline)
-	canonical, err := box.PrepareNativeAccount(prepareCtx, r.sourceCfg, target.Provider, account, startupDeadline)
+	canonical, err := box.PrepareNativeAccount(prepareCtx, r.sourceCfg, target.Provider, target.Account(), startupDeadline)
 	cancel()
 	if err != nil {
-		return projection, acpFailure(sessionACPCredentialError, "selected canonical account is unavailable")
+		return acpFailure(sessionACPCredentialError, "selected canonical account is unavailable")
 	}
 	if !canonical {
-		return projection, acpFailure(sessionACPCredentialError, "selected account needs host sign-in")
+		return acpFailure(sessionACPCredentialError, "selected account needs host sign-in")
 	}
 
-	// A target without @account means the source provider default. Bind that same default in the
-	// private config without copying the shared defaults file, so the child receives the exact
-	// selected account while the command remains the session's exact target string. An env-file
-	// key is the default account's alone, so it binds that account too.
-	{
-		defaults := filepath.Join(privateRoot, "defaults")
-		projection.files = append(projection.files, defaults)
-		if err := writePrivateDefaults(defaults, target.Provider, account); err != nil {
-			return projection, acpFailure(sessionACPCredentialError, "private account selection could not be written")
-		}
-	}
-	return projection, nil
+	return nil
 }
 
 // sessionMCPSnapshot is a session's private MCP file, nil when it has none. A job never inherits the
@@ -1888,45 +1937,65 @@ func (r *sessionTurnRunner) cleanupSessionCredentials(bound session.Session) err
 	if err != nil || len(target.Accounts) > 1 {
 		return acpFailure(sessionACPCleanupError, "session target is invalid")
 	}
-	agent, ok := agents.Get(target.Provider)
-	if !ok {
-		return acpFailure(sessionACPCleanupError, "session target provider is unavailable")
+	if err := ensureNoSymlinkPath(privateRoot); err != nil {
+		return acpFailure(sessionACPCleanupError, "private credential root is unsafe")
 	}
+	if target.Account() == "" {
+		target.Accounts = []string{r.sourceCfg.DefaultProfileOf(target.Provider)}
+	}
+	accounts := []agents.Target{target}
+	if sessionHasJobField(bound, "preset") {
+		job, jobErr := sessionJobSpec(bound)
+		if jobErr == nil {
+			var selected []agents.Target
+			selected, jobErr = projectedJobAccounts(job, target)
+			if jobErr == nil {
+				accounts = selected
+			}
+		}
+		if jobErr != nil {
+			err = acpFailure(sessionACPCleanupError, "cannot verify preset accounts during cleanup")
+		}
+	}
+	for _, selected := range accounts {
+		err = errors.Join(err, cleanupProjectedAccount(privateRoot, selected))
+	}
+	var paths []string
+	for _, name := range []string{"defaults", "env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled", box.ControllerPresetFile} {
+		paths = append(paths, filepath.Join(privateRoot, name))
+	}
+	err = errors.Join(err, (&sessionACPProjection{files: paths}).remove())
+	// A filtered child's MCP handoff that a crash stranded between its write and the daemon's read.
+	handoffs, _ := filepath.Glob(sessionMCPHandoffPath(privateRoot, "*"))
+	for _, handoff := range handoffs {
+		if removeErr := removeProjectedSessionFile(handoff); removeErr != nil {
+			err = errors.Join(err, acpFailure(sessionACPCleanupError, "a stranded MCP handoff could not be removed"))
+		}
+	}
+	return err
+}
+
+func cleanupProjectedAccount(privateRoot string, target agents.Target) error {
+	provider, ok := agents.Get(target.Provider)
 	account := target.Account()
-	if account == "" {
-		account = r.sourceCfg.DefaultProfileOf(target.Provider)
-	}
-	if !validSessionPathComponent(account) {
+	if !ok || !validSessionPathComponent(account) {
 		return acpFailure(sessionACPCleanupError, "session credential account is invalid")
 	}
 	profile := filepath.Join(privateRoot, target.Provider, "profiles", account)
 	if err := ensureNoSymlinkPath(profile); err != nil {
 		return acpFailure(sessionACPCleanupError, "private credential account is unsafe")
 	}
-	if agent.HostCredential().Declared() {
+	var err error
+	if name := provider.InstructionFile(); validArtifactName(name) {
+		err = (&sessionACPProjection{files: []string{filepath.Join(profile, name)}}).remove()
+	}
+	if provider.HostCredential().Declared() {
 		vault := filepath.Join(privateRoot, target.Provider, "host-credentials", account)
-		if err := ensureNoSymlinkPath(vault); err != nil {
-			return acpFailure(sessionACPCleanupError, "private host credential account is unsafe")
+		if pathErr := ensureNoSymlinkPath(vault); pathErr != nil {
+			return errors.Join(err, acpFailure(sessionACPCleanupError, "private host credential account is unsafe"))
 		}
-	}
-	var paths []string
-	if instructionFile := agent.InstructionFile(); validArtifactName(instructionFile) {
-		paths = append(paths, filepath.Join(profile, instructionFile))
-	}
-	for _, name := range []string{"defaults", "env", "mcp.json", "INSTRUCTIONS.md", ".coop-conf-disabled"} {
-		paths = append(paths, filepath.Join(privateRoot, name))
-	}
-	err = (&sessionACPProjection{files: paths}).remove()
-	// An API key projected for the broker sits in the private vault, beside the profile; a stuck
-	// profile artifact must not keep it there.
-	if vaultErr := box.RemoveHostCredential(&config.Config{ConfigDir: privateRoot}, agent, account); vaultErr != nil {
-		err = errors.Join(err, acpFailure(sessionACPCleanupError, "projected API key cleanup failed"))
-	}
-	// A filtered child's MCP handoff that a crash stranded between its write and the daemon's read.
-	handoffs, _ := filepath.Glob(sessionMCPHandoffPath(privateRoot, "*"))
-	for _, handoff := range handoffs {
-		if removeErr := removeProjectedSessionFile(handoff); removeErr != nil {
-			err = errors.Join(err, acpFailure(sessionACPCleanupError, "a stranded MCP handoff could not be removed"))
+		if vaultErr := box.RemoveHostCredential(&config.Config{ConfigDir: privateRoot}, provider, account); vaultErr != nil {
+			err = errors.Join(err, acpFailure(sessionACPCleanupError, "projected API key cleanup failed"))
 		}
 	}
 	return err
@@ -2052,13 +2121,6 @@ func writeCredentialArtifact(path string, data []byte) error {
 	return nil
 }
 
-func writePrivateDefaults(path, provider, account string) error {
-	if !validSessionPathComponent(provider) || !validSessionPathComponent(account) {
-		return errors.New("invalid default account")
-	}
-	return writePrivateConfig(path, []byte(provider+"="+account+"\n"))
-}
-
 func writePrivateConfig(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
@@ -2160,6 +2222,13 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, errors.Join(acpFailure(sessionACPProcessError, "session project runtime is invalid"), err)
 	}
 	env = append(env, runtimeEnv...)
+	if job.Preset != nil {
+		_, digest, err := box.EncodeControllerPreset(bound.JobDigest, job)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, box.ControllerPresetDigestEnv+"="+digest)
+	}
 	env = append(env, "COOP_SESSION_STORE_ID="+r.store.ID())
 	env = append(env, SessionOutputRootEnv+"="+outputRoot)
 	activityRole := forkspace.ExecutionRoleActiveTurn
@@ -3100,6 +3169,9 @@ func (r *sessionTurnRunner) runACP(
 		return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "turn output directory could not be prepared")
 	}
 	defer removeSessionOutputDir(outputDir)
+	if record := r.startPresetHistory(ctx, bound, leased, outputDir); record != nil {
+		defer func() { record(runErr == nil) }()
+	}
 	// The note follows the caller's prompt. It names this turn's own
 	// folder, so ahead of the prompt it ended the provider's prefix cache
 	// before the caller's instructions: every routing and learning call

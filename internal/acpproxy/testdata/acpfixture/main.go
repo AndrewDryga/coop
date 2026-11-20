@@ -20,14 +20,17 @@ type plan struct {
 }
 
 type step struct {
-	Method           string            `json:"method"`
-	Params           json.RawMessage   `json:"params,omitempty"`
-	Result           json.RawMessage   `json:"result,omitempty"`
-	Error            json.RawMessage   `json:"error,omitempty"`
-	Events           []json.RawMessage `json:"events,omitempty"`
-	EchoPrompt       bool              `json:"echo_prompt,omitempty"`
-	DeferResponse    bool              `json:"defer_response,omitempty"`
-	CompleteDeferred bool              `json:"complete_deferred,omitempty"`
+	Method             string            `json:"method"`
+	Params             json.RawMessage   `json:"params,omitempty"`
+	Result             json.RawMessage   `json:"result,omitempty"`
+	Error              json.RawMessage   `json:"error,omitempty"`
+	Events             []json.RawMessage `json:"events,omitempty"`
+	EditFixtureFile    bool              `json:"edit_fixture_file,omitempty"`
+	FailedConsultRoles []string          `json:"failed_consult_roles,omitempty"`
+	ConsultRoles       []string          `json:"consult_roles,omitempty"`
+	EchoPrompt         bool              `json:"echo_prompt,omitempty"`
+	DeferResponse      bool              `json:"defer_response,omitempty"`
+	CompleteDeferred   bool              `json:"complete_deferred,omitempty"`
 }
 
 type request struct {
@@ -120,6 +123,37 @@ func serveRuntime(args []string) error {
 						env = setEnv(env, line)
 					}
 				}
+			}
+		}
+	}
+	// A scripted lead can invoke the same read-only consult wrapper and role
+	// instructions the runtime would mount inside its box.
+	mounts := map[string]string{}
+	for i := 1; i+1 < imageAt; i++ {
+		if args[i] != "-v" {
+			continue
+		}
+		parts := strings.Split(args[i+1], ":")
+		if (len(parts) == 2 || len(parts) == 3 && parts[2] == "rw") && parts[1] == "/workspace" {
+			env = setEnv(env, "COOP_ACP_FIXTURE_WRITER_WORKSPACE="+parts[0])
+		}
+		if (len(parts) == 2 || len(parts) == 3 && parts[2] == "rw") && parts[1] == "/workspace/.coop-output" {
+			for j, val := range env {
+				if val == "COOP_PRESET_REPORT_ROOT=/workspace/.coop-output" {
+					env[j] = "COOP_PRESET_REPORT_ROOT=" + parts[0]
+				}
+			}
+		}
+		if len(parts) == 3 && parts[2] == "ro" {
+			mounts[parts[1]] = parts[0]
+		}
+	}
+	if wrapper := mounts["/usr/local/bin/coop-consult"]; wrapper != "" {
+		env = setEnv(env, "COOP_ACP_FIXTURE_CONSULT="+wrapper)
+		for i, item := range env {
+			key, value, _ := strings.Cut(item, "=")
+			if strings.HasPrefix(key, "COOP_CONSULT_") && strings.HasSuffix(key, "_CONTRACT") && mounts[value] != "" {
+				env[i] = key + "=" + mounts[value]
 			}
 		}
 	}
@@ -311,6 +345,51 @@ func serveProvider(provider string) error {
 		}
 		if len(expected.Params) > 0 && !sameJSON(req.Params, expected.Params) {
 			return fmt.Errorf("step %d %s params = %s, want %s", i+1, req.Method, req.Params, expected.Params)
+		}
+		if expected.EditFixtureFile {
+			workspace := os.Getenv("COOP_ACP_FIXTURE_WRITER_WORKSPACE")
+			if req.Method != "session/prompt" || workspace == "" {
+				return errors.New("no writable workspace for the contributor")
+			}
+			if err := os.WriteFile(filepath.Join(workspace, "message.txt"), []byte("updated message\n"), 0600); err != nil {
+				return err
+			}
+		}
+		if len(expected.ConsultRoles)+len(expected.FailedConsultRoles) != 0 {
+			var input struct {
+				SessionID string `json:"sessionId"`
+			}
+			if req.Method != "session/prompt" || json.Unmarshal(req.Params, &input) != nil || input.SessionID == "" {
+				return errors.New("consult roles require a session prompt")
+			}
+			for _, role := range append(expected.ConsultRoles, expected.FailedConsultRoles...) {
+				wrapper := os.Getenv("COOP_ACP_FIXTURE_CONSULT")
+				if wrapper == "" {
+					return errors.New("missing read-only consult wrapper mount")
+				}
+				cmd := exec.Command(wrapper, role, "--fresh", "Review the requested revision.")
+				fail := slices.Contains(expected.FailedConsultRoles, role)
+				if fail {
+					cmd.Env = append(os.Environ(), "COOP_ACP_FIXTURE_FAIL_THIS_PEER=1")
+				}
+				out, err := cmd.CombinedOutput()
+				if fail {
+					if err == nil {
+						return fmt.Errorf("consult %s unexpectedly succeeded", role)
+					}
+					continue
+				}
+				if err != nil {
+					return fmt.Errorf("consult %s: %w: %s", role, err, out)
+				}
+				update, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": input.SessionID, "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": string(out)}}}})
+				if err != nil {
+					return err
+				}
+				if err := emit(transcript, update); err != nil {
+					return err
+				}
+			}
 		}
 		if expected.EchoPrompt {
 			echo, err := promptEcho(req.Params, provider)

@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-11-09
+updated: 2026-11-20
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -463,3 +463,9 @@ this one has it.
 - 2026-11-03 — added `acpproxy -> safetext`: the ACP trace records text a box chose and shows its hidden
   characters as codes at the one place every trace line passes. `acpctl` reuses that function for thread
   text instead of its own copy, so its edge to `safetext` is gone.
+
+
+- 2026-11-20 — A frozen job preset uses the same account and role checks during protocol
+  admission and worker execution. `workerproto` imports `agent` for canonical target parsing and
+  `preset` for the recipe and lead-role compatibility checks. Decoding a job uses only those
+  in-memory functions. `sessionsvc` stores the validated `preset` on its execution policy.

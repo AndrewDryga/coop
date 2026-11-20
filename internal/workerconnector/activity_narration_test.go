@@ -316,3 +316,14 @@ func TestDaemonActivityCrossesWithoutTheCheckoutRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestPresetPeerExportsOnlyItsReportedOutcome(t *testing.T) {
+	raw := []byte(`{"role":"reader","mode":"consult","status":"failed","failed_attempts":1,"cause":"private provider details","prompt":"private instructions"}`)
+	event := decodeNarration(t, "preset.peer", string(raw))
+	if !operatorActivityEvent("preset.peer") || len(event) != 4 || event["role"] != "reader" || event["status"] != "failed" {
+		t.Fatalf("public peer event = %v", event)
+	}
+	if _, ok := publicActivityPayload("preset.peer", []byte(`{"role":"/private/source","mode":"consult","status":"failed","failed_attempts":1}`)); ok {
+		t.Fatal("invalid role name reached the controller")
+	}
+}

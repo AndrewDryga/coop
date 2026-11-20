@@ -653,7 +653,7 @@ use up one of those review attempts.</p>
 <tr>
 <td><code>GET</code></td>
 <td><code>/v1/capabilities</code></td>
-<td><code>{&#34;job_<wbr/>spec_<wbr/>versions&#34;:[2],&#34;project_<wbr/>runtime_<wbr/>versions&#34;:[1],&#34;controller_<wbr/>tools_<wbr/>versions&#34;:[1],&#34;repository_<wbr/>freshness_<wbr/>receipt_<wbr/>versions&#34;:[2],&#34;session_<wbr/>evidence_<wbr/>versions&#34;:[1],&#34;review_<wbr/>commit_<wbr/>message_<wbr/>versions&#34;:[1],&#34;existing_<wbr/>pr_<wbr/>publication_<wbr/>versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
+<td><code>{&#34;job_<wbr/>spec_<wbr/>versions&#34;:[2],&#34;project_<wbr/>runtime_<wbr/>versions&#34;:[1],&#34;job_<wbr/>preset_<wbr/>versions&#34;:[1],&#34;controller_<wbr/>tools_<wbr/>versions&#34;:[1],&#34;repository_<wbr/>freshness_<wbr/>receipt_<wbr/>versions&#34;:[2],&#34;session_<wbr/>evidence_<wbr/>versions&#34;:[1],&#34;review_<wbr/>commit_<wbr/>message_<wbr/>versions&#34;:[1],&#34;existing_<wbr/>pr_<wbr/>publication_<wbr/>versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -748,7 +748,7 @@ starts accepting them again only when use drops to <code>storage.low_watermark_b
 must leave <code>storage.reserve_bytes</code> free. These checks don&#39;t limit how much data an already-running
 task writes in its workspace.</p>
 <p>Before reporting support for <code>job-setup:2</code>, <code>repository-freshness:2</code>, <code>session-evidence:1</code>,
-<code>controller-tools:1</code>, <code>project-runtime:1</code> or <code>review-commit-message:1</code>, the connector checks the running daemon&#39;s
+<code>controller-tools:1</code>, <code>project-runtime:1</code>, <code>job-preset:1</code> or <code>review-commit-message:1</code>, the connector checks the running daemon&#39;s
 <code>GET /v1/capabilities</code> response for the matching version. If it can&#39;t verify a capability,
 it leaves it out of the next hello.</p>
 <p>Worker protocol v2 reports supported features, runtime capacity and optional disk measurements.
@@ -843,6 +843,20 @@ advertising <code>project-runtime:1</code>, proven by <code>project_runtime_vers
 The runtime&#39;s <code>environment</code> holds frozen project defaults, with a 64 KiB limit measured as escaped
 JSON. Candidate <code>review.env</code> overrides those defaults. The job&#39;s root <code>environment</code> and
 <code>check.environment</code> remain controller authority and override candidate values.</p>
+<p>A job can also include a version 1 <code>preset</code>. Its <code>name</code>, <code>lead_prompt</code> and ordered
+<code>roles</code> are frozen alongside the job&#39;s lead <code>targets</code>. Each role carries <code>name</code>,
+<code>mode</code>, <code>targets</code>, routing hints in <code>when</code>, and the contents of its <code>prompt</code>.
+Every target names one explicit account. A read-only job can use consult or
+native roles. A delegate needs a writable job. The connector proves
+<code>job-preset:1</code> before a controller places one. To export a global recipe with
+its current prompts and default accounts, run <code>coop presets NAME --export-job</code>.
+The output contains the job&#39;s <code>targets</code> and <code>preset</code> fields. Publish a new export
+when approving a changed recipe. Admitted jobs keep their original contents.</p>
+<p>After each prompt, the worker records a <code>preset.peer</code> event for each configured role.
+Each event names the role, its mode, its reported status and its failed attempt count.
+Consult and delegate wrappers report calls from that prompt, including unsuccessful attempts before a fallback.
+Statuses are <code>answered</code>, <code>failed</code>, <code>not_called</code> and <code>unknown</code>. Native roles and incomplete reports
+show <code>unknown</code>. The same worker process can handle several prompts, each with its own report.</p>
 <p>Work gets its own Compose project and default network, and services get finite job resource caps.
 At least one service must join the default network; custom-only network topologies are refused
 before startup. Service aliases and additional project networks are preserved. Required setup

@@ -30,6 +30,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/sessionsvc"
 	"github.com/AndrewDryga/coop/internal/testutil/starttoken"
 	"github.com/AndrewDryga/coop/internal/ui"
+	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
 const testForkSessionStoreID = "store_test"
@@ -1070,7 +1071,7 @@ func TestForkACPMountsAWritableSessionsPrivateOutputRoot(t *testing.T) {
 
 // launchSessionForkACP runs a remote session's fork ACP child against a recording runtime and
 // returns the fork workspace, the private output root the daemon named, and the runtime's args.
-func launchSessionForkACP(t *testing.T, readOnly bool) (string, string, string) {
+func launchSessionForkACP(t *testing.T, readOnly bool, frozen ...workerproto.JobPreset) (string, string, string) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -1130,7 +1131,28 @@ func launchSessionForkACP(t *testing.T, readOnly bool) (string, string, string) 
 		},
 		rt: recordingRuntime(t, recorder), rtSet: true,
 	}
-	if code, runErr := a.forkACP("readonly", []string{"codex"}); runErr != nil || code != 0 {
+	target := "codex"
+	if len(frozen) > 0 {
+		a.cfg.Homes = true
+		target = "codex@default"
+		identity := strings.Repeat("a", 64)
+		job := workerproto.JobSpec{Targets: []string{target}, RepositoryReadOnly: readOnly, Preset: &frozen[0]}
+		data, digest, err := box.EncodeControllerPreset(identity, job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(privateRoot, box.ControllerPresetFile), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, provider := range []string{"codex", "gemini"} {
+			if err := os.MkdirAll(a.cfg.AgentProfileDir(provider, "default"), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv(box.ControllerJobEnv, identity)
+		t.Setenv(box.ControllerPresetDigestEnv, digest)
+	}
+	if code, runErr := a.forkACP("readonly", []string{target}); runErr != nil || code != 0 {
 		t.Fatalf("forkACP = (%d, %v), want a mounted session", code, runErr)
 	}
 	args, err := os.ReadFile(recorder)
@@ -1138,6 +1160,21 @@ func launchSessionForkACP(t *testing.T, readOnly bool) (string, string, string) 
 		t.Fatal(err)
 	}
 	return workspace, hostOutputRoot, string(args)
+}
+
+func TestFrozenControllerReviewMountsItsConsultAndReadOnlySource(t *testing.T) {
+	recipe := workerproto.JobPreset{Version: 1, Name: "review", Roles: []workerproto.JobPresetRole{
+		{Name: "reader", Mode: "consult", Targets: []string{"gemini@default"}, When: []string{}, Prompt: "Read the change and report your findings."},
+	}}
+	workspace, _, args := launchSessionForkACP(t, true, recipe)
+	for _, want := range []string{workspace + ":" + sessionsvc.StableWorkdir + ":ro", "COOP_CONSULT_READER_TARGETS=", "coop-consult"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("frozen controller review launch omitted %q", want)
+		}
+	}
+	if strings.Contains(args, box.ControllerPresetDigestEnv) {
+		t.Error("host launch authority reached the box")
+	}
 }
 
 func TestRemoteForksKeepPrivateHostSourcesWithOneBoxWorkdir(t *testing.T) {

@@ -84,6 +84,10 @@ func sessionNetworkAdmissionSpec(cfg *config.Config, policy executionConfig, wor
 	if len(policy.Targets) != 0 {
 		lead = policy.Targets[0].Provider
 	}
+	consultLead := ""
+	if policy.Preset != nil {
+		consultLead = lead
+	}
 	network, cache := false, false
 	if cfg != nil {
 		network, cache = cfg.Network, cfg.Cache
@@ -92,6 +96,7 @@ func sessionNetworkAdmissionSpec(cfg *config.Config, policy executionConfig, wor
 		Repo: workspace, Workdir: workspace, PolicyRepo: policy.Repository,
 		RepoReadOnly: policy.RepositoryReadOnly, ForkName: forkName,
 		Agent: lead, Peers: append([]agents.Target(nil), policy.Targets...),
+		Preset: policy.Preset, ConsultLead: consultLead,
 		NetworkClient:         egress.ClientACP,
 		Homes:                 true,
 		Network:               network,
