@@ -167,9 +167,15 @@ and a finished rebase onto an open request's `onto` (`driftRebased`), go back to
 fork's loop; with a request open, any other HEAD (`driftConflicts`, `driftRebasing`, even a rebase
 stopped half way) is the loop's to finish, never a hand reset; without one, a HEAD that no longer
 descends is refused by merge and, up front, by a loop start (`RefuseDivergedFork`), both naming the
-ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`.
+ways on: reset the fork's branch to the candidate commit, or `coop fork rm <name> --force`. Every
+go-back command comes from `forkctl.GoBackCommand`, which starts with `git rebase --abort` while a
+rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the branch where it was).
 
 ## Changelog
+- 2026-11-19 — the go-back advice for a fork whose branch left the reviewed commit was a bare
+  `git reset --hard`, which mid-rebase moves the detached HEAD and not the branch; every go-back
+  advice now aborts a rebase in progress first (task
+  2026-11-19-name-git-rebase-abort-in-the-go-back-advice-for).
 - 2026-11-19 — an isolated fork's merge had no landed-as-reviewed check and the join commits did not
   make one unnecessary: reviewed A (remove a line), B (add it back), C on a branch with A's patch
   landed the line unseen; the merge now compares line edits and bindings and refuses (task

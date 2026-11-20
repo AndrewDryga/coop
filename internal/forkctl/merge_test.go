@@ -1056,6 +1056,45 @@ func TestTaskCandidateMergeNamesTheWayOutOfAChangedFork(t *testing.T) {
 	}
 }
 
+// A person's own rebase in the fork stopped half-way, with no rebase request open: the go-back
+// advice aborts it first, since mid-rebase HEAD is detached and a reset would leave the branch where
+// it was. Following the advice exactly puts the branch back on the reviewed commit, and it merges.
+func TestChangedForkGoBackAdviceAbortsARebaseInProgress(t *testing.T) {
+	repo, ws, _, identity, c := prepareForkTaskCandidate(t, "task-changed-mid-rebase")
+	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)
+	if err != nil || !ok {
+		t.Fatalf("read candidate: ok=%v err=%v", ok, err)
+	}
+	name := identity.Name
+	git(t, ws, "commit", "-q", "--amend", "-m", "implement canonical task, by hand\n\nCoop-Task: canonical-task")
+	// Replays the amended commit, then stops at the failing exec: git is mid-rebase, HEAD detached.
+	if err := exec.Command("git", "-C", ws, "rebase", "-q", "-x", "false", "HEAD~1").Run(); err == nil {
+		t.Fatal("the rebase should stop at its failing exec")
+	}
+	if !RebaseInProgress(ws) {
+		t.Fatal("no rebase in progress in the fork")
+	}
+	want := shellLine([]string{"git", "-C", ws, "rebase", "--abort"}) + " && " +
+		shellLine([]string{"git", "-C", ws, "reset", "--hard", candidate.Head})
+	var block *ui.UsageError
+	if err := RefuseDivergedFork(repo, identity); !errors.As(err, &block) ||
+		!slices.Contains(block.Rows, [2]string{"Go back to the reviewed commit:", want}) {
+		t.Fatalf("loop refusal mid-rebase = %v, want the row %q", err, want)
+	}
+	if out, err := exec.Command("sh", "-c", want).CombinedOutput(); err != nil {
+		t.Fatalf("following the advice: %v\n%s", err, out)
+	}
+	if got := forkspace.GitOut(ws, "symbolic-ref", "--quiet", "--short", "HEAD"); got != name {
+		t.Fatalf("after the advice HEAD is on %q, want the branch %s", got, name)
+	}
+	if s := c.gatherForkStatus(repo, name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "ready" {
+		t.Fatalf("fork after the advice: state %q", s.stateCell())
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", name, false); !landed || err != nil {
+		t.Fatalf("merge after going back = (%v, %v)", landed, err)
+	}
+}
+
 func TestTaskCandidateMergeReplaysCrashAfterRedGateRestoresWorkspace(t *testing.T) {
 	repo, ws, root, identity, c := prepareForkTaskCandidate(t, "task-red-gate-crash")
 	candidate, ok, err := tasks.ReadForkCandidate(repo, identity)

@@ -149,7 +149,7 @@ func skippedCommitError(ws, name, branch, detail, tail, back string) error {
 	again := [2]string{"Or remove " + words + "'s commit with that change from its history, then merge again:", "coop fork merge " + name}
 	if back != "" {
 		again = [2]string{"Or remove " + words + "'s commit with that change from its history, go back to the reviewed commit and merge again:",
-			shellLine([]string{"git", "-C", ws, "reset", "--hard", back}) + " && coop fork merge " + name}
+			GoBackCommand(ws, "reset", "--hard", back) + " && coop fork merge " + name}
 	}
 	return ui.CommandFailed("Fork "+name+"'s reviewed commit is already on "+words, cause,
 		[2]string{"Discard its work and return its tasks to the queue:", "coop fork rm " + name + " --force"}, again)

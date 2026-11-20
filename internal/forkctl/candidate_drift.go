@@ -149,7 +149,7 @@ func droppedReviewedWork(ws, head, onto string) []string {
 // the loop, merge and ls all say the same: either the parent already has the reviewed work, which
 // only a person can close, or the rebase dropped it, which a rebase from the reviewed commit redoes.
 func emptyRebaseError(ws, name string, candidate tasks.ForkCandidate, onto string, merging bool) error {
-	back := shellLine([]string{"git", "-C", ws, "reset", "--hard", candidate.Head})
+	back := GoBackCommand(ws, "reset", "--hard", candidate.Head)
 	tail := ""
 	if merging {
 		tail = " Nothing was merged."
@@ -190,7 +190,7 @@ func parentBranchWords(branch string) string {
 // ways on that work today. Going back is a hard reset of the fork's branch, so it names the commit
 // the fork's reflog keeps. rebase is the open rebase request, nil for none.
 func candidateDriftError(ws, name string, candidate tasks.ForkCandidate, head string, drift candidateDrift, rebase *tasks.ForkCandidateRebase, merging bool) error {
-	back := shellLine([]string{"git", "-C", ws, "reset", "--hard", candidate.Head})
+	back := GoBackCommand(ws, "reset", "--hard", candidate.Head)
 	loop := "coop fork " + name + " --loop"
 	discard := [2]string{"Or discard its work:", "coop fork rm " + name + " --force"}
 	tail := ""
@@ -304,6 +304,17 @@ const (
 // a person runs one) or Coop's view of it, so advice that moves its branch must abort it first.
 func RebaseInProgress(ws string) bool {
 	return untrustedRebaseState(ws) != "" || leftoverRebaseState(ws) != ""
+}
+
+// GoBackCommand is the git command a person runs to put the fork's branch back on a commit, such as
+// `reset --hard <reviewed>`. In the middle of a rebase HEAD is detached, so a reset would move it and
+// not the branch, and git refuses to switch branches at all; the rebase is aborted first then.
+func GoBackCommand(ws string, move ...string) string {
+	back := shellLine(append([]string{"git", "-C", ws}, move...))
+	if RebaseInProgress(ws) {
+		back = shellLine([]string{"git", "-C", ws, "rebase", "--abort"}) + " && " + back
+	}
+	return back
 }
 
 // CheckRebase reports how far the fork's rebase onto the parent commit onto got, whoever ran it.

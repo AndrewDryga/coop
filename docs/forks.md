@@ -464,7 +464,8 @@ and `coop fork merge` refuses it. New commits on top of the reviewed one need an
 the fork's loop gives them. Any other branch that no longer builds on the reviewed commit, such as
 one you rewrote by hand with no conflicting merge waiting, can neither merge nor be reviewed again:
 reset the fork's branch to the reviewed commit that the refusal names, or discard the fork's work
-with `coop fork rm <name> --force`.
+with `coop fork rm <name> --force`. If a rebase of yours is still in progress in the fork, the
+command it names aborts that rebase first.
 
 A loop that stops prints a `Continue:` line that repeats the exact run you started, its agent and
 options included. `coop fork <name> --loop` resumes it as well, with the fork's saved agent.
