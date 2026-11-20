@@ -52,6 +52,9 @@ hide its diff from reviews that find a task's commits by trailer. The bound comm
 HEAD's history, not base's: an attempt refused for two bound commits ("make the follow-ups
 unbound") whose next attempt amends the follow-up unbound has one left in HEAD but two in base,
 and the fold is its way on too (N1 of the 2026-11-20 live pass; `countProblem` names it as well).
+Neither message offers the fold for a bound commit a remote-tracking or parent branch already has,
+or when Coop cannot tell (`tasks.BoundCommitPublished`): the advice is then to block for a person,
+since the fold would rewrite shared history ([[loop-range-rejects-outside-commits]]).
 
 **Committed, then blocked for a person.** A worker that commits and then blocks (a required gate
 cannot run in the box) left a task no later worker could close once other commits landed: it is
@@ -148,6 +151,8 @@ checked nothing" would again diff to nothing. For the same reason a history that
 parent (a root commit, an unreadable log) leaves the variable unset rather than falling back to HEAD.
 
 ## Changelog
+- 2026-11-20 — the fold advice blocks for a person instead when the bound commit is published or
+  Coop cannot tell (task 2026-11-20-make-the-fold-advice-for-a-task-s-bound-commit-s).
 - 2026-11-20 — following "make the follow-up unbound" in the next attempt was refused with no way
   on; the bound-rework fold now also answers it (counted in HEAD), with a test that follows the
   printed advice (task 2026-11-20-fix-four-rough-edges-found-by-the-live-isolated).

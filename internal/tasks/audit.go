@@ -179,6 +179,16 @@ func CommitsForTask(repo, rangeExpr, id string) []string {
 	return shas
 }
 
+// BoundCommitPublished says whether commit may already be shared, so advice must never tell an
+// agent to rewrite it: a remote-tracking ref reaches it. In a fork's clone those refs are the
+// parent's branches as of its creation or its last merge, so a commit the parent branch has counts
+// too. When git cannot say, it answers true, and the advice built on it blocks for a person.
+// It only picks advice: the completion check never asks it.
+func BoundCommitPublished(repo, commit string) bool {
+	refs, err := forkspace.GitOutErr(repo, "for-each-ref", "--count=1", "--contains", commit, "--format=%(refname)", "refs/remotes/")
+	return err != nil || refs != ""
+}
+
 // TaskCommits is CommitsForTask for a caller that must tell a task with no commit from a history it
 // could not read.
 func TaskCommits(repo, rangeExpr, id string) ([]string, error) {
@@ -3253,9 +3263,10 @@ func UnbindableTaskProblems(repo, base, head string, ids []string, touched map[s
 	if !ok {
 		return scan.refused
 	}
+	published := func(commit string) bool { return BoundCommitPublished(repo, commit) }
 	var problems []string
 	for _, id := range ids {
-		if problem := scan.countProblem(id); problem != "" {
+		if problem := scan.countProblem(id, published); problem != "" {
 			problems = append(problems, problem)
 		}
 	}
@@ -3374,7 +3385,9 @@ type taskBindingScan struct {
 }
 
 // countProblem says why id lacks exactly one valid binding both in range and reachable, or "".
-func (scan taskBindingScan) countProblem(id string) string {
+// published says whether a commit from before the attempt may already be shared, which turns the
+// fold advice into blocking for a person.
+func (scan taskBindingScan) countProblem(id string, published func(commit string) bool) string {
 	label := bindingLabel(id)
 	if commit := scan.invalid[id]; commit != "" {
 		return fmt.Sprintf("commit %s names task %s in a trailer block that also names another task or cannot be read, so it binds nothing", shortCommit(commit), label)
@@ -3383,10 +3396,15 @@ func (scan taskBindingScan) countProblem(id string) string {
 	switch added := scan.newBound[id]; {
 	case len(added) == 0 && len(older) == 0:
 		return fmt.Sprintf("no commit carries the trailer %s", CoopTaskTrailer+": "+label)
+	case len(added) == 0 && len(older) == 1 && published(older[0]):
+		// The fold rewrites that commit, and a published one is shared history.
+		return fmt.Sprintf("task %s's commit %s is from before this attempt, which added no commit with its trailer; that commit is already on a remote-tracking or parent branch, or Coop could not tell, so never reset, amend or rebase it: %s",
+			label, shortCommits(older), blockForPerson)
 	case len(added) == 0 && len(older) == 1:
 		// A follow-up made unbound, as the refusals below advise, lands here in the next attempt.
-		return fmt.Sprintf("task %s's commit %s is from before this attempt, which added no commit with its trailer; fold this attempt's work for it into that commit (git reset --soft %s, then git commit --amend), when nothing but this task's work sits after it",
-			label, shortCommits(older), shortCommit(older[0]))
+		bound := shortCommit(older[0])
+		return fmt.Sprintf("task %s's commit %s is from before this attempt, which added no commit with its trailer; if `git log %s..HEAD` shows only this task's own work, fold it into that commit (git reset --soft %s, then git commit --amend --no-edit --only -- <changed paths>); if another task's commit sits after it, never rewrite it: %s",
+			label, bound, bound, bound, blockForPerson)
 	case len(added) == 0:
 		return fmt.Sprintf("task %s's commit %s is from before this attempt, which added no commit with its trailer", label, shortCommits(older))
 	case len(added) > 1:
@@ -3396,6 +3414,10 @@ func (scan taskBindingScan) countProblem(id string) string {
 	}
 	return ""
 }
+
+// blockForPerson ends advice that must not rewrite history. A box's agent and a person on the host
+// both read these problems, in the refusal and in the task's log.
+const blockForPerson = "block the task for a person (tasks_block in a box, coop tasks block on the host)"
 
 // The most commits or problems a refusal names before it says how many more there are: a box can
 // plant any number.

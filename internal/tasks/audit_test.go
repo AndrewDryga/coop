@@ -3590,10 +3590,52 @@ func TestBindingRefusalsNameCommitsTasksAndReasons(t *testing.T) {
 		base := commit(git, repo, "follow-up, its trailer since dropped")
 		head := commit(git, repo, "more work")
 		got := UnbindableTaskProblems(repo, base, head, []string{"task-42"}, touched)
-		if len(got) != 1 || !strings.Contains(got[0], "is from before this attempt") || !strings.Contains(got[0], "git reset --soft "+shortCommit(first)) {
-			t.Fatalf("problems = %q; want the fold into %s named", got, first)
+		if len(got) != 1 || !strings.Contains(got[0], "is from before this attempt") || !strings.Contains(got[0], "git reset --soft "+shortCommit(first)) ||
+			!strings.Contains(got[0], "git commit --amend --no-edit --only -- <changed paths>") || !strings.Contains(got[0], "git log "+shortCommit(first)+"..HEAD") ||
+			!strings.Contains(got[0], "if another task's commit sits after it, never rewrite it: "+blockForPerson) {
+			t.Fatalf("problems = %q; want the exact fold into %s named, and blocking when another task's commit follows it", got, first)
 		}
 	})
+	// The fold rewrites the bound commit, so for one an upstream or the fork's parent branch already
+	// has, the advice is to block for a person: an agent following it must never rewrite shared history.
+	t.Run("a published binding from before the attempt says to block, not fold", func(t *testing.T) {
+		repo, git := gitRepo(t)
+		commit(git, repo, "base")
+		first := commit(git, repo, "work\n\nCoop-Task: task-42")
+		git("update-ref", "refs/remotes/origin/main", first)
+		base := commit(git, repo, "follow-up, its trailer since dropped")
+		head := commit(git, repo, "more work")
+		got := UnbindableTaskProblems(repo, base, head, []string{"task-42"}, touched)
+		if len(got) != 1 || !strings.Contains(got[0], "is from before this attempt") || !strings.Contains(got[0], "never reset, amend or rebase it: "+blockForPerson) ||
+			strings.Contains(got[0], "reset --soft") || strings.Contains(got[0], "--amend") {
+			t.Fatalf("problems = %q; want blocking for a person, with no rewrite of the published %s", got, first)
+		}
+		if missing, _ := unbindableTasks(repo, base, head, []string{"task-42"}, touched); !slices.Equal(missing, []string{"task-42"}) {
+			t.Fatalf("missing = %v; the completion check must refuse it as before", missing)
+		}
+	})
+}
+
+// BoundCommitPublished only picks advice, and when git cannot place the commit it answers
+// published, so the advice blocks for a person instead of rewriting.
+func TestBoundCommitPublished(t *testing.T) {
+	repo, git := gitRepo(t)
+	commit := func(message string) string {
+		git("commit", "-q", "--allow-empty", "-m", message)
+		return forkspace.GitOut(repo, "rev-parse", "HEAD")
+	}
+	first := commit("first")
+	second := commit("second")
+	if BoundCommitPublished(repo, first) {
+		t.Fatal("a repository with no remote-tracking ref published its own commit")
+	}
+	git("update-ref", "refs/remotes/upstream/main", first)
+	if !BoundCommitPublished(repo, first) || BoundCommitPublished(repo, second) {
+		t.Fatalf("published = %v, %v; want only the commit a remote-tracking ref reaches", BoundCommitPublished(repo, first), BoundCommitPublished(repo, second))
+	}
+	if !BoundCommitPublished(repo, strings.Repeat("0", 40)) {
+		t.Fatal("a commit git cannot find read as unpublished; want the safe answer")
+	}
 }
 
 // TestReportToleratedForeignBindings covers the report+journal shape for a harmless foreign binding:

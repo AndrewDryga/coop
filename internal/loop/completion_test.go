@@ -566,6 +566,37 @@ func TestFollowingTheMakeItUnboundAdviceInTheNextAttemptCompletes(t *testing.T) 
 	}
 }
 
+// The fold rewrites the bound commit. When an upstream or the fork's parent branch already has it,
+// the refusal must not send an agent to rewrite shared history: it says to block for a person, and
+// what the completion check refuses is unchanged.
+func TestBoundReworkOnAPublishedCommitSaysToBlock(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	repo, git := gitrepo.New(t)
+	writeTaskFile(t, filepath.Join(repo, "answer.txt"), "first\n")
+	git("add", "answer.txt")
+	git("commit", "-q", "-m", "Ship it\n\nCoop-Task: task")
+	bound := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	git("update-ref", "refs/remotes/origin/main", "HEAD") // pushed, or the parent of a fork's clone
+	base := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "answer.txt"), "fixed\n")
+	git("commit", "-q", "-am", "Fix the review finding")
+	err := checkAssignedCompletion(repo, base, "task", nil, nil)
+	if !errors.Is(err, errCompletionBinding) {
+		t.Fatalf("an unbound follow-up of a published bound commit completed: %v", err)
+	}
+	for _, want := range []string{"already has its bound commit " + bound + " from before this attempt", "never reset, amend or rebase it", "Block the task with tasks_block"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("published bound rework refusal lacks %q: %v", want, err)
+		}
+	}
+	for _, rewrite := range []string{"reset --soft", "--amend", "Coop-Recovery"} {
+		if strings.Contains(err.Error(), rewrite) {
+			t.Errorf("published bound rework refusal still offers a rewrite (%q): %v", rewrite, err)
+		}
+	}
+}
+
 func TestAuditReworkOutcomeRefusalNamesTheNormalCompletion(t *testing.T) {
 	for _, want := range []string{"outcome is refused", "re-close it with a normal completion, calling tasks_complete without outcome", "zero new commits"} {
 		if !strings.Contains(errAuditReworkOutcome.Error(), want) {

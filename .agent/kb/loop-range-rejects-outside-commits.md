@@ -3,7 +3,7 @@ name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/forkctl/isolated_land.go, internal/tasks/lease.go, internal/tasks/completion.go, internal/config/private.go]
-updated: 2026-11-19
+updated: 2026-11-20
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -75,6 +75,17 @@ box writes trailers) and the reason — capped at five plus a count. A count fai
 `tasks.UnbindableTaskProblems` (no new commit, an older binding plus a new one, several new ones).
 The failure box, the `RestoreQueuedCompletion` log note and the in-box `tasks_complete` refusal all
 quote them, so the next attempt does not mistake another task's commit for its own mistake.
+
+**Fold advice never rewrites a published commit.** A task bound before this attempt, with no binding
+in it, is told to fold its rework into the bound commit: `git reset --soft <bound>`, then exactly
+`git commit --amend --no-edit --only -- <changed paths>` (the in-box refusal, `boundReworkRecovery`,
+and `countProblem` name the same form; a bare `--amend` sweeps unrelated staged files in), and to
+block if another task's commit sits after it. Both first ask `tasks.BoundCommitPublished`: a commit
+a remote-tracking ref reaches (in a fork's clone, `origin/*` is the parent's branches at creation or
+the last merge) is shared history, so the advice is to block the task for a person instead; git
+failing to answer counts as published. That check picks advice only. What the completion check
+accepts is unchanged, and the box can delete its remote refs, which only earns it advice it could
+ignore anyway.
 
 **A host lifecycle move cannot be told apart from a box's, so it is not tolerated.** The tempting
 fix for the operator case is to tolerate a binding for a task the host CLI closed. There is no
@@ -196,6 +207,8 @@ loop holds its iteration lease before entering the short ref window; host comple
 authority before attempting task-completion authority.
 
 ## Changelog
+- 2026-11-20 — fold advice names one exact amend form and blocks for a person when the bound commit
+  is published or Coop cannot tell (task 2026-11-20-make-the-fold-advice-for-a-task-s-bound-commit-s).
 - 2026-11-17 — real names: (*Control).FastForwardParent, TryTaskLease in lease.go; the land and isolated land paths take the ref-authority lock too; sources gain the files the card names (audit K3-6, K3-7; checked every LockRefAuthority caller).
 - 2026-11-06 — claim and unblock name a task's existing binding (task
   2026-11-06-catch-a-second-coop-task-binding-before-a-task-c).

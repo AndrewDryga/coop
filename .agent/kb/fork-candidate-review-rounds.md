@@ -182,7 +182,9 @@ file written there tests nothing.
 A reviewed fork whose HEAD moved off its active candidate is not landable, so `coop fork ls` shows it
 as `changed` ("changed after review") rather than `ready`, and one with an open conflict request whose
 rebase is not finished as `conflict` ("conflicts with your branch"); a `changed` or `skipped`
-request and a shallow repository (`driftShallow`, ls only) read as `changed`. It counts its changes from where
+request and a shallow repository (`driftShallow`, ls only) read as `changed`. An isolated fork's
+shallow file ls cannot place, because the file or the merge boundary cannot be read, counts as a
+cut, so ls never calls ready a fork merge refuses. It counts its changes from where
 it meets the branch, as merge does; otherwise `forkspace.WorkspaceChanges` counts from where HEAD
 meets the fork's base (`origin/HEAD`), since a red-gate land restores the candidate after its rebase
 moved that base to the newer parent, which counted the parent's own lines as the fork's removals. `forkCandidateDrift` tells the cases apart: new commits on top,
@@ -197,6 +199,8 @@ rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the b
 reflog keeps.
 
 ## Changelog
+- 2026-11-20 — ls no longer calls an isolated fork with a shallow file ready when it cannot read the
+  merge boundary (task 2026-11-20-make-the-fold-advice-for-a-task-s-bound-commit-s).
 - 2026-11-20 — ls called any shallow isolated fork changed; it now asks `isolatedShallowCut`, as merge
   does, so a shallow clone's inherited file reads ready. A task pass stopped by a first Ctrl-C
   (exit 130, final review skipped) is restored to in progress and redone with the bound-rework fold

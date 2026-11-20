@@ -66,7 +66,7 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 	// Counted in HEAD's history, not base's: an earlier attempt refused for two bound commits whose
 	// follow-up this attempt made unbound, as that refusal said, has one left, and the fold is the way on.
 	if bound := tasks.CommitsForTask(repo, head, id); len(bound) == 1 && len(tasks.CommitsForTask(repo, base+".."+head, id)) == 0 {
-		return fmt.Errorf("%w: %s", errCompletionBinding, boundReworkRecovery(id, bound[0]))
+		return fmt.Errorf("%w: %s", errCompletionBinding, boundReworkRecovery(repo, id, bound[0]))
 	}
 	cause := ""
 	if problems := tasks.UnbindableTaskProblems(repo, base, head, missing, touched); len(problems) > 0 {
@@ -79,8 +79,12 @@ func checkAssignedCompletion(repo, base, id string, reopen *tasks.AuditReopenRec
 // reopened work, usually committed as a follow-up. Both retries workers reached for fail — a normal
 // completion needs a binding in this attempt's range, and an outcome is refused for a bound task —
 // and two forks stopped for a person this way, so it names the shape that passes: the rework folded
-// into the bound commit, while nothing but that rework sits after it.
-func boundReworkRecovery(id, bound string) string {
+// into the bound commit, while nothing but that rework sits after it. The fold rewrites that commit,
+// so for one a remote-tracking or parent branch may already have, it says to block for a person.
+func boundReworkRecovery(repo, id, bound string) string {
+	if tasks.BoundCommitPublished(repo, bound) {
+		return fmt.Sprintf("task %[1]s already has its bound commit %[2]s from before this attempt, so outcome is refused and a commit after it does not bind. That commit is already on a remote-tracking or parent branch, or Coop could not tell, so it is shared history: never reset, amend or rebase it. Block the task with tasks_block, saying its rework needs a person to decide how to bind it", id, bound)
+	}
 	return fmt.Sprintf("task %[1]s already has its bound commit %[2]s from before this attempt, so outcome is refused and a commit after it does not bind: put this task's rework into that commit. If `git log %[2]s..HEAD` shows only this task's own rework, run `git reset --soft %[2]s` (your changes stay in the checkout), then `git commit --amend --no-edit --only -- <changed paths>`; when nothing needed changing, run `git commit --amend --only --no-edit --trailer \"Coop-Recovery: <current UTC timestamp>\"` instead. Then retry tasks_complete without outcome. If another task's commit sits after %[2]s, never rewrite it: block with tasks_block", id, bound)
 }
 

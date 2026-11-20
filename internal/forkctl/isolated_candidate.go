@@ -231,17 +231,23 @@ func refuseIsolatedShallowCut(ws, name, upstream string) error {
 }
 
 // isolatedShallowCut is refuseIsolatedShallowCut for coop fork ls, against the boundary merge would
-// use with the branch as it is now. A boundary it cannot read is not called a cut: merge says why.
+// use with the branch as it is now. A shallow file it cannot place against that boundary, because
+// the file or the boundary cannot be read, counts as a cut: ls must not call ready what merge
+// refuses. Merge itself is unchanged and says why.
 func isolatedShallowCut(repo, name string, identity forkspace.Identity) bool {
+	ws := forkspace.Workspace(repo, name)
+	if commits, err := forkspace.IndependentShallowCommits(ws); err == nil && len(commits) == 0 {
+		return false
+	}
 	parent, err := observed(repo, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
-		return false
+		return true
 	}
 	upstream, _, err := isolatedSourceBoundary(repo, identity, parent)
 	if err != nil {
-		return false
+		return true
 	}
-	return refuseIsolatedShallowCut(forkspace.Workspace(repo, name), name, upstream) != nil
+	return refuseIsolatedShallowCut(ws, name, upstream) != nil
 }
 
 // isolatedJoin is a throwaway merge commit of tree with parents first and second, or first when

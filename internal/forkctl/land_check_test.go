@@ -332,7 +332,7 @@ func TestForkLsShowsAShallowFork(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil))
-	if s.stateCell() != "changed" || s.driftLine() != "Changed: its repository is shallow; coop fork merge "+identity.Name+" names the file to remove" {
+	if s.stateCell() != "changed" || s.driftLine() != "Changed: its repository is shallow; coop fork merge "+identity.Name+" says how to go on" {
 		t.Fatalf("shallow fork: state %q, %q", s.stateCell(), s.driftLine())
 	}
 }
@@ -501,6 +501,18 @@ func TestLsAgreesWithMergeAboutAnIsolatedForksShallowFile(t *testing.T) {
 	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() != "ready" || s.Drift != driftNone {
 		t.Fatalf("ls with a shallow file at the boundary = %q, %q; want ready, as merge allows it", s.stateCell(), s.driftLine())
 	}
+	// With the parent's HEAD on a commit the creation base is not in, the boundary cannot be read, so
+	// ls cannot place the shallow file and must not call ready a fork merge refuses.
+	branch := forkspace.GitOut(repo, "symbolic-ref", "HEAD")
+	lone := forkspace.GitOut(repo, "commit-tree", "HEAD^{tree}", "-m", "unrelated")
+	git(t, repo, "update-ref", "--no-deref", "HEAD", lone)
+	if s := c.gatherForkStatus(repo, identity.Name, tasks.ReadProjectSnapshot(repo, nil)); s.stateCell() == "ready" || s.Drift != driftShallow {
+		t.Fatalf("ls with a shallow file and an unreadable boundary = %q, %q; want not ready", s.stateCell(), s.driftLine())
+	}
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil {
+		t.Fatalf("merge with an unreadable boundary = (%v, %v); want a refusal", landed, err)
+	}
+	git(t, repo, "symbolic-ref", "HEAD", branch)
 	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); !landed || err != nil {
 		t.Fatalf("merge with a shallow file at the boundary = (%v, %v)", landed, err)
 	}
