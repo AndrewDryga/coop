@@ -100,6 +100,7 @@ type privateJobSourceStager struct {
 	submoduleRemotesForTest map[string]string
 	lookupTimeoutForTest    time.Duration
 	gitForTest              func(context.Context, string, string, string, ...string) (string, error)
+	fullFetchForTest        func() // called before a copy falls back to a fetch from nothing
 	// A repository's first download, its whole history, runs in the background when set, as
 	// NewJobSourceStager sets it: a large one takes far longer than any command may hold the
 	// worker, which runs one mutation at a time. Later copies start from it and fetch only
@@ -113,6 +114,10 @@ type privateJobSourceStager struct {
 	backgroundStaging bool
 	stagingsMu        sync.Mutex
 	stagings          map[string]*firstDownload
+	// missing counts, per staging key, the tries in a row that found the source missing on the
+	// remote (missingSourceTries).
+	missingMu sync.Mutex
+	missing   map[string]int
 	// lifetime bounds the background work, which Close cancels and waits for: its Git children
 	// run in process groups of their own, so a signal to the worker's group never reaches them.
 	// Nil, as tests build a stager, the work is bounded by its timeouts alone.
@@ -238,7 +243,7 @@ func (e *Executor) stageJobSources(ctx context.Context, jobRef string, sources [
 		case errors.Is(err, errJobSourceDownloading):
 			pending = append(pending, source)
 			started = started || errors.Is(err, errJobSourceStagingStarted)
-		case errors.Is(err, ErrJobSourceIntegrity):
+		case errors.Is(err, ErrJobSourceIntegrity), errors.Is(err, errJobSourceMissing):
 			return nil, false, fmt.Errorf("%w: %v", ErrRequestRejected, err)
 		default:
 			return nil, false, classifyArtifactFetch(err, "fetch job source")
@@ -247,7 +252,39 @@ func (e *Executor) stageJobSources(ctx context.Context, jobRef string, sources [
 	return pending, started, nil
 }
 
+// missingSourceTries is how many tries in a row must find a source's commit or ref missing on the
+// remote before its job is refused. Every try asks the controller for a grant, a token minted on
+// Ryker; a commit pushed a moment ago may still be missing on one of GitHub's replicas.
+const missingSourceTries = 3
+
+// errJobSourceMissing refuses a job whose commit or ref the remote does not have.
+var errJobSourceMissing = errors.New("a commit or ref the job names is not on GitHub")
+
 func (s *privateJobSourceStager) Stage(ctx context.Context, jobRef string, source workerproto.JobSource) error {
+	err := s.stage(ctx, jobRef, source)
+	key, keyErr := source.StagingKey()
+	if keyErr != nil {
+		return err
+	}
+	s.missingMu.Lock()
+	defer s.missingMu.Unlock()
+	switch {
+	case errors.Is(err, errSourceGitMissing):
+		if s.missing == nil {
+			s.missing = map[string]int{}
+		}
+		s.missing[key]++
+		if s.missing[key] >= missingSourceTries {
+			delete(s.missing, key)
+			return errJobSourceMissing
+		}
+	case !errors.Is(err, errJobSourceDownloading):
+		delete(s.missing, key)
+	}
+	return err
+}
+
+func (s *privateJobSourceStager) stage(ctx context.Context, jobRef string, source workerproto.JobSource) error {
 	ctx, err := withSourceCredentials(ctx, s.stateRoot)
 	if err != nil {
 		return err
@@ -383,6 +420,13 @@ func (s *privateJobSourceStager) stageCopy(ctx context.Context, jobRef string, s
 		if ctx.Err() != nil || errors.Is(err, ErrJobSourceIntegrity) {
 			return err
 		}
+		// So is a commit or ref the remote says it does not have: that answer is about the
+		// remote's refs and objects, which an earlier copy cannot change, and a full fetch would
+		// only ask the same question again. A copy that could not be started from still falls
+		// back below.
+		if errors.Is(err, errSourceGitMissing) && !errors.Is(err, errStagedSeedDamaged) {
+			return err
+		}
 		firstDownload := seed == firstDownloadRepository(parent, source.RepositoryIdentity())
 		// A first download is a whole history, hours on a large repository: it is downloaded
 		// again only when it is proven damaged. Any other failure, a network error say, is
@@ -403,6 +447,9 @@ func (s *privateJobSourceStager) stageCopy(ctx context.Context, jobRef string, s
 		}
 		if err := os.RemoveAll(repository); err != nil {
 			return err
+		}
+		if s.fullFetchForTest != nil {
+			s.fullFetchForTest()
 		}
 		if err := fetchVerifiedSource(ctx, repository, remote, protocol, token, source, ""); err != nil {
 			return err
@@ -963,7 +1010,8 @@ func sourceGitIO(ctx context.Context, directory, token, protocol string, input i
 			}
 		}
 	}
-	command.Stdin, command.Stdout = input, output
+	var stderr gitStderrTail
+	command.Stdin, command.Stdout, command.Stderr = input, output, &stderr
 	err := command.Run()
 	if errors.Is(err, exec.ErrWaitDelay) && command.Process != nil {
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
@@ -972,9 +1020,48 @@ func sourceGitIO(ctx context.Context, directory, token, protocol string, input i
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if stderr.namesMissingObject() {
+			return errSourceGitMissing
+		}
 		return errors.New("host Git operation failed")
 	}
 	return nil
+}
+
+// errSourceGitMissing is a fetch the remote answered with "no such commit or ref", told apart
+// from a network or server failure, which Git exits with the same status for.
+var errSourceGitMissing = errors.New("host Git found no such commit or ref on the remote")
+
+// gitStderrTail keeps the end of a host Git command's stderr, where its fatal line is. The text
+// never leaves sourceGitIO: only whether Git named a missing object does.
+type gitStderrTail struct{ tail []byte }
+
+const gitStderrTailBytes = 4096
+
+func (t *gitStderrTail) Write(data []byte) (int, error) {
+	t.tail = append(t.tail, data...)
+	if extra := len(t.tail) - gitStderrTailBytes; extra > 0 {
+		t.tail = append(t.tail[:0], t.tail[extra:]...)
+	}
+	return len(data), nil
+}
+
+// namesMissingObject matches Git's own fatal or error line, in the C locale sourceGitCommand
+// sets, for a commit the remote does not have (protocol v2 and v0) or a ref it does not have.
+// A "remote:" line, which the server writes, never matches.
+func (t *gitStderrTail) namesMissingObject() bool {
+	// Progress lines end in a carriage return.
+	for _, line := range strings.FieldsFunc(string(t.tail), func(r rune) bool { return r == '\n' || r == '\r' }) {
+		if !strings.HasPrefix(line, "fatal: ") && !strings.HasPrefix(line, "error: ") {
+			continue
+		}
+		for _, answer := range []string{"remote error: upload-pack: not our ref ", "Server does not allow request for unadvertised object ", "couldn't find remote ref "} {
+			if strings.Contains(line, answer) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type sourceGitOutput struct {
@@ -1006,7 +1093,7 @@ func sourceGitCommand(ctx context.Context, directory, protocol string, args ...s
 	command.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TEMPLATE_DIR=/dev/null", "GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1",
-		"GIT_ATTR_NOSYSTEM=1",
+		"GIT_ATTR_NOSYSTEM=1", "LC_ALL=C", // untranslated messages for namesMissingObject
 		"GIT_ALLOW_PROTOCOL=" + protocol, "GIT_CONFIG_COUNT=3",
 		"GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0=",
 		"GIT_CONFIG_KEY_1=http.lowSpeedLimit", "GIT_CONFIG_VALUE_1=1",

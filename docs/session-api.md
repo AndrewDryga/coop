@@ -787,7 +787,12 @@ The worker gets short-lived credentials through its authenticated connection to 
 then downloads Git and LFS data directly from GitHub and verifies the complete working tree.
 Repository files such as `.gitmodules` and `.lfsconfig` can't redirect those authenticated requests.
 The job fails if history or LFS files are missing, submodule commit references don't match, or
-there isn't enough disk space. A job with `source: null` uses an isolated empty workspace.
+there isn't enough disk space. When GitHub answers that a commit or ref the job names doesn't
+exist, the worker tries 3 times in all, with a fresh grant each time, because a commit pushed a
+moment ago can be missing for a short while. Then the create command fails with `invalid_command`
+and the detail "a commit or ref the job names is not on GitHub". A network or GitHub server error
+is tried again for as long as the command is delivered. A job with `source: null` uses an isolated
+empty workspace.
 
 #### Session endpoints
 

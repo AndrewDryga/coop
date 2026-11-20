@@ -147,6 +147,16 @@ The traps the code does not make obvious:
   wait once, when it begins, not on every try. Tests that drive Run should use synctest and few
   polls, because every poll fsyncs the journal; a fake API needs `Forward` too, or a create is
   rejected before it reaches the stager.
+- **A source missing on GitHub settles; a network failure does not.** Git exits 128 for both, so
+  `sourceGitIO` keeps a bounded stderr tail (never logged or put in an error), forces `LC_ALL=C`,
+  and returns `errSourceGitMissing` only for Git's own `not our ref`, `unadvertised object` or
+  `couldn't find remote ref` line. `Stage` counts those per staging key and returns
+  `errJobSourceMissing` (→ `ErrRequestRejected`, `invalid_command`) on the third in a row
+  (`missingSourceTries`), since a just-pushed commit can lag on a GitHub replica. Every other
+  failure stays a transfer retry, as before; each try costs a controller grant (a minted token).
+  `stageCopy` returns a missing answer at once instead of falling back to a fetch from nothing:
+  the answer is about the remote's refs, which no local seed changes (a seed that could not be
+  started from is `errStagedSeedDamaged` and still falls back).
 - **Response uploads resume from saved bytes.** Binary and large JSON bodies are spooled privately,
   hashed and journaled before upload. A lost upload acknowledgement resends that exact spool after
   restart, without rerunning the API. The controller's command-result acknowledgement releases it.
@@ -210,6 +220,7 @@ The traps the code does not make obvious:
 - 2026-11-17 — `Run` backs a poll the controller never answered off to 30 s and restores the interval on its first answer; a repeated identical poll error is reported once, then at a doubling interval up to 5 min, with a "worker poll recovered" line when it clears (connector.go `repeatReporter`, task 2026-11-17-warn-once-about-a-lasting-worker-poll-error-and).
 - 2026-11-17 — a permanently refused response upload settles the command instead of retrying forever; the spool goes on acknowledgement (task 2026-11-17-settle-a-command-whose-saved-response-the-contro).
 - 2026-11-19 — settled create origins move to `create-origins/settled/`, which polls never list; guards read both folders via `loadCreateOrigin`; the journal moves old flat records once on open (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll, owner decision 2026-11-18).
+- 2026-11-19 — a job source commit or ref that GitHub answers as missing refuses the create after 3 tries instead of minting a grant every ~9 s forever (manual test D2, task 2026-11-19-settle-a-job-whose-source-commit-is-missing-on-g).
 - 2026-11-19 — `coop sessions quiescence` reads a cleanly stopped store (no -wal/-shm) with immutable=1 instead of failing (task 2026-11-19-let-coop-sessions-quiescence-read-a-cleanly-stop).
 - 2026-11-18 — uncertain create lookups back off quietly; a poll no longer reopens settled create origins it already read. Their retirement stays open: deleting a watermark needs an owner decision (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll).
 - 2026-11-17 — the hello's storage and capabilities come from `LiveReports` (`storage.go`): storage is the last report, refreshed in the background one at a time, so a slow `/v1/storage` no longer stalls the single poll goroutine; capabilities are read once the daemon answers, then kept for the connection. The event scan cursor is written only when a scan stops early (audit WC-7/WC-8; settled-origin retirement and the uncertain-origin backoff are still open).
