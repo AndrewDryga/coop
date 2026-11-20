@@ -197,6 +197,12 @@ rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the b
 reflog keeps.
 
 ## Changelog
+- 2026-11-20 — a first Ctrl-C during a rebase, check-only or candidate-review pass that succeeded did
+  not stop the fork loop (each pass is its own engine run with its own soft stop), so it went on to a
+  review or rework. The loop now shares `RunSpec.StopRequested` across passes and stops before the
+  next pass, keeping the finished rebase and its checks; each pass's notice says that
+  (`softStopWords`). Stopping before the review, not after it, spends no agent run the person asked
+  not to start (task 2026-11-20-decide-what-a-first-ctrl-c-does-during-a-fork-s).
 - 2026-11-20 — an isolated fork whose merge would land a changed change still showed ready in ls; the
   refusal now records the display-only `isolated-changed` cause, and ls reads isolated records only
   while the branch is where the merge met it (task 2026-11-20-show-in-coop-fork-ls-an-isolated-fork-whose-merg).

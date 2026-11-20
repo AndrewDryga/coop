@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -1607,7 +1608,15 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 	// for these read-only checks so an earlier run cannot hide a later project request.
 	networkCfg := a.cfg.Clone()
 	checkedTree := "" // the rebased tree this run's check pass already ran on
+	// A first Ctrl-C during any pass lets that pass finish and keeps its result, then stops here,
+	// before the next pass, as the pass's own notice said. A second one stops the pass at once.
+	stopRequested := new(atomic.Bool)
 	for {
+		if stopRequested.Load() {
+			ui.Failure("Fork "+name+" stopped", "The pass that was running finished and its result is kept. Nothing more ran.",
+				[2]string{"Continue:", continueCmd})
+			return loop.LoopInterruptedExitCode, ui.Reported(errors.New("fork loop stopped"))
+		}
 		// Check the fork's own policy and build files before assigning canonical work, including in
 		// the worker: either may have changed since its parent's preview or the previous task, and a
 		// pass would refuse them only once it holds a task.
@@ -1638,7 +1647,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 				ForkGeneration: string(identity.Generation), ForkWorker: detached,
 				ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop,
 				Rotation: rot, Preset: a.preset, Peers: peers, Sink: sink,
-				Continue: continueCmd, Network: network.admission(),
+				Continue: continueCmd, Network: network.admission(), StopRequested: stopRequested,
 			}
 			if rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity); err != nil {
 				return 1, err
@@ -1798,7 +1807,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 					ForkGeneration: string(identity.Generation), ForkWorker: detached,
 					ActivityRepo: repo, ActivityKind: forkspace.ExecutionForkLoop,
 					Rotation: rot, Queues: queueRels, Preset: a.preset, Peers: peers, Sink: sink,
-					Continue: continueCmd, Network: network.admission(),
+					Continue: continueCmd, Network: network.admission(), StopRequested: stopRequested,
 					CandidateReview: &loop.CandidateReviewSpec{
 						CandidateID: review.Candidate.ID, Head: review.Candidate.Head, Tree: review.Candidate.Tree,
 						Round: review.Round, PreviousRound: review.PreviousRound, TaskIDs: taskIDs,
@@ -1870,7 +1879,7 @@ func (a *app) runForkLoop(repo, ws string, identity forkspace.Identity, agent st
 			ProposalOutbox: proposalRel,
 			Rotation:       rot, Queues: []string{queueRel}, Preset: a.preset, Peers: peers, Sink: sink,
 			Continue: continueCmd,
-			Network:  network.admission(),
+			Network:  network.admission(), StopRequested: stopRequested,
 		})
 		// A task parked on a person's decision does not stop the fork. Like coop loop, the fork records
 		// the decision and goes on with its other work: the scheduler never reassigns a blocked task,

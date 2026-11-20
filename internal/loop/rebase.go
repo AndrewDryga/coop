@@ -26,6 +26,23 @@ func candidateReviewHeading(review CandidateReviewSpec) string {
 	return fmt.Sprintf("Review round %d covers the complete fork candidate.", review.Round)
 }
 
+// softStopWords say what the first Ctrl-C does in a run of spec's kind, as it happens and up front:
+// the attempt in flight finishes, then the run stops. A work iteration's own review still runs. A
+// fork's rebase or check pass keeps what it finished and stops before the candidate review it leads
+// to, which the next run gives: running that review first would spend an agent run the person just
+// asked not to start. A fork loop carries the stop across its passes (RunSpec.StopRequested).
+func softStopWords(spec RunSpec) (finishing, finishes string) {
+	switch {
+	case spec.CandidateReview != nil:
+		return "Finishing this review, then stopping.", "Ctrl-C finishes this review, then stops."
+	case spec.Rebase != nil && spec.Rebase.CheckOnly:
+		return "Finishing this check, then stopping before the review.", "Ctrl-C finishes this check, then stops before the review."
+	case spec.Rebase != nil:
+		return "Finishing this rebase attempt, then stopping before its review.", "Ctrl-C finishes this rebase attempt, then stops before its review."
+	}
+	return "Finishing this attempt and its review, then stopping.", "Ctrl-C finishes this attempt and its review, then stops."
+}
+
 // rebasePass is what one fork rebase pass needs from the run that hosts it.
 type rebasePass struct {
 	repo, img, forkName, runid, continueCmd string

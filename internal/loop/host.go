@@ -14,6 +14,7 @@ package loop
 import (
 	"io"
 	"os"
+	"sync/atomic"
 	"syscall"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
@@ -223,6 +224,9 @@ type RunSpec struct {
 	// parent commit its merge conflicted with and resolves the conflict. It holds no task; the caller
 	// checks the result and sends it to a new candidate review.
 	Rebase *RebaseSpec
+	// StopRequested, when set, is set too when a stop signal asks this run to stop. A fork loop
+	// shares one across its passes, so a first Ctrl-C during one pass also stops the passes after it.
+	StopRequested *atomic.Bool
 
 	// Network is this launch's --egress/--allow-domain/--egress-rules. It is
 	// HOST-side input, resolved once at the start of the run: every iteration,

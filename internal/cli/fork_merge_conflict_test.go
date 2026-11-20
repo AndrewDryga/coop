@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/tasks"
@@ -48,6 +49,8 @@ type sharedFilePasses struct {
 	checkStopsRebase        bool                // the check pass leaves a rebase in progress
 	checkInterrupted        bool                // the check pass is stopped by Ctrl-C, as the loop engine ends one
 	work                    func(ws, id string) // replaces a work pass's commit when set
+	ctrlCIn                 string              // "rebase", "check", "review" or "work": a first Ctrl-C arrives during that pass, which still finishes
+	works                   int                 // work passes run
 	reviewWantsRebaseChecks bool
 	rebases                 []loop.RebaseSpec
 	checks                  []loop.RebaseSpec
@@ -58,6 +61,26 @@ const rebaseCheckReport = "REBASE CHECK — git diff --check — exit 0"
 
 func (p *sharedFilePasses) run(spec loop.RunSpec) (int, error) {
 	t := p.t
+	kind := "work"
+	switch {
+	case spec.CandidateReview != nil:
+		kind = "review"
+	case spec.Rebase != nil && spec.Rebase.CheckOnly:
+		kind = "check"
+	case spec.Rebase != nil:
+		kind = "rebase"
+	}
+	if kind == p.ctrlCIn {
+		// What the engine does on a first Ctrl-C: it marks the shared stop and lets the pass finish.
+		if spec.StopRequested == nil {
+			t.Errorf("the fork loop gave its %s pass no stop to share", kind)
+		} else {
+			spec.StopRequested.Store(true)
+		}
+	}
+	if kind == "work" {
+		p.works++
+	}
 	switch {
 	case spec.CandidateReview != nil:
 		review := *spec.CandidateReview
@@ -838,6 +861,75 @@ func TestForkRebaseCheckPassStoppedByCtrlCRunsAgainOnTheRerun(t *testing.T) {
 	}
 	if code, out, err := mergeForkForTest(t, f.a, "beta"); code != 0 || err != nil {
 		t.Fatalf("merge after the rerun = (%d, %v)\n%s", code, err, out)
+	}
+}
+
+// A first Ctrl-C during a rebase or check pass that still succeeds stops the loop right after that
+// pass, as its notice says ("then stopping before its review"): the finished rebase and its checks are
+// kept, no review starts, and the rerun goes straight to the one review, with no pass run twice.
+func TestForkRebaseAndCheckPassesStopAfterAFirstCtrlCAndKeepTheirResult(t *testing.T) {
+	for _, kind := range []string{"rebase", "check"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setUpConflictingForks(t)
+			if kind == "check" {
+				if !rebaseKeepingEveryLine(t, f.ws, f.parent) {
+					t.FailNow()
+				}
+			} else {
+				f.passes.attempts = []rebaseAttempt{rebaseAndResolve}
+			}
+			f.passes.reportChecks, f.passes.reviewWantsRebaseChecks, f.passes.ctrlCIn = true, true, kind
+			code, out, err := f.loop(t)
+			if code != loop.LoopInterruptedExitCode || err == nil || !strings.Contains(out, "Fork beta stopped") || !strings.Contains(out, "coop fork beta") {
+				t.Fatalf("loop stopped during its %s pass = (%d, %v)\n%s", kind, code, err, out)
+			}
+			if passes := len(f.passes.rebases) + len(f.passes.checks); passes != 1 || len(f.passes.reviews) != 2 {
+				t.Fatalf("after the stop: %d rebase or check passes, %d new reviews; want the one pass and no review", passes, len(f.passes.reviews)-2)
+			}
+			rebased := forkspace.GitOut(f.ws, "rev-parse", "HEAD")
+			if rebase, ok, err := tasks.ReadForkCandidateRebase(f.repo, f.beta); err != nil || !ok || rebase.Verification != rebaseCheckReport ||
+				rebase.VerifiedTree != forkspace.GitOut(f.ws, "rev-parse", "HEAD^{tree}") || forkctl.CheckRebase(f.ws, "beta", rebase.Onto) != forkctl.RebaseFinished {
+				t.Fatalf("request after the stop = %+v, %v, %v; want the finished rebase kept with its checks", rebase, ok, err)
+			}
+			f.passes.ctrlCIn = ""
+			if code, out, err := f.loop(t); code != 0 || err != nil {
+				t.Fatalf("rerun after the stop = (%d, %v)\n%s", code, err, out)
+			}
+			if passes := len(f.passes.rebases) + len(f.passes.checks); passes != 1 || len(f.passes.reviews) != 3 {
+				t.Fatalf("rerun: %d rebase or check passes, %d new reviews; want no pass again and one review", passes, len(f.passes.reviews)-2)
+			}
+			if review := f.passes.reviews[2]; review.Head != rebased || review.RebaseVerification != rebaseCheckReport {
+				t.Fatalf("review after the rerun = %+v; want the rebased head with the kept checks", review)
+			}
+			if code, out, err := mergeForkForTest(t, f.a, "beta"); code != 0 || err != nil {
+				t.Fatalf("merge after the rerun = (%d, %v)\n%s", code, err, out)
+			}
+		})
+	}
+}
+
+// A first Ctrl-C during a candidate review that finds something stops after that review, as its
+// notice says ("Finishing this review, then stopping"): the findings are recorded, and the rework
+// waits for the rerun instead of starting at once.
+func TestForkCandidateReviewStopsAfterAFirstCtrlCBeforeItsRework(t *testing.T) {
+	f := setUpConflictingForks(t)
+	f.passes.attempts = []rebaseAttempt{rebaseAndResolve}
+	f.passes.reportChecks, f.passes.ctrlCIn = true, "review"
+	f.passes.findings = [][]tasks.ForkCandidateFinding{{{TaskID: f.second, Gate: "review", Finding: "the resolution needs a test"}}}
+	works := f.passes.works
+	code, out, err := f.loop(t)
+	if code != loop.LoopInterruptedExitCode || err == nil || !strings.Contains(out, "Fork beta stopped") {
+		t.Fatalf("loop stopped during its review = (%d, %v)\n%s", code, err, out)
+	}
+	if len(f.passes.reviews) != 3 || f.passes.works != works {
+		t.Fatalf("after the stop: %d new reviews, %d rework passes; want the one review and no rework", len(f.passes.reviews)-2, f.passes.works-works)
+	}
+	f.passes.ctrlCIn = ""
+	if code, out, err := f.loop(t); code != 0 || err != nil {
+		t.Fatalf("rerun after the stop = (%d, %v)\n%s", code, err, out)
+	}
+	if f.passes.works != works+1 || len(f.passes.reviews) != 4 {
+		t.Fatalf("rerun: %d rework passes, %d new reviews; want the rework and its review", f.passes.works-works, len(f.passes.reviews)-3)
 	}
 }
 

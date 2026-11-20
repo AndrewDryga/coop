@@ -410,7 +410,9 @@ commits it had. The rebased work goes through the same full candidate review as 
 earlier review saw it, and the reviewer gets the checks the pass ran. Only that reviewed commit can
 merge. If the loop stops before the review, run `coop fork <name> --loop` again: a finished rebase
 goes straight to review, and an unfinished one, even one stopped in the middle, is redone, so never
-reset the fork by hand. You can also rebase the fork yourself, for example when co:op names the
+reset the fork by hand. Pressing Ctrl-C once during the rebase pass, the check-only pass below or a
+review lets that pass finish and keeps what it did, then stops before the next pass; pressing it
+again stops at once. You can also rebase the fork yourself, for example when co:op names the
 `git rebase` that straightens a merge commit. Then no pass reported checks on your result, so the
 loop first runs one check-only pass: its agent runs your merge gate and `git diff --check` on the
 rebased commits, changes nothing, and the reviewer gets what it reports. If that pass changes the

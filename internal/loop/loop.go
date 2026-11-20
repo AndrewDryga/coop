@@ -522,10 +522,14 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	var wakeOnce sync.Once
 	requestStop := func() {
 		softStop.Store(true)
+		if spec.StopRequested != nil {
+			spec.StopRequested.Store(true)
+		}
 		wakeOnce.Do(func() { close(wake) })
 		c.loopNote.Stopped() // only a signal asks for a stop: Ctrl-C, or coop fork stop
 	}
 	interactive := ui.IsTerminal(os.Stdin)
+	finishing, finishes := softStopWords(spec)
 	var iterCtx context.Context
 	{
 		ctx, cancel := context.WithCancel(context.Background())
@@ -541,7 +545,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		go watchInterrupt(sig,
 			func() {
 				requestStop()
-				loopInterruptInfo("Finishing this attempt and its review, then stopping.", again)
+				loopInterruptInfo(finishing, again)
 			},
 			func() {
 				markCheckoutStopping() // a loop started during the teardown waits for it (lockLoopCheckout)
@@ -553,7 +557,7 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 	}
 	if interactive && !limit.enabled() {
 		ui.Note("")
-		ui.Note("Ctrl-C finishes this attempt and its review, then stops. Press again to stop immediately.")
+		ui.Note("%s Press again to stop immediately.", finishes)
 	}
 	// A previous run of THIS checkout may have been killed with its box still up. The host returns
 	// only verified cleanup counts so the loop can narrate them as one preparation section.
