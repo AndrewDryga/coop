@@ -3,7 +3,7 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
-## Unreleased: new session API answers, checkpoint bundles and fork requests
+## v15.2.0: new session API answers, checkpoint bundles and fork requests
 
 - **Session API, publication.** A new-PR publish can now be refused with
   `publication_branch_has_closed_pull_request`, with `closed_pull_request {number, url}`, and with

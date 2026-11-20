@@ -2,12 +2,15 @@
      release skill rewrites this file in each finalize commit, and the release workflow publishes
      its section as is (tools/releasenotes). CHANGELOG.md keeps every change. -->
 
-## 15.1.0
+## 15.2.0
 
-Controllers can now assign different named presets to code reviews and coding jobs. Export a global preset with `coop presets NAME --export-job`. Each job keeps the prompts and accounts it was assigned, and review history shows which peers answered.
+This release fixes a security problem in isolated forks. When your branch already had one of an isolated fork's commits, `coop fork merge` could land a line that no review had seen. The merge now compares what would land with what was reviewed and refuses a difference. Versions up to 15.1.0 are affected; ordinary forks got the same check in 15.0.0.
 
-- Updating an existing pull request now waits for GitHub to show the pushed commit before reporting publication. A missing source commit or branch produces a refusal after three tries.
-- A manually rebased fork runs its checks before review. When a task commit is already on the target branch or a merge commit needs a manual rebase, Coop explains how to proceed. Finish any such merge requests before downgrading to 15.0.0.
-- Workers upgrading from 14.x or earlier should back up their stopped session store first. The 15.x store upgrade cannot be rolled back. See [the migration guide](https://coop.dryga.com/migrating.html).
+- A new isolated fork no longer has a Git remote pointing at your checkout. `coop fork ls` shows an isolated fork whose merge was refused, and fork messages name the next command to run.
+- `coop fork rm --gone` removes the records Coop kept for repositories you deleted. It lists them and asks first.
+- A first Ctrl-C in a fork loop finishes the running pass and stops before the next one, with exit code 130.
+- A worker can checkpoint work that was rebased onto the job's newer default branch, and another worker can restore it. Both workers need this version, and they advertise `checkpoint-upstream:1`.
+- Publishing has two new refusals for controllers to handle: a branch that carries someone else's closed pull request, and a first publish whose push may have landed. A controller should treat any refusal code it does not know as final. See [the migration guide](https://coop.dryga.com/migrating.html).
+- A worker waits between source grant requests while the controller is unavailable, and it prunes its publication journal after 30 days.
 
-[Full changelog](https://github.com/AndrewDryga/coop/compare/v15.0.0...v15.1.0)
+[Full changelog](https://github.com/AndrewDryga/coop/compare/v15.1.0...v15.2.0)

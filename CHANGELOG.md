@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 15.2.0
 
 - **Security: an isolated fork's merge lands exactly the reviewed change.** When your branch
   already had one of an isolated fork's commits, git skipped that commit and the merge could land
