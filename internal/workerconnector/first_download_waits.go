@@ -5,15 +5,18 @@ import (
 	"time"
 )
 
-// A command whose job source waits for storage or is still being fetched in the background:
-// a repository's first download, its whole history, or a new copy that outlasted
-// stagingInForeground. It has no result yet, so the controller delivers it again on every poll,
-// and staging it again only finds the fetch still running. A tenant repository's 45-minute first
-// download was tried, and logged, at every poll (2026-10-03). A held command is tried again after five
-// seconds, then twice as long each time, up to fifteen: a try only looks the fetch up, and a copy
-// that finished waits for at most that long before its create goes on. Every other command keeps
-// the ordinary pace. Polling goes on meanwhile, so the controller keeps redelivering the command
-// and renewing its lease, and Run reports the wait once, when it begins.
+// A command whose job source waits for storage, for a controller that cannot grant it for now
+// (errJobSourceGrantUnavailable), or is still being fetched in the background: a repository's
+// first download, its whole history, or a new copy that outlasted stagingInForeground. It has no
+// result yet, so the controller delivers it again on every poll, and staging it again only finds
+// the fetch still running, or asks the controller for another grant. A tenant repository's
+// 45-minute first download was tried, and logged, at every poll (2026-10-03); a controller
+// answering 503 got 59 grant requests a minute for one create (2026-11-19). A held command is
+// tried again after five seconds, then twice as long each time, up to fifteen: a try only looks
+// the fetch up, and a copy that finished, or a controller that is back, waits for at most that
+// long before its create goes on. Every other command keeps the ordinary pace. Polling goes on
+// meanwhile, so the controller keeps redelivering the command and renewing its lease, and Run
+// reports the wait once, when it begins.
 const (
 	firstDownloadRetry    = 5 * time.Second
 	firstDownloadRetryMax = 15 * time.Second
@@ -40,8 +43,8 @@ func (w *firstDownloadWaits) held(commandID string, now time.Time) bool {
 	return ok && now.Before(wait.notBefore)
 }
 
-// settled records what a command's try came to. A source waiting for capacity or download holds the command
-// for twice its last delay; any other outcome ends its wait. A wait whose command was not
+// settled records what a command's try came to. A source waiting for capacity, a grant or a
+// download holds the command for twice its last delay; any other outcome ends its wait. A wait whose command was not
 // delivered again well after its delay ended belongs to a command the controller stopped
 // delivering, and is dropped.
 func (w *firstDownloadWaits) settled(commandID string, err error, now time.Time) {
@@ -64,7 +67,8 @@ func (w *firstDownloadWaits) settled(commandID string, err error, now time.Time)
 	w.waits[commandID] = firstDownloadWait{notBefore: now.Add(delay), delay: delay}
 }
 
-// Both waits keep the same journal command pending and its lease renewed.
+// Every wait keeps the same journal command pending and its lease renewed.
 func sourcePreparationWaiting(err error) bool {
-	return errors.Is(err, errJobSourceDownloading) || errors.Is(err, errJobSourceStorage)
+	return errors.Is(err, errJobSourceDownloading) || errors.Is(err, errJobSourceStorage) ||
+		errors.Is(err, errJobSourceGrantUnavailable)
 }

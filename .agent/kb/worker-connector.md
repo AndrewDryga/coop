@@ -142,7 +142,9 @@ The traps the code does not make obvious:
   whole history) runs in the background, and a create that needs it fails with
   `errJobSourceDownloading`, which has no result, so the controller redelivers it on every poll.
   `firstDownloadWaits` (first_download_waits.go) skips staging it for 5 s, doubling to 15 s; a create
-  waiting for disk space (`errJobSourceStorage`) is held the same way;
+  waiting for disk space (`errJobSourceStorage`) is held the same way, and so is one whose source
+  grant the controller could not answer for now (`errJobSourceGrantUnavailable`: a 5xx, 408, 429
+  or no answer, wrapped in `sourceGrant`; a 503 was asked again at every 1 s poll, 59 a minute);
   polling goes on meanwhile, so redelivery keeps renewing the controller's lease. Run reports the
   wait once, when it begins, not on every try. Tests that drive Run should use synctest and few
   polls, because every poll fsyncs the journal; a fake API needs `Forward` too, or a create is
@@ -221,6 +223,7 @@ The traps the code does not make obvious:
 - 2026-11-17 — a permanently refused response upload settles the command instead of retrying forever; the spool goes on acknowledgement (task 2026-11-17-settle-a-command-whose-saved-response-the-contro).
 - 2026-11-19 — settled create origins move to `create-origins/settled/`, which polls never list; guards read both folders via `loadCreateOrigin`; the journal moves old flat records once on open (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll, owner decision 2026-11-18).
 - 2026-11-19 — a job source commit or ref that GitHub answers as missing refuses the create after 3 tries instead of minting a grant every ~9 s forever (manual test D2, task 2026-11-19-settle-a-job-whose-source-commit-is-missing-on-g).
+- 2026-11-19 — a create whose source grant the controller answers 503 (or 5xx, 408, 429, no answer) is held by `firstDownloadWaits` (5 s → 15 s) instead of asking at every poll (manual test R-1, task 2026-11-19-back-off-source-grant-requests-when-the-controll).
 - 2026-11-19 — `coop sessions quiescence` reads a cleanly stopped store (no -wal/-shm) with immutable=1 instead of failing (task 2026-11-19-let-coop-sessions-quiescence-read-a-cleanly-stop).
 - 2026-11-18 — uncertain create lookups back off quietly; a poll no longer reopens settled create origins it already read. Their retirement stays open: deleting a watermark needs an owner decision (task 2026-11-17-keep-the-worker-poll-loop-fast-and-its-per-poll).
 - 2026-11-17 — the hello's storage and capabilities come from `LiveReports` (`storage.go`): storage is the last report, refreshed in the background one at a time, so a slow `/v1/storage` no longer stalls the single poll goroutine; capabilities are read once the daemon answers, then kept for the connection. The event scan cursor is written only when a scan stops early (audit WC-7/WC-8; settled-origin retirement and the uncertain-origin backoff are still open).

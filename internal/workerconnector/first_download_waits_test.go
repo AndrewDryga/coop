@@ -210,3 +210,69 @@ func (s *startedStagingStager) Stage(_ context.Context, _ string, source workerp
 	}
 	return errJobSourceDownloading
 }
+
+// A controller answering a source grant with 503 got the same create's grant request at every
+// one-second poll: 59 in a minute (2026-11-19). The create is now held like a download wait, so
+// a minute of 503s costs six grants, the create never settles on a 503, and it is asked again
+// within fifteen seconds once the controller answers.
+func TestACreateWhoseSourceGrantIsUnavailableBacksOff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Now()
+		back := start.Add(61 * time.Second)
+		grants := &unavailableGrants{back: back}
+		executor, err := NewExecutor(ExecutorConfig{API: unreachableAPI{},
+			JobSourceStager: &privateJobSourceStager{transport: grants, stateRoot: privateStagerRoot(t)},
+			JournalDir:      t.TempDir(), Now: time.Now, WorkerID: "worker-a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := createWithJobSource(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		var settledAt time.Time
+		transport := pollTransportFunc(func(_ context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+			if len(poll.CommandResults) != 0 {
+				if time.Now().Before(back) {
+					t.Errorf("the create settled at %s, while the controller still answered 503", time.Since(start))
+				}
+				settledAt = time.Now()
+				cancel()
+			}
+			command.LeaseExpiresAt = time.Now().Add(time.Minute)
+			return workerproto.Response{Version: workerproto.Version, PollRef: poll.PollRef, ServerTime: time.Now(),
+				Commands: []workerproto.Command{command}}, nil
+		})
+		connector, err := NewConnector(ConnectorConfig{Executor: executor, Now: time.Now, Transport: transport,
+			Hello: func(_ context.Context, clock time.Time) workerproto.WorkerHello { return hello(clock) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var reports []error
+		if err := connector.Run(ctx, time.Second, func(err error) { reports = append(reports, err) }); !errors.Is(err, context.Canceled) && !t.Failed() {
+			t.Fatalf("run: %v", err)
+		}
+		if grants.unavailable != 6 {
+			t.Errorf("asked for %d grants in the minute of 503s, want 6 (after 0, 5, 15, 30, 45 and 60 s)", grants.unavailable)
+		}
+		if settledAt.IsZero() || settledAt.Sub(back) > firstDownloadRetryMax {
+			t.Errorf("settled %s after the controller came back, want at most %s", settledAt.Sub(back), firstDownloadRetryMax)
+		}
+		if len(reports) != 1 || !errors.Is(reports[0], errJobSourceGrantUnavailable) {
+			t.Errorf("reported %d times, want the grant wait once: %v", len(reports), reports)
+		}
+	})
+}
+
+// unavailableGrants answers 503 until back, then refuses, so the create settles without Git.
+type unavailableGrants struct {
+	back        time.Time
+	unavailable int
+}
+
+func (g *unavailableGrants) FetchJobSourceGrant(context.Context, string, workerproto.RepositoryIdentity) (JobSourceGrant, error) {
+	if time.Now().Before(g.back) {
+		g.unavailable++
+		return JobSourceGrant{}, &BodyStatusError{Status: http.StatusServiceUnavailable}
+	}
+	return JobSourceGrant{}, fmt.Errorf("%w: %w", workerproto.ErrSourceGrantRefused, &BodyStatusError{Status: http.StatusForbidden})
+}

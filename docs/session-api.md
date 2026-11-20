@@ -806,9 +806,12 @@ The job fails if history or LFS files are missing, submodule commit references d
 there isn't enough disk space. When GitHub answers that a commit or ref the job names doesn't
 exist, the worker tries 3 times in all, with a fresh grant each time, because a commit pushed a
 moment ago can be missing for a short while. Then the create command fails with `invalid_command`
-and the detail "a commit or ref the job names is not on GitHub". A network or GitHub server error
-is tried again for as long as the command is delivered. A job with `source: null` uses an isolated
-empty workspace.
+and the detail "private Coop API request was rejected before it was sent: a commit or ref the job
+names is not on GitHub". A network or GitHub server error is tried again for as long as the command
+is delivered. So is a source grant the controller can't answer for now (a 5xx, 408 or 429, or no
+answer): the worker holds the create and asks again after 5 seconds, then 10, then every 15, so a
+controller that is down for a minute gets about six grant requests per pending create. A job with
+`source: null` uses an isolated empty workspace.
 
 #### Session endpoints
 

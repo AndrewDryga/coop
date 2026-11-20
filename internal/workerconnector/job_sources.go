@@ -35,6 +35,12 @@ var errStagedSeedDamaged = errors.New("the earlier copy to start from is damaged
 
 var errJobSourceStorage = errors.New("repository staging is waiting for disk space")
 
+// errJobSourceGrantUnavailable is a source grant the controller could not answer for now: a
+// 5xx, 408 or 429, or no answer at all. The create is held and tried again (firstDownloadWaits)
+// instead of asking again at every delivery, about once a second while a controller is down
+// (2026-11-19).
+var errJobSourceGrantUnavailable = errors.New("the controller cannot grant the job's repository for now")
+
 // errJobSourceStagingStarted is errJobSourceDownloading for a copy this try began staging in the
 // background (backgroundStaging); stageCreateJobSources gives those a moment to finish.
 var errJobSourceStagingStarted = fmt.Errorf("%w: staging started", errJobSourceDownloading)
@@ -238,7 +244,7 @@ func (e *Executor) stageJobSources(ctx context.Context, jobRef string, sources [
 		err := e.jobSourceStager.Stage(ctx, jobRef, source)
 		switch {
 		case err == nil:
-		case errors.Is(err, errJobSourceStorage):
+		case errors.Is(err, errJobSourceStorage), errors.Is(err, errJobSourceGrantUnavailable):
 			return nil, false, fmt.Errorf("%w: %w", errArtifactTransfer, err)
 		case errors.Is(err, errJobSourceDownloading):
 			pending = append(pending, source)
@@ -630,7 +636,10 @@ func (s *privateJobSourceStager) remote(source workerproto.RepositoryIdentity) (
 func (s *privateJobSourceStager) sourceGrant(ctx context.Context, jobRef string, source workerproto.RepositoryIdentity) (JobSourceGrant, error) {
 	grant, err := s.transport.FetchJobSourceGrant(ctx, jobRef, source)
 	if err != nil {
-		return JobSourceGrant{}, err
+		if permanentBodyRefusal(err) || errors.Is(err, ErrJobSourceIntegrity) || ctx.Err() != nil {
+			return JobSourceGrant{}, err
+		}
+		return JobSourceGrant{}, fmt.Errorf("%w: %w", errJobSourceGrantUnavailable, err)
 	}
 	if grant.RepositoryRef != source.RepositoryRef || grant.GitHubRepository != source.GitHubRepository ||
 		grant.GitHubRepositoryID != source.GitHubRepositoryID || !grant.validCredential() ||
