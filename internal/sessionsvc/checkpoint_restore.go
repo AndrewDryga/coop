@@ -404,6 +404,25 @@ func materializeCheckpoint(ctx context.Context, source, objects, workspace strin
 			return err
 		}
 	}
+	return restoreTaskStateDirs(root)
+}
+
+// restoreTaskStateDirs puts back the empty state folders the clean above removed: the bundle
+// carries files only, and a queue needs all four, or moving a task into a missing one renames it
+// and `coop tasks lint` flags the queue (see tasks.ScaffoldStateDirs). Session create made them;
+// whatever stands at one of those paths now (a restored file, a link) is the workspace's own and
+// is left as it is.
+func restoreTaskStateDirs(root *os.Root) error {
+	for _, state := range tasks.TaskStates {
+		path := filepath.Join(tasks.TasksRoot, state)
+		if _, err := root.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		// MkdirAll: a bundle with no queue file at all leaves no parent folder either.
+		if err := root.MkdirAll(path, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+	}
 	return nil
 }
 

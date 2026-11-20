@@ -904,6 +904,18 @@ func TestClosedWorkspaceRestoresExactCheckpointBeforeBindingTheDurableTask(t *te
 		strings.Contains(status, tasks.QueueIdentityFile) || !strings.Contains(status, filepath.ToSlash(followUp)) {
 		t.Fatalf("restored task custody counted as product changes:\n%s", status)
 	}
+	// The bundle carries files only, so the empty state folders (50_blocked and 99_done here) come
+	// back from restore itself: a queue missing one fails lint and a task moved there is renamed.
+	for _, state := range tasks.TaskStates {
+		if entries, err := os.ReadDir(filepath.Join(source.Workspace, tasks.TasksRoot, state)); err != nil {
+			t.Fatalf("source queue lacks %s: %v", state, err)
+		} else if (state == tasks.StateBlocked || state == tasks.StateDone) && len(entries) != 0 {
+			t.Fatalf("fixture's %s is not empty: %v", state, entries)
+		}
+		if info, err := os.Lstat(filepath.Join(restored.Workspace, tasks.TasksRoot, state)); err != nil || !info.IsDir() {
+			t.Fatalf("restored queue lacks the %s folder: %v", state, err)
+		}
+	}
 	replayed, err := service.RestoreWorkspaceCheckpoint(context.Background(), "restore-target-once", RestoreWorkspaceCheckpointRequest{
 		SessionID: target.ID, ExpectedRevision: target.Revision,
 		Checkpoint: captured.Checkpoint, Stream: bytes.NewReader(bundle),

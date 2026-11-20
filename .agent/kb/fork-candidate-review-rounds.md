@@ -147,7 +147,9 @@ them matching) the parent already has a task's commit:
 a rebase pass could only skip it again or keep it empty, which review fails, so the cause is
 `skipped` and merge, loop (before any agent, `SkippedCommitError`) and ls (`driftSkipped`) all stop
 with "discard, or remove the branch's commit with that change from its history and merge again"
-(titled "already in <branch>'s history", since that is true after a revert too). A
+(titled "already in <branch>'s history", since that is true after a revert too). Its second way
+out is a plain sentence row, then the go-back command alone, then "Then merge again:", so no long
+label pads the commands past 100 columns (TestSkippedCommitRefusalRowsFitTheTerminal). A
 revert is not enough: `git rebase` skips a commit whose patch-id matches any commit in
 merge-base..branch (patch-id ignores whitespace, so a differing file can still match), a reverted one included (`--reapply-cherry-picks` would replay it, and the land's
 line-edit check would still hold, but the land does not use it). The fence admits no rebase onto
@@ -202,6 +204,8 @@ rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the b
 reflog keeps.
 
 ## Changelog
+- 2026-11-20 — the skipped-commit refusal's ways out fit about 100 columns: the long way is a
+  sentence row and the go-back command its own row (task 2026-11-20-tidy-three-notes-from-the-15-2-live-pass-wide-re).
 - 2026-11-20 — ls called an isolated fork with no shallow file ready when merge could not read its
   boundary and refused it; it now shows it as not ready (`driftBoundary`) and names the merge (task
   2026-11-20-show-an-isolated-fork-as-not-ready-in-coop-fork).

@@ -148,13 +148,18 @@ func skippedCommitError(ws, name, branch, detail, tail, back string) error {
 	// history since the fork started, even one a later commit reverted.
 	cause += " Coop merges only each task's own reviewed commits, so no rebase or review can fix this, and reverting the change on " +
 		words + " does not either: a rebase still skips the commit." + tail
-	again := [2]string{"Or remove " + words + "'s commit with that change from its history, then merge again:", "coop fork merge " + name}
-	if back != "" {
-		again = [2]string{GoBackLabel(ws, "Or remove "+words+"'s commit with that change from its history, go back to the reviewed commit and merge again:"),
-			GoBackCommand(ws, "reset", "--hard", back) + " && coop fork merge " + name}
+	// The second way out is a sentence on its own row, and the go-back command too: as a label they
+	// would pad every command past 200 columns, and the command already carries a path and a full SHA.
+	rows := [][2]string{{"Discard its work and return its tasks to the queue:", "coop fork rm " + name + " --force"}}
+	if back == "" {
+		rows = append(rows, [2]string{"", "Or remove " + words + "'s commit with that change from its history."})
+	} else {
+		rows = append(rows,
+			[2]string{"", GoBackLabel(ws, "Or remove "+words+"'s commit with that change from its history and go back to the reviewed commit:")},
+			[2]string{"", GoBackCommand(ws, "reset", "--hard", back)})
 	}
-	return ui.CommandFailed("Fork "+name+"'s reviewed commit is already in "+words+"'s history", cause,
-		[2]string{"Discard its work and return its tasks to the queue:", "coop fork rm " + name + " --force"}, again)
+	rows = append(rows, [2]string{"Then merge again:", "coop fork merge " + name})
+	return ui.CommandFailed("Fork "+name+"'s reviewed commit is already in "+words+"'s history", cause, rows...)
 }
 
 // SkippedCommitError is the fork loop's refusal of reviewed commits one of which the parent branch

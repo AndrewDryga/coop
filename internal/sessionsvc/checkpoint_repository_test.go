@@ -485,3 +485,68 @@ func TestCheckpointRejectsNewCredentialsEvenWhenDeletedBeforeHead(t *testing.T) 
 		})
 	}
 }
+
+// The credential refusal names the kind of place, never the path: a path is text the agent chose,
+// and a hostile one (terminal escapes, a token in the name, an endless name) must not reach an
+// answer a controller shows and logs, whether the match is committed Git content or untracked.
+func TestCheckpointCredentialRefusalNamesNoPath(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	token := "ghp_" + strings.Repeat("Zq3W", 10)
+	long := strings.Repeat("deep-", 40)
+	hostile := filepath.Join(long, long, "\x1b[31m"+token+"\r\n.txt")
+	fragments := []string{token, "\x1b", "\\u001b", long, ".txt"}
+	credential := "ghp_" + strings.Repeat("aB7C", 10) + "\n"
+	place := func(t *testing.T, workspace string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(workspace, hostile)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		sessionWorkspaceWrite(t, filepath.Join(workspace, hostile), credential)
+	}
+	for _, kind := range []string{"committed", "untracked"} {
+		t.Run(kind, func(t *testing.T) {
+			var err error
+			if kind == "committed" {
+				repository, git := gitrepo.New(t)
+				sessionWorkspaceWrite(t, filepath.Join(repository, "file"), "base\n")
+				git("add", ".")
+				git("commit", "-qm", "base")
+				base := gitOut(repository, "rev-parse", "HEAD")
+				place(t, repository)
+				git("add", ".")
+				git("commit", "-qm", "new content")
+				head := gitOut(repository, "rev-parse", "HEAD")
+				err = withSessionTrackedTree(context.Background(), repository, func(tree string, env []string) error {
+					return writeCheckpointRepository(context.Background(), repository, base, "", head, tree, env, io.Discard)
+				})
+			} else {
+				service, _ := newHTTPTestSessionService(t)
+				defer service.Stop()
+				const offer = "record:task_offer:hostile-path"
+				source, createErr := service.CreateRemoteSession(t.Context(), "hostile-source", service.request(t, offer))
+				if createErr != nil {
+					t.Fatal(createErr)
+				}
+				source, createErr = service.EnsureWorkspaceTask(t.Context(), "hostile-task", EnsureWorkspaceTaskRequest{SessionID: source.ID, ExpectedRevision: source.Revision,
+					Task: tasks.ControllerTaskDraft{OfferRef: offer, Title: "Hostile path", Prompt: "Keep it.", SuccessChecks: []string{"kept"}}})
+				if createErr != nil {
+					t.Fatal(createErr)
+				}
+				place(t, source.Workspace)
+				_, err = service.CheckpointWorkspace(t.Context(), "hostile-capture", CheckpointWorkspaceRequest{
+					SessionID: source.ID, SessionRef: "hostile-source", ExpectedRevision: source.Revision, PlacementGeneration: 1, RepositoryRef: "repository",
+				})
+			}
+			var refusal *session.Error
+			if !errors.As(err, &refusal) || refusal.Code != session.CodeInvalidSessionState || refusal.Detail != checkpointCredentialDetail {
+				t.Fatalf("%s refusal = %v; want exactly %q", kind, err, checkpointCredentialDetail)
+			}
+			for _, fragment := range fragments {
+				if strings.Contains(err.Error(), fragment) {
+					t.Fatalf("%s refusal carries the path (%q): %q", kind, fragment, err)
+				}
+			}
+		})
+	}
+}

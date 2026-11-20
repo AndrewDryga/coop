@@ -905,7 +905,9 @@ match the descriptor.
 
 A v2 checkpoint streams Git objects with their types and verified LFS files. It includes new
 commits, the final tracked tree, untracked files and task state. Restoring it recreates the exact
-HEAD and working tree, but not the original split between staged and unstaged changes.
+HEAD and working tree, but not the original split between staged and unstaged changes. The bundle
+holds files only, so restore recreates the four task-state folders of `.agent/tasks` itself.
+Other empty folders are not restored.
 
 A checkpoint leaves out Git objects the restoring worker can fetch on its own from the job's
 authorized source. That always covers the session's base. When the work was rebased onto, or merged,
@@ -919,7 +921,11 @@ refuses capture even if a later commit removed it. The bundle manifest names the
 
 Only the default branch counts. History from another branch, from a pull request or pinned commit
 past the session's base, and every LFS file, upstream ones included, travels and is scanned. The
-refusal says which case it met, never what matched:
+refusal says which case it met, never what matched and never a file path. A Git match can be a
+commit message, a file name, or a file that many paths or commits share, so there is often no one
+path to name. A path is also text the agent chose, and a file named after a token would put that
+token in the answer. To find the match, run your own secret scan over the commits past the base,
+their messages included, and over the untracked files:
 
 | Answer | Meaning |
 | --- | --- |

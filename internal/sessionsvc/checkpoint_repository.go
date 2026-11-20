@@ -391,7 +391,13 @@ func checkpointTarHeader(writer *tar.Writer, name string, mode, size int64) erro
 	})
 }
 
-// The refusal details never repeat what matched. Each says only where it was found.
+// The refusal details never repeat what matched. Each says only what kind of place it was found
+// in, never a path, on purpose (2026-11-20). A Git match is a raw object streamed without names: a
+// blob any number of paths or commits may share, a commit message, or a tree, whose matched text IS
+// a file name. And a path is text the agent chose, so a file named after a token would carry the
+// value itself into an answer controllers show and log; the %q quoting and path bound the
+// non-regular-file refusal uses stop terminal tricks, not that. The person finds the file with
+// their own secret scan of the work past the base (TestCheckpointCredentialRefusalNamesNoPath).
 const (
 	checkpointCredentialDetail    = "workspace checkpoint contains a credential"
 	checkpointLFSCredentialDetail = checkpointCredentialDetail + " in an LFS file"

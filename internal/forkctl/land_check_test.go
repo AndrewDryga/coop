@@ -11,6 +11,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // The box writes the reviewed commit into the fork's shallow file, so git treats it as a root: the
@@ -230,6 +231,47 @@ func TestLandStopsWhenTheBranchAlreadyHasATaskCommit(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "g.txt")); err != nil {
 		t.Fatalf("the reviewed work did not land: %v", err)
+	}
+}
+
+// The skipped-commit refusal's ways out fit about 100 columns: its long second way is a sentence on
+// its own row, so no label pads the commands. The go-back command is its own row with no padding,
+// the one line a long workspace path may widen.
+func TestSkippedCommitRefusalRowsFitTheTerminal(t *testing.T) {
+	const sha = "0af777e0f091122d34f5ad653ec7cc3a478a2961"
+	for _, ws := range []string{
+		"/Users/someone/Projects/app-forks/o",
+		"/Users/a-rather-long-user-name/Projects/client-work/some-quite-long-repository-name-forks/o",
+	} {
+		for _, back := range []string{"", sha} {
+			var usage *ui.UsageError
+			if !errors.As(skippedCommitError(ws, "o", "main", "Its commit 7d8f86cc56ee is already there.", " Nothing was merged.", back), &usage) {
+				t.Fatal("the refusal is not a usage block")
+			}
+			command := GoBackCommand(ws, "reset", "--hard", sha)
+			out := usage.Render(ui.Palette{})
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "      ") { // the cause, one sentence the terminal wraps
+					continue
+				}
+				if back != "" && line == "  "+command {
+					continue
+				}
+				if n := len([]rune(line)); n > 100 {
+					t.Errorf("ws %q back %q: a %d-column line:\n%s", ws, back, n, out)
+				}
+			}
+			if back != "" && !strings.Contains(out, "\n  "+command+"\n") {
+				t.Errorf("the go-back command is not its own unpadded row:\n%s", out)
+			}
+			if !strings.Contains(out, "coop fork rm o --force") || !strings.Contains(out, "coop fork merge o") {
+				t.Errorf("a way out is missing:\n%s", out)
+			}
+		}
+	}
+	// A realistic path keeps even the go-back command within about 100 columns.
+	if n := len("  " + GoBackCommand("/Users/someone/Projects/app-forks/o", "reset", "--hard", sha)); n > 100 {
+		t.Errorf("go-back command for a realistic path is %d columns", n)
 	}
 }
 

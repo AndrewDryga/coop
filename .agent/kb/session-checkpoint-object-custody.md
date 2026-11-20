@@ -20,7 +20,9 @@ default head in ancestry. Workspace refs, remotes and config never take part, be
 writes them (TestWorkspaceRefsDoNotAuthorizeACheckpointUpstream). The retry scans everything it
 still transports again, so a task-added credential refuses even after an upstream is found.
 The answer names where the match was, never what: Git content in neither base nor default
-(`checkpointTaskCredentialDetail`), an LFS file, or an untracked file; a refresh that could not
+(`checkpointTaskCredentialDetail`), an LFS file, or an untracked file, and never a path: a Git match
+is a nameless object (blob, commit message, or a tree whose matched text is a file name), and an
+agent-chosen name can carry the token itself (TestCheckpointCredentialRefusalNamesNoPath); a refresh that could not
 run answers 503 (retry with a new key), a refused grant 409 (`checkpointUpstreamUnverified`).
 All checkpoint Git commands go through `forkspace.TrustedGitCommand`, which appends
 `core.commitGraph=false`, so a commit-graph the agent writes cannot change the ancestry answers.
@@ -57,7 +59,13 @@ for bundles that carry those objects. A manifest without the field is the v15.0.
 new field as malformed (internal error, nothing changed); workers that can restore it advertise
 `checkpoint-upstream:1` (daemon `checkpoint_upstream_versions`).
 
+Restore's `git clean -qfdx` drops empty folders and the bundle carries files only, so
+`restoreTaskStateDirs` recreates the four task-state folders (a queue missing one fails `coop tasks
+lint`, and a hand `mv` into it renames the task); a path already standing there is left alone.
+
 ## Changelog
+- 2026-11-20 — restore recreates the empty task-state folders; the credential refusal names no
+  path, reason recorded (task 2026-11-20-tidy-three-notes-from-the-15-2-live-pass-wide-re).
 - 2026-11-20 — restore answers 409 for an upstream commit the refreshed default provably lacks; upstream LFS stays in the bundle, reason recorded (task 2026-11-20-say-why-a-checkpoint-was-refused-when-the-source).
 - 2026-11-20 — refusal answers tell the causes apart; resumed restore checks locally; capability
   `checkpoint-upstream:1`; restore codes match the service (refused grant 409, copy failures 503).
