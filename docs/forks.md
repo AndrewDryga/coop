@@ -450,7 +450,8 @@ this check, the refusal is gone, even if your merge gate then fails.
 
 A fork whose repository is shallow is refused until its `.git/shallow` file is removed, since git
 would then misread its history; until then `coop fork ls` shows a reviewed one as "changed after
-review".
+review". An `--isolated` fork made from a shallow clone keeps that clone's shallow file, which is
+fine; its merge and review refuse only a shallow file that cuts into the fork's own commits.
 
 This path is for ordinary forks. An `--isolated` fork holds your repository's branches only as they
 were when it was created, and co:op copies none of your branch's later commits into it, so it cannot

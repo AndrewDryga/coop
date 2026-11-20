@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/AndrewDryga/coop/internal/safefile"
 )
 
 // Refuse redirected strong metadata before any operational view can reconcile
@@ -126,6 +128,21 @@ func GitMetadataDirectories(workspace string) ([]string, error) {
 		}
 	}
 	return roots, nil
+}
+
+// IndependentShallowCommits is what an isolated workspace's own .git/shallow lists, none without
+// one. The box can write that file, so it is read without following a link and only up to 1 MiB.
+func IndependentShallowCommits(workspace string) ([]string, error) {
+	root, err := safefile.OpenRoot(filepath.Join(workspace, ".git"))
+	if err != nil {
+		return nil, err
+	}
+	data, err := safefile.ReadRegular(root, "shallow", 1<<20)
+	err = errors.Join(err, root.Close())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return strings.Fields(string(data)), err
 }
 
 // ValidateIndependentGit refuses metadata redirectors before host capture. Isolated execution

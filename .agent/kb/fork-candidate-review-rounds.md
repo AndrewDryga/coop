@@ -3,7 +3,7 @@ name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
 sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go, internal/forkctl/status.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_commands.go, internal/cli/fork_loop_report.go, internal/forkspace/gitcommand.go]
-updated: 2026-11-19
+updated: 2026-11-20
 ---
 
 A task fork's land authority is one exact candidate ID, HEAD, tree, assignment set and projection
@@ -161,9 +161,16 @@ unseen; only the change comparison catches that. `git merge-tree --write-tree --
 the view. An honest moved-parent land whose change differs (the parent has part of it) costs a
 rebase and a review, never a refusal. A shallow fork is refused before the merge fetches it (and,
 for an ordinary fork, before the merge's commit-count header, `fetchForkForMerge`, which an isolated
-merge never reaches; isolated forks have no shallow check), in the
+merge never reaches), in the
 land replay and by `CheckRebase` (`RebaseShallow`), and the trusted view sets `core.commitGraph=false`
-so a box-written commit-graph cannot answer for the commit objects.
+so a box-written commit-graph cannot answer for the commit objects. An isolated fork's shallow file
+cannot hide a commit from its merge or review: the scan, private rebase and landed-as-reviewed check
+run in the host's private clone, which never becomes shallow (git rejects the shallow root with only
+a warning, exit 0, and leaves the cut-off commits out, so the scan fails on a missing object).
+`refuseIsolatedShallowCut` names the file up front when it names a commit that is not the published
+boundary or its ancestor; a cut at or below it is a shallow parent's and is allowed. Write such a
+file in a test to `<ws>/.git/shallow`: `rev-parse --absolute-git-dir` answers Coop's view, and a
+file written there tests nothing.
 
 A reviewed fork whose HEAD moved off its active candidate is not landable, so `coop fork ls` shows it
 as `changed` ("changed after review") rather than `ready`, and one with an open conflict request whose
@@ -183,6 +190,10 @@ rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the b
 reflog keeps.
 
 ## Changelog
+- 2026-11-20 — proved a box-written `.git/shallow` in an isolated fork hides nothing from the scan
+  (the old test wrote it into Coop's view and tested nothing); a cut into the fork's commits now
+  gets a refusal naming the file instead of git's bare exit status (task
+  2026-11-20-check-whether-a-box-written-git-shallow-in-an-is).
 - 2026-11-19 — wording from the live follow-up pass: merge of a shallow fork printed a "0 commits"
   header before its refusal; the skipped-commit title said "already on main" after a revert; a loop
   on a conflicted isolated fork listed a merge that is refused; the isolated publish header called

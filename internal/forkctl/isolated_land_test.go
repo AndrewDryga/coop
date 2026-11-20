@@ -392,24 +392,91 @@ func TestIsolatedPublishHeaderNamesTheForkCommitAndTheRebasedOne(t *testing.T) {
 	}
 }
 
-// The ordinary fork's shallow refusal runs before merge's header (fetchForkForMerge), which an
-// isolated merge never reaches: a single isolated merge takes its own path exactly as before, and
-// never gives the ordinary fork's shallow refusal. Whether an isolated fork should refuse a shallow
-// workspace is a separate question.
-func TestIsolatedMergeIsNotGivenTheOrdinaryShallowRefusal(t *testing.T) {
-	repo, ws, _, c := isolatedTestFork(t)
-	head := isolatedTestCommit(t, ws, "first.txt", "first\n")
-	gitDir := forkspace.GitOut(ws, "rev-parse", "--absolute-git-dir")
-	if gitDir == "" {
-		t.Fatal("no git dir for the isolated workspace")
+// isolatedShallowTestFork is an isolated fork whose box added a credential in one commit and removed
+// it in the next, on a side branch merged into its HEAD beside a clean commit, so a shallow file
+// naming the removal (side) cuts the credential out of git's view of history while the boundary
+// stays an ancestor of HEAD: the shape a cut needs to get past the ancestry check.
+func isolatedShallowTestFork(t *testing.T) (repo, ws string, identity forkspace.Identity, c *Control, base, added, removed string) {
+	t.Helper()
+	repo, ws, identity, c = isolatedTestFork(t)
+	base, _ = observed(repo, "rev-parse", "HEAD")
+	git(t, ws, "checkout", "-qb", "side")
+	added = isolatedTestCommit(t, ws, "ordinary.txt", "github_token = ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij\n")
+	removed = isolatedTestCommit(t, ws, "ordinary.txt", "clean\n")
+	git(t, ws, "checkout", "-q", "isolated")
+	isolatedTestCommit(t, ws, "other.txt", "other\n")
+	git(t, ws, "merge", "-q", "--no-edit", "side")
+	return repo, ws, identity, c, base, added, removed
+}
+
+// A .git/shallow the box writes in an isolated workspace (its real git dir: Coop's view only links
+// to it) cannot hide a commit from the merge or its review. The scan runs in the host's private
+// clone, which never becomes shallow and walks real parents: a fetch from the cut workspace leaves
+// the hidden commits behind, so the scan fails on a missing object. Merge and review refuse such a
+// file up front, by name. This test used to write the file into Coop's view, so it never tested one.
+func TestIsolatedShallowCutHidesNothingAndIsRefused(t *testing.T) {
+	repo, ws, identity, c, base, added, removed := isolatedShallowTestFork(t)
+	shallow := filepath.Join(ws, ".git", "shallow")
+	head, _ := observed(ws, "rev-parse", "HEAD")
+	for name, cut := range map[string]string{"merged-side": removed, "head": head, "first-incoming": added} {
+		t.Run(name, func(t *testing.T) {
+			writeTaskFile(t, shallow, cut+"\n")
+			if history, _ := observed(ws, "rev-list", head); strings.Contains(history, added) && cut != added {
+				t.Fatalf("the shallow file did not cut the workspace's history, so this checks nothing:\n%s", history)
+			}
+			before, _ := captureIsolatedParent(repo)
+			for _, review := range []bool{false, true} {
+				candidate, err := captureIsolatedCandidate(repo, identity.Name, identity, false, review)
+				candidate.cleanup()
+				if err == nil || !strings.Contains(err.Error(), "repository is shallow") || !strings.Contains(err.Error(), "rm "+shallow) {
+					t.Fatalf("capture (review=%v) of a cut history = %v; want the shallow refusal naming the file", review, err)
+				}
+			}
+			if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); landed || err == nil || !strings.Contains(err.Error(), "repository is shallow") {
+				t.Fatalf("merge of a cut history = %v, %v; want the shallow refusal", landed, err)
+			}
+			if after, _ := captureIsolatedParent(repo); !sameIsolatedParent(before, after) {
+				t.Fatal("the refusal changed the parent")
+			}
+		})
 	}
-	writeTaskFile(t, filepath.Join(gitDir, "shallow"), head+"\n")
-	var code int
-	var err error
-	notes := captureStderr(t, func() { code, err = c.ForkMerge([]string{"isolated", "--yes"}) })
-	// As on main before this change: the isolated merge publishes, shallow file or not.
-	if code != 0 || err != nil || !strings.Contains(notes, "Published isolated fork isolated") {
-		t.Fatalf("single isolated merge with a shallow file = (%d, %v); want it published as before\n%s", code, err, notes)
+
+	// Without the refusal: the host's import of the cut workspace leaves the credential commit out,
+	// its clone stays whole (not shallow), and the scan fails instead of passing what it cannot see.
+	writeTaskFile(t, shallow, removed+"\n")
+	clone := filepath.Join(t.TempDir(), "private")
+	if err := forkspace.GitClonePinnedContext(context.Background(), repo, clone, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := forkspace.GitFetchPinnedContext(context.Background(), ws, clone, head); err != nil {
+		t.Fatalf("import from the cut workspace: %v", err)
+	}
+	if pathExists(filepath.Join(clone, ".git", "shallow")) {
+		t.Fatal("the host's private clone took the box's shallow file")
+	}
+	if _, err := observed(clone, "cat-file", "-e", added); err == nil {
+		t.Fatal("the cut did not keep the hidden commit out of the import, so the backstop is untested")
+	}
+	if err := validateIsolatedHistory(clone, repo, base, head); err == nil {
+		t.Fatal("the history scan passed a history it could not read in full")
+	}
+
+	// A cut at the boundary hides only history the parent has, as an isolated fork of a shallow clone
+	// inherits: it is allowed, and the scan still reads every incoming commit.
+	writeTaskFile(t, shallow, base+"\n")
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); landed || err == nil || !strings.Contains(err.Error(), "looks like a credential") {
+		t.Fatalf("merge with a cut at the boundary = %v, %v; want the scan's credential refusal", landed, err)
+	}
+}
+
+// A shallow file naming the boundary leaves a clean fork mergeable.
+func TestIsolatedShallowFileAtTheBoundaryStillMerges(t *testing.T) {
+	repo, ws, _, c := isolatedTestFork(t)
+	base, _ := observed(repo, "rev-parse", "HEAD")
+	isolatedTestCommit(t, ws, "first.txt", "first\n")
+	writeTaskFile(t, filepath.Join(ws, ".git", "shallow"), base+"\n")
+	if landed, err := mergeOneForTest(t, c, repo, "", "isolated", false); !landed || err != nil {
+		t.Fatalf("merge with a shallow file at the boundary = %v, %v; want it landed", landed, err)
 	}
 	if !pathExists(filepath.Join(repo, "first.txt")) {
 		t.Fatal("the isolated fork's work did not land")

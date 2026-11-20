@@ -108,6 +108,9 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 	if err != nil {
 		return isolatedCandidate{}, err
 	}
+	if err := refuseIsolatedShallowCut(ws, name, upstream); err != nil {
+		return isolatedCandidate{}, err
+	}
 	if _, err := observed(ws, "merge-base", "--is-ancestor", upstream, sourceHead); err != nil {
 		return isolatedCandidate{}, fmt.Errorf("isolated fork no longer descends from its published source boundary: %w", err)
 	}
@@ -193,6 +196,38 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 		return isolatedCandidate{}, err
 	}
 	return candidate, nil
+}
+
+// refuseIsolatedShallowCut refuses an isolated workspace whose .git/shallow names a commit that is
+// not the published source boundary or one of its ancestors, that is, one the box could only have
+// written to cut the incoming history. Git treats a commit the file names as having no parents.
+//
+// The cut cannot hide a commit or its content from the merge or its review: the history scan, the
+// private rebase and the landed-as-reviewed check run in the host's private clone, which is never
+// shallow and walks every commit's real parents. Fetching from a shallow workspace leaves the
+// parents behind the cut out of that clone (git only warns and exits 0), so the scan fails on a
+// missing object; a linear cut fails the ancestry check below first. Both fail closed, but with
+// git's bare exit status, so this names the file instead. A cut at or below the boundary hides only
+// history the parent already has (an isolated fork of a shallow clone inherits its shallow file), so
+// it stays allowed. Only a cut can make --is-ancestor false, never true, so the box's file cannot
+// make an in-range commit pass as one below the boundary.
+func refuseIsolatedShallowCut(ws, name, upstream string) error {
+	commits, err := forkspace.IndependentShallowCommits(ws)
+	if err != nil {
+		return fmt.Errorf("fork %s: could not read its shallow file: %w", name, err)
+	}
+	for _, commit := range commits {
+		if forkspace.ValidObjectID(commit) {
+			if _, err := observed(ws, "merge-base", "--is-ancestor", commit, upstream); err == nil {
+				continue
+			}
+		}
+		return ui.CommandFailed("Fork "+name+"'s repository is shallow",
+			"Its shallow file names "+ui.SafeInline(commit)+", one of the fork's unmerged commits or one Git cannot place, and Git treats a commit that file names as having no parents. Coop reads every commit it merges from an isolated fork, so it neither merges nor reviews a cut history. Nothing was merged.",
+			[2]string{"Remove the file, then run the command again:", shellLine([]string{"rm", filepath.Join(ws, ".git", "shallow")})},
+			[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})
+	}
+	return nil
 }
 
 // isolatedJoin is a throwaway merge commit of tree with parents first and second, or first when
