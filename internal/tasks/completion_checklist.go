@@ -90,22 +90,37 @@ func requireCurrentCompletedChecklist(taskDir string) error {
 	return RequireCompletedChecklist(task)
 }
 
+// forcedClose is what a person's `coop tasks done --force` waived: an unfinished checklist, a second
+// commit bound to the task, or both. Nil when the close needed no override.
+type forcedClose struct {
+	checklist *IncompleteChecklistError
+	bindings  *ExtraBindingsError
+}
+
 // forcedCompletionNote is the log line a person's `coop tasks done --force` leaves, so the archive
 // never reads as verified: the override and what was still open. Only a person at a terminal can
 // force a close, and such a claim carries no process. The checklist itself stays as the person
 // left it.
-func forcedCompletionNote(e *IncompleteChecklistError) string {
+func forcedCompletionNote(f *forcedClose) string {
 	note := "Closed with coop tasks done --force"
-	if e.Total == 0 {
-		return note + " without a checklist."
+	if e := f.checklist; e != nil {
+		if e.Total == 0 {
+			note += " without a checklist"
+		} else {
+			open, verb := e.Total-e.Done, "were"
+			if open == 1 {
+				verb = "was"
+			}
+			note += fmt.Sprintf(" while %d of %d checklist items %s open", open, e.Total, verb)
+			if summary := e.openSummary(); summary != "" {
+				note += ": " + summary
+			}
+		}
 	}
-	open, verb := e.Total-e.Done, "were"
-	if open == 1 {
-		verb = "was"
+	note += "."
+	if b := f.bindings; b != nil {
+		note += fmt.Sprintf(" %d commits carry its %s trailer (%s), so a later review cannot reopen it or an older task whose review spans them.",
+			b.Found, CoopTaskTrailer, strings.Join(b.Commits, ", "))
 	}
-	note += fmt.Sprintf(" while %d of %d checklist items %s open", open, e.Total, verb)
-	if summary := e.openSummary(); summary != "" {
-		note += ": " + summary
-	}
-	return note + "."
+	return note
 }

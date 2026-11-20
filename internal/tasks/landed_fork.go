@@ -56,7 +56,7 @@ func CompleteLandedForkTask(project, root string, task Item) (LandedForkTask, er
 // lifecycle lock it first adds the tasks the fork found, which the released assignment could no
 // longer import, then completes the task the way `coop tasks done` does and releases the
 // assignment last. Each step can be repeated, so rerunning the command finishes an interrupted one.
-func completeLandedForkTask(project, root string, task Item, opts completionOptions) (*IncompleteChecklistError, LandedForkTask, error) {
+func completeLandedForkTask(project, root string, task Item, opts completionOptions) (*forcedClose, LandedForkTask, error) {
 	id := ui.SafeInline(task.ID)
 	record, owned, err := ReadTaskOwnerRecord(root, task.ID)
 	if err != nil {

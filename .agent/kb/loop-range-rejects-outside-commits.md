@@ -3,7 +3,7 @@ name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/forkctl/isolated_land.go, internal/tasks/lease.go, internal/tasks/completion.go, internal/config/private.go]
-updated: 2026-11-17
+updated: 2026-11-19
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -112,7 +112,10 @@ at close loses a later review's verdict on that task. A task committed after it 
 matters: the review sets commits its exact replay refuses aside (`captureReviewReopen`).
 `completeTrustedTask` (`coop tasks done`, and a box's `tasks_complete` on another task) refuses a
 task with more than one with `ExtraBindingsError`, and the loop's startup names every queued task
-that already has more (`tasks.ExtraBindings`) before any review runs. `coop tasks claim` and
+that already has more (`tasks.ExtraBindings`) before any review runs. A person's
+`coop tasks done --force` waives the refusal (`forcedClose.bindings`), for published commits whose
+trailer cannot be dropped: log.md names the commits, the close waits for any running loop (`errLoopRunning`), and
+the archived task is then one `ExtraBindings` leaves out unless a review names it. `coop tasks claim` and
 `coop tasks unblock` warn earlier still (`boundTaskNote`): a task already bound gets its commit
 named and the rule that further work is an unbound commit naming the task in its body, since a
 partial commit made before a decision is the binding a person taking the task up again misses.
@@ -203,6 +206,8 @@ authority before attempting task-completion authority.
   closed; pinned by `TestLoopRejectsCommitsAfterTaskWait`, `TestLoopKeepsAWaitPastAnotherSessionsCommit`
   and `TestCheckTaskWaitJudgesWhatWasCommittedAfterTheWait`. Corrected the old universal lock-order
   claim against `task-authority-model` and the loop caller.
+- 2026-11-19 — a person's `coop tasks done --force` closes a task bound twice and logs the commits
+  (task 2026-11-19-let-a-person-s-coop-tasks-done-force-close-a-tas).
 - 2026-11-05 — host completion refuses a second binding and loop startup lists multi-bound tasks
   (task 2026-11-05-refuse-a-second-coop-task-binding-when-it-is-mad).
 - 2026-11-05 — the refusal names each offending commit, task id and reason, and the retry command

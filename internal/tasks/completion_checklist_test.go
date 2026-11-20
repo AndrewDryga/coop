@@ -155,7 +155,8 @@ func TestDoneRefusesASecondBinding(t *testing.T) {
 	}
 	got := usage.Render(ui.Palette{})
 	for _, want := range []string{"Could not complete " + id, "has 2 commits carrying \"Coop-Task: " + id + "\"",
-		second + " by ", first + " by ", "Make the follow-up unbound by dropping its trailer, or file a new task for that work, then retry: coop tasks done " + id} {
+		second + " by ", first + " by ", "Make the follow-up unbound by dropping its trailer, or file a new task for that work, then retry: coop tasks done " + id,
+		"Are those commits published? You can close it as it stands: coop tasks done " + id + " --force"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("refusal omitted %q:\n%s", want, got)
 		}
@@ -174,6 +175,70 @@ func TestDoneRefusesASecondBinding(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "Other work\n\nCoop-Task: bound-once")
 	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
 		t.Fatalf("done after the follow-up was unbound = %d, %v", code, err)
+	}
+}
+
+// Published history cannot drop a trailer, so a person's --force closes a task bound twice and its
+// log.md says so. An agent's close of the same task is still refused.
+func TestForcedDoneAcceptsASecondBinding(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, git := gitRepo(t)
+	root := t.TempDir()
+	id := "published-twice"
+	git("commit", "-q", "--allow-empty", "-m", "Fix login retries\n\nCoop-Task: "+id)
+	first := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "Cover the retry cap\n\nCoop-Task: "+id)
+	second := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
+	taskWithCompletedChecklist(t, root, StateInProgress, id)
+
+	item, _ := mustCurrentTask(t, root, id)
+	if err := CompleteBoxTask(repo, root, item, ClaimActor{}); !errors.As(err, new(*ExtraBindingsError)) {
+		t.Fatalf("box completion = %v; want the second binding refused", err)
+	}
+	// --from-fork needs exactly one commit, so its refusal does not offer --force.
+	if got := trustedCompletionError(extraBindings(repo, id, []string{first, second}), item, claimOptions{fromFork: true}).Error(); strings.Contains(got, "--force") {
+		t.Errorf("--from-fork refusal offers --force:\n%s", got)
+	}
+	// A running loop's final review would take the close as a subject it cannot enroll.
+	loop, err := BeginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo, forceClose: true})
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "Try again when the loop ends: coop tasks done "+id+" --force") {
+		t.Fatalf("done --force while a loop runs = %d, %v; want the wait", code, err)
+	}
+	if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateInProgress {
+		t.Fatal("refused task moved")
+	}
+	if err := loop.Abandon(); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStderr(t, func() {
+		code, err = tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo, forceClose: true})
+	})
+	if code != 0 || err != nil {
+		t.Fatalf("done --force = %d, %v; want the close", code, err)
+	}
+	if want := "Its log.md names the 2 commits that carry its trailer. A later review cannot reopen it."; !strings.Contains(out, want) {
+		t.Errorf("output omitted %q:\n%s", want, out)
+	}
+	done, ok := mustCurrentTask(t, root, id)
+	if !ok || done.State != StateDone || !taskCompletionRecorded(root, done) {
+		t.Fatal("forced close did not reach done with its receipt")
+	}
+	log := readFileString(filepath.Join(done.Dir, "log.md"))
+	for _, want := range []string{"Closed with coop tasks done --force. 2 commits carry its Coop-Task trailer (", first + " by ", second + " by ", "), so a later review cannot reopen it or an older task whose review spans them."} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log.md omitted %q:\n%s", want, log)
+		}
+	}
+	// Forcing it again finishes nothing new and records no second note.
+	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo, forceClose: true}); code != 0 || err != nil {
+		t.Fatalf("second done --force = %d, %v", code, err)
+	}
+	if n := strings.Count(readFileString(filepath.Join(done.Dir, "log.md")), "Closed with coop tasks done --force"); n != 1 {
+		t.Fatalf("log.md has %d forced-close notes, want 1", n)
 	}
 }
 
@@ -720,11 +785,11 @@ func TestForcedCloseNoteWaitsForTheReceipt(t *testing.T) {
 // The note names the override and what was open.
 func TestForcedCompletionNote(t *testing.T) {
 	open := &IncompleteChecklistError{ID: "t", Done: 1, Total: 3, Open: []string{"Run the gate", "Review it"}}
-	if got, want := forcedCompletionNote(open),
+	if got, want := forcedCompletionNote(&forcedClose{checklist: open}),
 		`Closed with coop tasks done --force while 2 of 3 checklist items were open: "Run the gate", "Review it".`; got != want {
 		t.Errorf("note = %q\nwant %q", got, want)
 	}
-	if got, want := forcedCompletionNote(&IncompleteChecklistError{ID: "t"}), "Closed with coop tasks done --force without a checklist."; got != want {
+	if got, want := forcedCompletionNote(&forcedClose{checklist: &IncompleteChecklistError{ID: "t"}}), "Closed with coop tasks done --force without a checklist."; got != want {
 		t.Errorf("note = %q\nwant %q", got, want)
 	}
 }

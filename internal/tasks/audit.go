@@ -341,7 +341,7 @@ func CompleteTrustedTask(project, root string, task Item) error {
 // completionOptions are a person's choices at `coop tasks done`. The zero value is the strict
 // completion every agent path uses.
 type completionOptions struct {
-	force bool       // close even though the checklist is empty or still open
+	force bool       // close despite an unfinished checklist or a second bound commit
 	actor ClaimActor // who ran it, named in the log note a forced close leaves
 	// refuse, when set, judges the task's owner record while the lease authority is held: a box's
 	// tools refuse a task someone else holds (CompleteBoxTask), and `coop tasks done` refuses the
@@ -355,13 +355,26 @@ type completionOptions struct {
 // errFinalReviewRunning refuses a forced close while a loop's final review could reopen the task.
 var errFinalReviewRunning = errors.New("a loop's final review is running")
 
+// errLoopRunning refuses a forced close of a task bound twice while a loop runs: the loop's final
+// review would take the close as its subject and stop, since it cannot enroll a second binding.
+var errLoopRunning = errors.New("a loop is running")
+
 func finalReviewRunning(root string) (bool, error) {
+	return completionWindowLive(root, true, nil)
+}
+
+// completionWindowLive reports a window whose owner is alive: a final review's only, or any window
+// but this close's own.
+func completionWindowLive(root string, reviewOnly bool, own *CompletionWindowSet) (bool, error) {
 	index, err := ReadCompletionWindowIndex(root)
 	if err != nil {
 		return false, err
 	}
 	for id, window := range index.Windows {
-		if !window.ReviewWindow {
+		if reviewOnly && !window.ReviewWindow {
+			continue
+		}
+		if own != nil && slices.ContainsFunc(own.windows, func(w completionWindow) bool { return w.root == root && w.id == id }) {
 			continue
 		}
 		// The window's lock is what says its owner is alive: a killed loop's record stays behind.
@@ -381,7 +394,7 @@ func finalReviewRunning(root string) (bool, error) {
 	return false, nil
 }
 
-func completeTrustedTask(project, root string, task Item, opts completionOptions) (_ *IncompleteChecklistError, retErr error) {
+func completeTrustedTask(project, root string, task Item, opts completionOptions) (_ *forcedClose, retErr error) {
 	windows, err := BeginCompletionWindows([]string{root})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCompletionWindowSetup, err)
@@ -430,11 +443,16 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	if !ok || current.Dir != task.Dir || current.State != task.State {
 		return nil, errLeaseCandidateGone
 	}
-	// --force waives this one check, for a person only. Every refusal above and below still applies,
-	// and without --force an accepted task whose checklist reopened still refuses, receipt intact.
-	var waived *IncompleteChecklistError
-	if err := RequireCompletedChecklist(current); err != nil && (!opts.force || !errors.As(err, &waived)) {
-		return nil, err
+	// --force waives this check and the binding count below, for a person only. Every other refusal
+	// still applies, and without --force an accepted task whose checklist reopened still refuses,
+	// receipt intact.
+	var waived *forcedClose
+	var open *IncompleteChecklistError
+	if err := RequireCompletedChecklist(current); err != nil {
+		if !opts.force || !errors.As(err, &open) {
+			return nil, err
+		}
+		waived = &forcedClose{checklist: open}
 	}
 	// A done folder that already holds its receipt was closed before; forcing it again finishes it
 	// without recording a second forced close.
@@ -443,12 +461,22 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 		_, alreadyAccepted = readLeaseCompletionReceipt(authority, current.Dir)
 	}
 	if !alreadyAccepted {
+		// Published history cannot drop a trailer, so a person may accept the second binding. No
+		// review can reopen the task afterwards, which its log.md says.
 		if err := refuseExtraBindings(project, current.ID); err != nil {
-			return nil, err
+			var extra *ExtraBindingsError
+			if !opts.force || !errors.As(err, &extra) {
+				return nil, err
+			}
+			if waived == nil {
+				waived = &forcedClose{}
+			}
+			waived.bindings = extra
 		}
 	}
 	// A loop's final review running now would enroll this close, and its reviewer reopens a task with
-	// skipped items, silently undoing the person's decision. So the person waits for it to end.
+	// skipped items, silently undoing the person's decision. So the person waits for it to end. A
+	// task bound twice waits for the whole loop: its final review cannot enroll a second binding.
 	if waived != nil && !alreadyAccepted {
 		running, err := finalReviewRunning(root)
 		if err != nil {
@@ -456,6 +484,13 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 		}
 		if running {
 			return nil, errFinalReviewRunning
+		}
+		if waived.bindings != nil {
+			if running, err = completionWindowLive(root, false, windows); err != nil {
+				return nil, fmt.Errorf("inspect active completion windows: %w", err)
+			} else if running {
+				return nil, errLoopRunning
+			}
 		}
 	}
 	reopen, reopened, err := ReadAuditReopenRecord(root, task.ID)
@@ -501,7 +536,7 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 		current.Dir = filepath.Join(root, StateDone, current.ID)
 	}
 	finish := finalizeCompletedTask
-	if waived != nil {
+	if waived != nil && waived.checklist != nil {
 		finish = finishCompletedTask // accepted as its checklist stands
 	}
 	if err := finish(current.ID, current.Dir); err != nil {

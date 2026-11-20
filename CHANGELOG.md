@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks done --force` closes a task that two published commits are bound to.** A task
+  binds one commit, and the refusal asked you to drop the second commit's trailer, which a
+  published commit cannot do. A person's `--force` now closes it, the task's log names the
+  commits, and the refusal names this way out. Agents are refused as before.
+
 ## 15.0.0
 
 - **Fixes from a manual test round of every major feature (2026-11-19).** Three testers ran the

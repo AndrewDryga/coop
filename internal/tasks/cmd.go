@@ -996,10 +996,10 @@ func tasksFolderMoveWith(root string, args []string, newState, verb string, opts
 	completion := completionOptions{force: opts.forceClose, actor: opts.actor, refuse: func(record TaskOwnerRecord) error {
 		return takenOverRefusal("complete", record, opts.actor)
 	}}
-	var forced *IncompleteChecklistError // what a forced close left open, from the close itself
-	var landed *LandedForkTask           // the fork a --from-fork completion took the task from
-	var takeover claimTakeover           // the claim this claim replaced
-	complete := func() (*IncompleteChecklistError, error) {
+	var forced *forcedClose    // what a forced close waived, from the close itself
+	var landed *LandedForkTask // the fork a --from-fork completion took the task from
+	var takeover claimTakeover // the claim this claim replaced
+	complete := func() (*forcedClose, error) {
 		if !opts.fromFork {
 			return completeTrustedTask(opts.project, root, t, completion)
 		}
@@ -1280,6 +1280,11 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 			"A loop's final review is running, and it could reopen this task for its open items.",
 			[2]string{"", "Try again when that review ends: " + retry})
 	}
+	if errors.Is(err, errLoopRunning) {
+		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID),
+			"A loop is running in this queue, and its final review cannot take a task that two commits are bound to.",
+			[2]string{"", "Try again when the loop ends: " + retry})
+	}
 	var commits *PendingReviewCommitsError
 	if errors.As(err, &commits) {
 		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), commits.Cause(),
@@ -1287,8 +1292,13 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	}
 	var extra *ExtraBindingsError
 	if errors.As(err, &extra) {
-		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), extra.Cause(),
-			[2]string{"", extra.Remedy() + ", then retry: " + retry})
+		rows := [][2]string{{"", extra.Remedy() + ", then retry: " + retry}}
+		if !opts.forceClose && !opts.fromFork {
+			// --force is already in a forced retry, and --from-fork needs exactly one commit whatever
+			// the flags; an agent's shell is refused --force before this point.
+			rows = append(rows, [2]string{"", "Are those commits published? You can close it as it stands: " + retry + " --force"})
+		}
+		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), extra.Cause(), rows...)
 	}
 	var checklist *IncompleteChecklistError
 	if errors.As(err, &checklist) {
@@ -1311,15 +1321,23 @@ func noteLandedFork(landed *LandedForkTask) {
 }
 
 // noteForcedClose tells the person what a forced close left in the task's log.
-func noteForcedClose(e *IncompleteChecklistError) {
-	switch {
+func noteForcedClose(f *forcedClose) {
+	if f == nil {
+		return
+	}
+	switch e := f.checklist; {
 	case e == nil:
+		ui.Note("  Closed with --force. Its log.md names the %d commits that carry its trailer. A later review cannot reopen it.", f.bindings.Found)
+		return
 	case e.Total == 0:
 		ui.Note("  Closed with --force. Its log.md notes that it had no checklist.")
 	case e.Total-e.Done == 1:
 		ui.Note("  Closed with --force. Its log.md names the checklist item still open.")
 	default:
 		ui.Note("  Closed with --force. Its log.md names the %d checklist items still open.", e.Total-e.Done)
+	}
+	if f.bindings != nil {
+		ui.Note("  Its log.md names the %d commits that carry its trailer. A later review cannot reopen it.", f.bindings.Found)
 	}
 }
 
