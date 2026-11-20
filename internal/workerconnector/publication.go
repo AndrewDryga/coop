@@ -209,6 +209,9 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 		return p.publishExistingPull(ctx, repository, grant, intent)
 	}
 	pull, err := p.findPull(ctx, grant, intent)
+	if refused, ok := closedPullRefusal(err); ok {
+		return refused, nil
+	}
 	if err != nil {
 		return empty, publicationRetry("pull_request_lookup", err)
 	}
@@ -242,6 +245,9 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 	if pull == nil {
 		// Reconcile again after the push: another retry may have created the PR.
 		pull, err = p.findPull(ctx, grant, intent)
+		if refused, ok := closedPullRefusal(err); ok {
+			return refused, nil
+		}
 		if err != nil {
 			return empty, publicationRetry("pull_request_lookup", err)
 		}
@@ -299,7 +305,7 @@ func (p publicationHost) findPull(ctx context.Context, grant publicationGrant, i
 		pulls = []githubPublicationPull{pull}
 	} else {
 		owner := strings.Split(intent.Repository.GitHubRepository, "/")[0]
-		query := url.Values{"state": {"all"}, "head": {owner + ":" + intent.Request.Branch}, "base": {intent.Request.BaseBranch}, "per_page": {"100"}}
+		query := url.Values{"state": {"all"}, "head": {owner + ":" + intent.Request.Branch}, "base": {intent.Request.BaseBranch}, "per_page": {fmt.Sprint(pullLookupPage)}}
 		if err := p.github(ctx, grant.Token, "GET", base+"?"+query.Encode(), nil, &pulls); err != nil {
 			return nil, err
 		}
@@ -308,9 +314,53 @@ func (p publicationHost) findPull(ctx context.Context, grant publicationGrant, i
 		return nil, nil
 	}
 	if len(pulls) != 1 || !exactPublicationPull(pulls[0], grant, intent) {
+		// A full page may hide an older open PR on a page never read: only a short one proves
+		// every PR for the branch is closed.
+		if closed := closedForeignPull(pulls, grant, intent); closed != nil && len(pulls) < pullLookupPage {
+			return nil, closedPullError{*closed}
+		}
 		return nil, publicationRefusal("publication_existing_pull_request_changed")
 	}
 	return &pulls[0], nil
+}
+
+// pullLookupPage is the most PRs one branch lookup reads; the worker never follows pagination.
+const pullLookupPage = 100
+
+// closedForeignPull is the newest pull request found by branch when every one is closed and none
+// is the App's own. A PR a person or another app closed stays theirs: the App neither reopens nor
+// adopts it, and opening a second PR or pushing to its branch would write over their work. A PR
+// of the App's that someone closed still refuses as changed, since publishing again would undo
+// that person's choice.
+func closedForeignPull(pulls []githubPublicationPull, grant publicationGrant, intent workerproto.PublishIntent) *workerproto.PublicationPullRequest {
+	if intent.Request.PullRequestNumber != 0 {
+		return nil
+	}
+	var newest *workerproto.PublicationPullRequest
+	for _, pull := range pulls {
+		if pull.State != "closed" || pull.Number <= 0 || pull.User.ID == grant.ActorID && pull.User.Type == "Bot" {
+			return nil
+		}
+		if newest == nil || pull.Number > newest.Number {
+			newest = &workerproto.PublicationPullRequest{Number: pull.Number,
+				URL: fmt.Sprintf("https://github.com/%s/pull/%d", intent.Repository.GitHubRepository, pull.Number)}
+		}
+	}
+	return newest
+}
+
+type closedPullError struct {
+	pull workerproto.PublicationPullRequest
+}
+
+func (closedPullError) Error() string { return workerproto.PublicationClosedPullRequest }
+
+func closedPullRefusal(err error) (workerproto.PublishResult, bool) {
+	var closed closedPullError
+	if !errors.As(err, &closed) {
+		return workerproto.PublishResult{}, false
+	}
+	return workerproto.PublishResult{Status: "refused", ErrorCode: workerproto.PublicationClosedPullRequest, ClosedPullRequest: &closed.pull}, true
 }
 
 func exactPublicationPull(pull githubPublicationPull, grant publicationGrant, intent workerproto.PublishIntent) bool {

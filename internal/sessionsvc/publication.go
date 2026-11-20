@@ -183,6 +183,11 @@ func (s *Service) runPublishOperation(ctx context.Context, operationID string) e
 
 func validPublicationResult(intent workerproto.PublishIntent, result workerproto.PublishResult) bool {
 	req := intent.Request
+	if closed := result.ClosedPullRequest; closed != nil || result.ErrorCode == workerproto.PublicationClosedPullRequest {
+		return closed != nil && result.Status == "refused" && result.ErrorCode == workerproto.PublicationClosedPullRequest &&
+			result.Receipt == nil && result.Conflict == nil && req.Mode == "" && req.PullRequestNumber == 0 && closed.Number > 0 &&
+			closed.URL == fmt.Sprintf("https://github.com/%s/pull/%d", intent.Repository.GitHubRepository, closed.Number)
+	}
 	if result.Status == "refused" && result.Receipt == nil && result.Conflict == nil {
 		if result.ErrorCode == "publication_push_outcome_unverified" {
 			return req.Mode == "existing_pull_request"

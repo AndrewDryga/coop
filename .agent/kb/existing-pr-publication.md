@@ -40,6 +40,19 @@ conflict yields `publication_push_outcome_unverified`: manual reconciliation, ne
 nothing was pushed. The marker survives command acknowledgement, session discard and ordinary
 source cleanup. It contains no credentials and must not move into disposable command receipts.
 
+New-PR mode looks PRs up by branch with `state=all`, so recovery after a lost response finds the
+App's own PR even if closed. Exactly one exact open App-owned draft is reused; anything else
+refuses. When every listed PR is closed and none is the App's bot's, the refusal is
+`publication_branch_has_closed_pull_request` with `closed_pull_request` (newest number, URL built
+from the repository, never GitHub's string; `closedForeignPull`). It comes from the lookup before
+the push, or from the one after the push and before the PR create. The lookup reads one page of
+`pullLookupPage` (100) and never follows pagination, so a full page answers the general
+`publication_existing_pull_request_changed`: an open PR could be on the next page. This stays a
+refusal on purpose: new-PR mode has no ancestry proof, so a lease on that branch could replace a
+person's history, and a second PR on it would sit beside theirs. A closed App-owned PR keeps
+`publication_existing_pull_request_changed`: publishing again would undo the person who closed it.
+
 ## Changelog
+- 2026-11-19 — a closed PR the App does not own now refuses a new-PR publish by name (`publication_branch_has_closed_pull_request`) instead of as "changed"; loosening was rejected (task 2026-11-19-let-a-new-pr-publish-use-a-branch-again-after-a).
 - 2026-11-19 — Bounded PR re-read after the push: a single read hit GitHub's lag on 4 of 4 real runs (manual test D1).
 - 2026-11-17 — Added after service and connector tests verified selected-parent review, atomic ancestry-preserving publication, race refusals and receipt recovery.

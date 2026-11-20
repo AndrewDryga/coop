@@ -102,6 +102,19 @@ type PublishResult struct {
 	Receipt   *PublicationReceipt  `json:"receipt,omitempty"`
 	Conflict  *PublicationConflict `json:"conflict,omitempty"`
 	ErrorCode string               `json:"error_code,omitempty"`
+	// ClosedPullRequest names the closed pull request that keeps a new-PR publish off its
+	// branch, only with ErrorCode PublicationClosedPullRequest.
+	ClosedPullRequest *PublicationPullRequest `json:"closed_pull_request,omitempty"`
+}
+
+// PublicationClosedPullRequest refuses a new-PR publish to a branch that already has a closed
+// pull request the App does not own. Opening a second PR on that branch, or pushing to it, would
+// write over someone else's work, so the way out is a new branch.
+const PublicationClosedPullRequest = "publication_branch_has_closed_pull_request"
+
+type PublicationPullRequest struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
 }
 
 func publicationObject(s string) bool {

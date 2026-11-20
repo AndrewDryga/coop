@@ -348,6 +348,21 @@ func TestPublicationResultMustMatchRetainedIntent(t *testing.T) {
 		{"refused", true, func(r *workerproto.PublishResult, _ workerproto.PublishIntent) {
 			*r = workerproto.PublishResult{Status: "refused", ErrorCode: "publication_authorization_revoked"}
 		}},
+		{"closed-pull-request", true, func(r *workerproto.PublishResult, i workerproto.PublishIntent) {
+			*r = workerproto.PublishResult{Status: "refused", ErrorCode: workerproto.PublicationClosedPullRequest,
+				ClosedPullRequest: &workerproto.PublicationPullRequest{Number: 3, URL: "https://github.com/" + i.Repository.GitHubRepository + "/pull/3"}}
+		}},
+		{"closed-pull-request-unnamed", false, func(r *workerproto.PublishResult, _ workerproto.PublishIntent) {
+			*r = workerproto.PublishResult{Status: "refused", ErrorCode: workerproto.PublicationClosedPullRequest}
+		}},
+		{"closed-pull-request-foreign-url", false, func(r *workerproto.PublishResult, _ workerproto.PublishIntent) {
+			*r = workerproto.PublishResult{Status: "refused", ErrorCode: workerproto.PublicationClosedPullRequest,
+				ClosedPullRequest: &workerproto.PublicationPullRequest{Number: 3, URL: "https://example.com/pull/3"}}
+		}},
+		{"closed-pull-request-on-another-refusal", false, func(r *workerproto.PublishResult, i workerproto.PublishIntent) {
+			*r = workerproto.PublishResult{Status: "refused", ErrorCode: "publication_authorization_revoked",
+				ClosedPullRequest: &workerproto.PublicationPullRequest{Number: 3, URL: "https://github.com/" + i.Repository.GitHubRepository + "/pull/3"}}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

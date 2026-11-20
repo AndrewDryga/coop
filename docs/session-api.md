@@ -1552,6 +1552,10 @@ The result is one of:
 - `conflict`, with the verified existing PR and its observed remote head
 - `refused`, with a stable error code
 
+Treat any `error_code` you don't recognise on a `refused` publication as a final refusal: don't
+retry it, and publish to a new branch. Ignore fields you don't recognise in a publication result;
+later versions may add codes and fields.
+
 The worker requests fresh credentials from your authenticated controller at
 `POST /v1/coop-workers/jobs/{job_ref}/publication-grants`. The request identifies the session,
 job digest, review operation, original command key, repository and exact publication request.
@@ -1575,8 +1579,28 @@ its title and body, so `publication_pull_request_mismatch` can arrive after both
 after a lost response can likewise end in a refusal, such as `publication_authorization_revoked`,
 after an earlier attempt pushed. The branch and PR stay on GitHub. A personal token, or an `actor_id` that isn't the App's bot, gives exactly this
 result. Fix the grant, then check GitHub before you publish again: a later publish to the same
-branch is refused with `publication_existing_pull_request_changed` while a PR the App doesn't own
-exists for it, even a closed one, so close that PR and publish to a new branch.
+branch is refused with `publication_existing_pull_request_changed` while an open PR the App doesn't
+own exists for it, so close that PR and publish to a new branch.
+
+The worker never adopts, reopens or pushes to a branch whose PR someone else opened, even after
+that PR is closed. When every PR GitHub lists for the branch is closed and none is the App's own,
+the publish is refused with `publication_branch_has_closed_pull_request`, and the result names the
+newest of them. The worker looks before it pushes, so this refusal normally comes before anything
+is written. It looks again after the push, before it opens a PR, so when such a PR appears in
+between, the refusal comes after the branch was pushed but never after a PR write. Only the first
+100 PRs for the branch are read; when there are that many, the refusal is
+`publication_existing_pull_request_changed` instead, since an open PR could be among the rest:
+
+```json
+{
+  "status": "refused",
+  "error_code": "publication_branch_has_closed_pull_request",
+  "closed_pull_request": {"number": 3, "url": "https://github.com/example/repo/pull/3"}
+}
+```
+
+Publish to a new branch. A PR of the App's own that someone closed still refuses as
+`publication_existing_pull_request_changed`, so a publish never reopens what a person closed.
 
 To update an existing PR owned by a person, send `mode: "existing_pull_request"`, its exact
 number, branch, base branch and `expected_head`. This requires a review whose `parent_head`
