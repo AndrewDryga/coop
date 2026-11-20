@@ -348,6 +348,9 @@ func TestPublicationResultMustMatchRetainedIntent(t *testing.T) {
 		{"refused", true, func(r *workerproto.PublishResult, _ workerproto.PublishIntent) {
 			*r = workerproto.PublishResult{Status: "refused", ErrorCode: "publication_authorization_revoked"}
 		}},
+		{"push-outcome-unverified", true, func(r *workerproto.PublishResult, _ workerproto.PublishIntent) {
+			*r = workerproto.PublishResult{Status: "refused", ErrorCode: "publication_push_outcome_unverified"}
+		}},
 		{"closed-pull-request", true, func(r *workerproto.PublishResult, i workerproto.PublishIntent) {
 			*r = workerproto.PublishResult{Status: "refused", ErrorCode: workerproto.PublicationClosedPullRequest,
 				ClosedPullRequest: &workerproto.PublicationPullRequest{Number: 3, URL: "https://github.com/" + i.Repository.GitHubRepository + "/pull/3"}}

@@ -132,24 +132,29 @@ func (p publicationHost) publish(ctx context.Context, repository string, intent 
 	if previous.Result != nil {
 		return *previous.Result, nil
 	}
-	result, err := p.publishCandidate(ctx, repository, intent)
+	var confirmed bool
+	result, err := p.publishCandidate(ctx, repository, intent, &confirmed)
 	var refusal publicationRefusal
 	refused := errors.As(err, &refusal)
 	if refused || err == nil && (result.Status == "conflict" || result.Status == "refused") {
 		// This invocation may have crossed Git's write boundary before losing its
 		// response. The pre-call snapshot cannot establish that nothing was pushed.
+		// A refusal found after this invocation saw the branch at the candidate
+		// keeps its own code: the push outcome is known.
 		latest, readErr := p.readPublicationProgress(intent)
 		if readErr != nil {
 			return workerproto.PublishResult{}, publicationRetry("candidate", readErr)
 		}
-		if latest.Attempted {
+		if latest.Attempted && !confirmed {
 			return workerproto.PublishResult{Status: "refused", ErrorCode: "publication_push_outcome_unverified"}, nil
 		}
 		if refused {
 			return workerproto.PublishResult{Status: "refused", ErrorCode: string(refusal)}, nil
 		}
 	}
-	if err == nil && result.Receipt != nil && intent.Request.Mode == "existing_pull_request" {
+	// A confirmed receipt replays from here on, in both modes, before any grant or Git: a
+	// service that lost the result runs the same intent again and must get the same answer.
+	if err == nil && result.Receipt != nil {
 		if saveErr := p.savePublicationProgress(intent, publicationProgress{Attempted: true, Result: &result}); saveErr != nil {
 			return workerproto.PublishResult{}, publicationRetry("candidate", saveErr)
 		}
@@ -174,7 +179,8 @@ type publicationRefusal string
 
 func (r publicationRefusal) Error() string { return string(r) }
 
-func (p publicationHost) publishCandidate(ctx context.Context, repository string, intent workerproto.PublishIntent) (workerproto.PublishResult, error) {
+// publishCandidate sets confirmed once a new-PR publish has seen its branch at the candidate.
+func (p publicationHost) publishCandidate(ctx context.Context, repository string, intent workerproto.PublishIntent, confirmed *bool) (workerproto.PublishResult, error) {
 	var empty workerproto.PublishResult
 	if intent.Request.Validate() != nil || intent.Repository.Validate() != nil {
 		return empty, errors.New("invalid publication request")
@@ -227,6 +233,11 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 			return empty, publicationRetry("lfs_upload", err)
 		}
 		ref := "refs/heads/" + req.Branch
+		// As in existing-PR mode, a refusal after a lost response must not read as
+		// "nothing was pushed" (publish).
+		if err := p.savePublicationProgress(intent, publicationProgress{Attempted: true}); err != nil {
+			return empty, publicationRetry("candidate", err)
+		}
 		if err := sourceGitIO(ctx, repository, grant.Token, p.protocol, nil, io.Discard,
 			"-c", "http.followRedirects=false", "push", "--quiet", "--no-verify", "--force-with-lease="+ref+":"+req.ExpectedHead,
 			p.remote, head+":"+ref); err != nil {
@@ -242,6 +253,7 @@ func (p publicationHost) publishCandidate(ctx context.Context, repository string
 			}
 		}
 	}
+	*confirmed = true
 	if pull == nil {
 		// Reconcile again after the push: another retry may have created the PR.
 		pull, err = p.findPull(ctx, grant, intent)

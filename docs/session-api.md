@@ -1575,10 +1575,11 @@ A refusal in this mode doesn't always mean nothing was written. The worker looks
 first. When there is none, it pushes the branch and looks again before it opens one, because an
 earlier attempt may have opened it, so `publication_existing_pull_request_changed` can arrive
 after the push. The worker checks the PR GitHub returns after it opened the draft PR or updated
-its title and body, so `publication_pull_request_mismatch` can arrive after both writes. A retry
-after a lost response can likewise end in a refusal, such as `publication_authorization_revoked`,
-after an earlier attempt pushed. The branch and PR stay on GitHub. A personal token, or an `actor_id` that isn't the App's bot, gives exactly this
-result. Fix the grant, then check GitHub before you publish again: a later publish to the same
+its title and body, so `publication_pull_request_mismatch` can arrive after both writes. The
+branch and PR stay on GitHub. A personal token, or an `actor_id` that isn't the App's bot, gives
+exactly this result. A retry after a lost response that is refused before it sees the branch on
+GitHub reports `publication_push_outcome_unverified` instead, because an earlier attempt may have
+pushed (see below). Fix the grant, then check GitHub before you publish again: a later publish to the same
 branch is refused with `publication_existing_pull_request_changed` while an open PR the App doesn't
 own exists for it, so close that PR and publish to a new branch.
 
@@ -1620,10 +1621,12 @@ original branch, commit and PR identity. Its state is `changed_after_push` or
 available. A controller must report the warning and must not treat this as permission to resolve
 review threads or continue automatic edits.
 
-The worker journals an attempted push before Git runs and retains confirmed results independently
-of command acknowledgements. A confirmed result replays without new credentials. If an earlier
-attempt has no confirmed result and permission is then revoked or the branch changes, the terminal
-code is `publication_push_outcome_unverified`. The commit may already have been pushed. Check the
+In both modes the worker journals an attempted push before Git runs and retains confirmed results
+independently of command acknowledgements. A confirmed result replays without new credentials,
+even if the branch has changed since. If an earlier attempt has no confirmed result and a later one is
+refused before it sees the branch at the candidate (permission revoked, the branch changed, or a
+PR the App doesn't own appeared), the terminal code is `publication_push_outcome_unverified`. A
+refusal found after the worker saw its branch at the candidate keeps its own code. The commit may already have been pushed. Check the
 frozen intent and GitHub history manually; do not automatically retarget or start another fix.
 
 If a push or PR response is lost, co:op checks the remote result before retrying. A candidate

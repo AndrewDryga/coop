@@ -111,10 +111,17 @@ func TestPublicationPushesExactReviewedCommitAndRecoversLostPRResponse(t *testin
 		t.Fatalf("duplicate PR or reused grant: creates=%d updates=%d grants=%d", creates, updates, grants)
 	}
 	mu.Unlock()
-	// A moved remote branch is reported with evidence and never overwritten.
+	// A moved remote branch is never overwritten. The intent that published replays its saved
+	// receipt, as a service that lost the result runs it again, without a grant or Git.
 	if err := runSourceGit(ctx, remote, "", "file", "update-ref", "refs/heads/coop/fix", base); err != nil {
 		t.Fatal(err)
 	}
+	if replayed, err := host.publish(ctx, repo, intent); err != nil || replayed.Status != "published" || replayed.Receipt.CommitSHA != head ||
+		replayed.Receipt.PullRequestNumber != 7 || grants != 3 {
+		t.Fatalf("the published intent again: %+v %v, grants %d", replayed, err, grants)
+	}
+	// A new publish to the moved branch is reported with evidence.
+	intent.CommandKey = "publish-again"
 	result, err = host.publish(ctx, repo, intent)
 	if err != nil || result.Status != "conflict" || result.Conflict.ObservedHeadSHA != base || result.Conflict.PullRequestNumber != 7 {
 		t.Fatalf("CAS conflict: %+v %v", result, err)
@@ -264,6 +271,12 @@ func TestPublicationUploadsLargeGitAndLFSObjectsAndUpdatesTheExactReadyPR(t *tes
 	if err := os.Remove(object); err != nil {
 		t.Fatal(err)
 	}
+	// The confirmed intent replays its receipt; any other publish of the candidate checks LFS
+	// custody again before it writes.
+	if replayed, err := host.publish(ctx, repo, intent); err != nil || replayed.Status != result.Status || updates.Load() != 1 {
+		t.Fatalf("confirmed publication did not replay: %+v %v", replayed, err)
+	}
+	intent.CommandKey = "publish-again"
 	if _, err := host.publish(ctx, repo, intent); err == nil || updates.Load() != 1 {
 		t.Fatal("missing LFS custody was silently accepted on retry")
 	}

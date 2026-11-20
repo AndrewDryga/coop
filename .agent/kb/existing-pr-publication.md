@@ -33,12 +33,20 @@ nothing; the attempted marker and the `observed == CandidateHead` path confirm i
 
 `publication-results/<full-intent-digest>.json` bridges the Git write and completed service
 operation. It persists the complete intent and an attempted marker before Git, then the validated
-receipt. Files and directory entries are synced. The service serializes each publication operation;
-the writer additionally refuses to replace a confirmed result with a preparation marker. Results
-replay before asking for credentials. An unresolved previous attempt followed by revocation or a
-conflict yields `publication_push_outcome_unverified`: manual reconciliation, never a claim that
-nothing was pushed. The marker survives command acknowledgement, session discard and ordinary
-source cleanup. It contains no credentials and must not move into disposable command receipts.
+receipt. New-PR mode writes the same marker, same shape, right before its branch push, and saves
+only a `published` receipt (its PR number is the one it opened, so `exactSavedPublicationResult`
+takes any positive number when the request names none). v15.0.0 never wrote new-PR files, so their
+absence reads as "not attempted". Files are never pruned, in either mode: the journal grows by one
+file (at most 512 KiB, usually a few KiB) per publish intent. Files and directory entries are synced. The service serializes each
+publication operation; the writer additionally refuses to replace a confirmed result with a
+preparation marker. Results replay before asking for credentials. An unresolved previous attempt
+followed by revocation or a conflict yields `publication_push_outcome_unverified`: manual
+reconciliation, never a claim that nothing was pushed. The exception is a new-PR refusal found
+after that try saw the branch at the candidate (`confirmed` in `publishCandidate`: a post-push
+lookup or the final PR check): the push is known, so it keeps its code, and a wrong `actor_id`
+still reads as `publication_pull_request_mismatch`. The marker survives command acknowledgement,
+session discard and ordinary source cleanup. It contains no credentials and must not move into
+disposable command receipts.
 
 New-PR mode looks PRs up by branch with `state=all`, so recovery after a lost response finds the
 App's own PR even if closed. Exactly one exact open App-owned draft is reused; anything else
@@ -53,6 +61,7 @@ person's history, and a second PR on it would sit beside theirs. A closed App-ow
 `publication_existing_pull_request_changed`: publishing again would undo the person who closed it.
 
 ## Changelog
+- 2026-11-19 — new-PR mode journals the attempted marker before its push, so a refusal after a lost push reports `publication_push_outcome_unverified`; the service accepts that code in both modes (task 2026-11-19-record-that-a-new-pr-publish-attempted-its-push).
 - 2026-11-19 — a closed PR the App does not own now refuses a new-PR publish by name (`publication_branch_has_closed_pull_request`) instead of as "changed"; loosening was rejected (task 2026-11-19-let-a-new-pr-publish-use-a-branch-again-after-a).
 - 2026-11-19 — Bounded PR re-read after the push: a single read hit GitHub's lag on 4 of 4 real runs (manual test D1).
 - 2026-11-17 — Added after service and connector tests verified selected-parent review, atomic ancestry-preserving publication, race refusals and receipt recovery.

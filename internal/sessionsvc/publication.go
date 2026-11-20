@@ -189,11 +189,8 @@ func validPublicationResult(intent workerproto.PublishIntent, result workerproto
 			closed.URL == fmt.Sprintf("https://github.com/%s/pull/%d", intent.Repository.GitHubRepository, closed.Number)
 	}
 	if result.Status == "refused" && result.Receipt == nil && result.Conflict == nil {
-		if result.ErrorCode == "publication_push_outcome_unverified" {
-			return req.Mode == "existing_pull_request"
-		}
 		switch result.ErrorCode {
-		case "publication_branch_changed", "publication_branch_already_exists", "publication_existing_pull_request_changed", "publication_pull_request_mismatch", "publication_authorization_revoked":
+		case "publication_push_outcome_unverified", "publication_branch_changed", "publication_branch_already_exists", "publication_existing_pull_request_changed", "publication_pull_request_mismatch", "publication_authorization_revoked":
 			return true
 		}
 	}

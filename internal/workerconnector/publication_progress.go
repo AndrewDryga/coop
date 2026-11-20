@@ -49,9 +49,6 @@ func (p publicationHost) publicationProgressPath(intent workerproto.PublishInten
 
 func (p publicationHost) readPublicationProgress(intent workerproto.PublishIntent) (publicationProgress, error) {
 	var saved publicationProgress
-	if intent.Request.Mode != "existing_pull_request" {
-		return saved, nil
-	}
 	path, digest, err := p.publicationProgressPath(intent)
 	if err != nil {
 		return saved, err
@@ -122,11 +119,16 @@ func syncPublicationDirectory(path string) error {
 func exactSavedPublicationResult(intent workerproto.PublishIntent, result workerproto.PublishResult) bool {
 	r := result.Receipt
 	req := intent.Request
-	if r == nil || result.Conflict != nil || result.ErrorCode != "" ||
+	if r == nil || result.Conflict != nil || result.ErrorCode != "" || result.ClosedPullRequest != nil ||
 		r.Repository != intent.Repository.RepositoryRef || r.BranchRef != "refs/heads/"+req.Branch ||
-		r.CandidateTree != req.CandidateTree || r.CommitSHA != req.CandidateHead || r.PullRequestNumber != req.PullRequestNumber ||
-		r.PullRequestURL != fmt.Sprintf("https://github.com/%s/pull/%d", intent.Repository.GitHubRepository, req.PullRequestNumber) {
+		r.CandidateTree != req.CandidateTree || r.CommitSHA != req.CandidateHead || r.PullRequestNumber <= 0 ||
+		(req.PullRequestNumber != 0 && r.PullRequestNumber != req.PullRequestNumber) ||
+		r.PullRequestURL != fmt.Sprintf("https://github.com/%s/pull/%d", intent.Repository.GitHubRepository, r.PullRequestNumber) {
 		return false
+	}
+	// New-PR mode opens its own PR and confirms it, so only published is final there.
+	if req.Mode != "existing_pull_request" {
+		return result.Status == "published" && r.TargetObservation == nil
 	}
 	if result.Status == "published" {
 		return r.TargetObservation == nil
