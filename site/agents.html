@@ -118,6 +118,7 @@
 <li class="reference-subsection"><a href="#choose-the-default-account">Choose the default account</a></li>
 <li><a href="#picking-models">Picking models</a></li>
 <li class="reference-subsection"><a href="#reasoning-effort">Reasoning effort</a></li>
+<li class="reference-subsection"><a href="#fast-mode">Fast mode</a></li>
 <li class="reference-subsection"><a href="#which-model-runs">Which model runs</a></li>
 <li><a href="#second-opinions">Second opinions</a></li>
 <li class="reference-subsection"><a href="#inside-the-box">Inside the box</a></li>
@@ -435,6 +436,33 @@ settings, that setting takes precedence.</p>
 <code>:model/effort</code>, <code>COOP_&lt;AGENT&gt;_MODEL</code> and a loop.yaml step&#39;s <code>agent:</code> all accept <code>model[/effort]</code>.
 For example, <code>signoff.agent: [claude:opus/xhigh]</code> uses xhigh effort for final review while you keep
 the work step at low effort.</p>
+<h3 id="fast-mode">Fast mode</h3>
+<p>Add <code>+fast</code> after the model and effort to run a target in its provider&#39;s fast mode:
+<code>coop codex:gpt-6.2-sol+fast</code>, <code>coop claude:opus/high+fast@work</code>. It answers about twice as fast
+and costs more: Codex&#39;s Fast tier uses more of the plan&#39;s allowance, and Claude&#39;s fast mode is
+billed at a higher rate.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Fast mode table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Agent</th>
+<th scope="col">How co:op turns it on</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Codex</td>
+<td><code>service_<wbr/>tier = &#34;priority&#34;</code> at the top of the box&#39;s generated <code>config.toml</code></td>
+</tr>
+<tr>
+<td>Claude</td>
+<td><code>--settings {&#34;fastMode&#34;:true}</code> on the CLI, and the adapter&#39;s <code>fast</code> option in an editor or job</td>
+</tr>
+</tbody>
+</table></div></div>
+<p>Only Codex and Claude have a fast mode; co:op refuses <code>+fast</code> for any other agent. Not every model
+has one. A Claude model without it keeps standard speed, and Codex uses the tier only for a model
+whose catalog lists it. A box generates Codex&#39;s configuration once, so a ladder that moves from a
+fast Codex model to one without <code>+fast</code> keeps the tier it started with.</p>
 <h3 id="which-model-runs">Which model runs</h3>
 <p>Each consult peer follows the same model-selection rules and uses its own default when you don&#39;t
 name a model. <code>coop loop</code> shows the model reported by the agent at the start of each iteration.</p>
@@ -608,7 +636,7 @@ roles:
 </code></pre></div>
 <h3 id="run-a-preset">Run a preset</h3>
 <p>Use the preset name where the command expects a target, and co:op runs its lead. A
-target in that position (<code>&lt;agent&gt;[:model][/effort][@account]</code>) runs the agent directly:</p>
+target in that position (<code>&lt;agent&gt;[:model][/effort][+fast][@account]</code>) runs the agent directly:</p>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Run a preset code example" tabindex="0"><code class="language-bash">coop presets init                # scaffold the recipe + starter prompt files, ready to edit
 coop frontier                    # interactive lead with the full routing contract
 coop loop frontier               # unattended: lead credentials rotate, roles ride along
