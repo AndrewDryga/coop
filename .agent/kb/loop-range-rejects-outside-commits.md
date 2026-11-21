@@ -253,6 +253,10 @@ loop holds its iteration lease before entering the short ref window; host comple
 authority before attempting task-completion authority.
 
 ## Changelog
+- 2026-11-21 — corrected the pending-review remedy: a loop settles a resumed review before other
+  work, so it now reads "settles that review before other work"; a review it cannot run goes to a
+  person ([[signoff-scope-is-run-anchored]]; task
+  2026-11-21-let-a-loop-finish-or-retire-a-final-review-whose).
 - 2026-11-21 — a host close past a merge after a pending subject's commit goes through: that
   subject's reopen can only set the later commits aside, never replay them; a box's close stays
   strict, and the loop remedy says it works the ready tasks first (task

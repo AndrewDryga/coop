@@ -1197,7 +1197,8 @@ OPTIONS
 
   Follow-up commits may carry the task's trailer too. Coop closes it and
   names them in its log, unless a loop is running in the checkout or a final
-  review waits on the task or on a task before those commits.
+  review waits on the task, or on a task before those commits with no merge
+  between.
 
   --force is for a person at a terminal who has checked the work. Coop leaves
   the checklist as it is and notes what was open in the task's log.

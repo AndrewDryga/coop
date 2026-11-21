@@ -193,6 +193,24 @@ func noteDroppedFinalReviews(ids []string) {
 	ui.Alert(fmt.Sprintf("Final review could not resume for %s", ui.Count(len(ids), "task")), cause, rows...)
 }
 
+// noteHandedOverReviews names the subjects whose final review met a merge commit it cannot review,
+// which tasks.HandOverUnreadableReviews blocked for a person, dropping that review.
+func noteHandedOverReviews(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	cause := "A merge commit is in the history its final review covers, and Coop reviews only a straight line of commits. Coop dropped that review and blocked the task for your decision."
+	if len(ids) > 1 {
+		cause = "A merge commit is in the history their final review covers, and Coop reviews only a straight line of commits. Coop dropped that review and blocked the tasks for your decision."
+	}
+	rows := make([][2]string, 0, len(ids)+1)
+	for _, id := range ids {
+		rows = append(rows, [2]string{"Task:", cleanDiagnosticLine(id)})
+	}
+	rows = append(rows, [2]string{decisionsLabel(len(ids)), "coop tasks decisions -i"})
+	ui.Alert(fmt.Sprintf("Final review could not run for %s", ui.Count(len(ids), "task")), cause, rows...)
+}
+
 func notePendingFinalReview(ids []string) {
 	if len(ids) > 0 {
 		ui.Note("Final review remains pending for %s; the next loop will resume it.", ui.Count(len(ids), "accepted task"))

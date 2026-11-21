@@ -2,8 +2,8 @@
 name: signoff-scope-is-run-anchored
 description: the signoff reviews a run-anchored folder-diff subject list — re-anchor the baseline ONLY on a receipt-consistent round, or reworked reopens silently escape the next review
 subsystem: loop
-sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/cli/cli.go, internal/loop/changes.go, internal/tasks/cmd.go]
-updated: 2026-11-05
+sources: [internal/loop/loop.go, internal/loop/signoff.go, internal/loop/pending_review.go, internal/tasks/pending_review.go, internal/tasks/completion.go, internal/cli/sign.go, internal/cli/cli.go, internal/loop/changes.go, internal/tasks/cmd.go, internal/tasks/review_dispute.go]
+updated: 2026-11-21
 ---
 
 The signoff pass does NOT review all of `99_done/` (that dir holds every prior run's history until a
@@ -89,6 +89,19 @@ start commit, changed HEAD's tree and still matched (`...TheTreeTheRunStartsFrom
 length-prefixed: NUL separators once let two different histories share a fingerprint, since git
 stores NUL in an author line (`TestPendingReviewDigestKeepsFieldsApart`); with the prefixes, unusual
 author lines read like any other. The window must be linear, as audit authority already requires.
+A window holding a merge commit can never be reviewed, and used to stop every later loop at
+"record final-review round" (2026-11-21: a review left on 2026-11-05 met merge 0c6400a3). Before
+each round, `tasks.HandOverUnreadableReviews` reopens such subjects into 50_blocked/ the way a
+disputed review does (review audit record, `DisputedReceipt`, decision.md, log note) and retires
+their records; the loop names them and reviews the rest. A task commit that is itself a merge
+(no audit record can be captured) is blocked without authority and its record retired as a departed
+one, so a capture failure cannot wedge the loop again. Coop records no HEAD where a run's attempts
+ended, so it cannot tell a person's later merge from one a box made inside its attempt; a narrower
+window (the task's commit alone) could skip that box's other commits, so every such subject goes to
+a person, who closes it with `coop tasks done --force` (a box can neither complete nor unblock a
+blocked task, and an agent's shell is refused --force). Unblocking sends it back to work, but its
+next review covers the same window, so it returns while the merge is there. A verify-phase subject whose
+window gained a merge goes back to signoff at load (`returnChangedToSignoff`) instead of failing it.
 A round reads its subjects, its window and the reviewer's change set from one commit, which
 `BeginPendingReviewRound` returns; it refuses a subject whose commit is outside the window, and the
 review refuses to start anywhere else. Another session's box that moved HEAD between those reads
@@ -199,6 +212,9 @@ actionable integrity error names mutated archives, and the next startup is clean
 Related: [[task-state-is-the-folder]].
 
 ## Changelog
+- 2026-11-21 — a review window holding a merge hands its subjects to a person and retires the
+  review instead of failing every later loop (task
+  2026-11-21-let-a-loop-finish-or-retire-a-final-review-whose).
 - 2026-11-05 — a subject that left the archive without review authority no longer stops every loop
   start: the start drops its record and returns it to the queue; the review audit names a changed
   archive folder instead of calling it an unleased move (task

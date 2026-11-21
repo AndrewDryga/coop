@@ -1258,19 +1258,28 @@ func sameCohortPlan(cohort PendingReviewCohort, record PendingReviewRecord) erro
 // repair after it, or someone rewrote them while the loop was stopped. Verification then cannot
 // clear content no reviewer saw.
 func returnChangedToSignoff(repo, head string, roots map[string]string, subjects []PendingReviewRecord) error {
-	var accepted []PendingReviewRecord
+	windows := map[string]pendingReviewHistory{}
+	unreadable := map[string]bool{} // a merge in the window: no signoff covered it (HandOverUnreadableReviews)
 	for _, subject := range subjects {
-		if subject.Phase == PendingReviewVerify {
-			accepted = append(accepted, subject)
+		base := pendingReviewSubjectBase(subject)
+		if _, read := windows[base]; subject.Phase != PendingReviewVerify || read || unreadable[base] {
+			continue
 		}
-	}
-	windows, err := readPendingReviewWindows(repo, head, accepted)
-	if err != nil {
-		return err
+		window, err := readPendingReviewHistory(repo, base, head)
+		var merge *auditMergeCommitError
+		switch {
+		case errors.As(err, &merge):
+			unreadable[base] = true
+		case err != nil:
+			return err
+		default:
+			windows[base] = window
+		}
 	}
 	for i, subject := range subjects {
 		id := subject.Task.Ref.ID
-		if subject.Phase != PendingReviewVerify || windows[pendingReviewSubjectBase(subject)].covers(subject.Reviewed) {
+		base := pendingReviewSubjectBase(subject)
+		if subject.Phase != PendingReviewVerify || !unreadable[base] && windows[base].covers(subject.Reviewed) {
 			continue
 		}
 		backToSignoff(&subject)

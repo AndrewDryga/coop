@@ -850,8 +850,9 @@ func extraBindingsRisk(project, root, id string, own *CompletionWindowSet, opts 
 	if err != nil {
 		return unreadable("the pending final reviews", err)
 	}
-	// Only a loop finishes a pending review, and it works the ready tasks before its final review.
-	const runLoop = "Run coop loop, which works the ready tasks and then finishes that review"
+	// Only a loop settles a pending review. It does so before any other work: it runs the review, or
+	// hands its tasks to a person when the review cannot run (HandOverUnreadableReviews).
+	const runLoop = "Run coop loop, which settles that review before other work"
 	for _, subject := range slices.Compact(slices.Sorted(slices.Values(subjects))) {
 		subjectCommits := history.bindings[subject]
 		switch {
@@ -2086,13 +2087,22 @@ type rawAuditCommit struct {
 	taskBindingInvalid bool
 }
 
+// auditMergeCommitError is a merge commit in history read as a straight line, which the audit and a
+// final review's window cannot replay. Its parents come from the hash-checked object, so nothing
+// written in .git can make one up or hide one.
+type auditMergeCommitError struct{ sha string }
+
+func (e *auditMergeCommitError) Error() string {
+	return fmt.Sprintf("audit history merge commit %s cannot be replayed safely", e.sha)
+}
+
 func rawAuditCommitFromObject(sha string, raw []byte) (rawAuditCommit, error) {
 	tree, parents, err := auditCommitHeaderFromRaw(sha, raw)
 	if err != nil {
 		return rawAuditCommit{}, err
 	}
 	if len(parents) > 1 {
-		return rawAuditCommit{}, fmt.Errorf("audit history merge commit %s cannot be replayed safely", sha)
+		return rawAuditCommit{}, &auditMergeCommitError{sha: sha}
 	}
 	parent := ""
 	if len(parents) == 1 {

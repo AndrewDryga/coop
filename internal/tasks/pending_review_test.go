@@ -18,6 +18,13 @@ import (
 
 func pendingReviewTestCompletion(t *testing.T) (repo, root, base string, assignment TaskAssignment, done Item, plan PendingReviewPlan) {
 	t.Helper()
+	return pendingReviewTestCompletionWith(t, nil)
+}
+
+// pendingReviewTestCompletionWith is pendingReviewTestCompletion with attempt run inside the
+// worker's attempt, after the run's base and before the task's commit.
+func pendingReviewTestCompletionWith(t *testing.T, attempt func(repo, base string)) (repo, root, base string, assignment TaskAssignment, done Item, plan PendingReviewPlan) {
+	t.Helper()
 	repo = initRepo(t)
 	root = filepath.Join(repo, TasksRoot)
 	taskWithCompletedChecklist(t, root, StateTodo, "review-me")
@@ -38,6 +45,9 @@ func pendingReviewTestCompletion(t *testing.T) (repo, root, base string, assignm
 	}
 	assignment.Lease.Quiesce()
 	base = forkspace.GitOut(repo, "rev-parse", "HEAD")
+	if attempt != nil {
+		attempt(repo, base)
+	}
 	writeTaskFile(t, filepath.Join(repo, "change.txt"), "review me\n")
 	git(t, repo, "add", "change.txt")
 	git(t, repo, "commit", "-qm", "implement review subject\n\nCoop-Task: review-me")

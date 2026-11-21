@@ -1801,6 +1801,25 @@ reviewAgain:
 		if err := tasks.EnrollExistingPendingReviews(repo, hosts, subjectIDs, reviewPlan); err != nil {
 			return 1, fmt.Errorf("preserve final-review subjects: %w", err)
 		}
+		// A review whose window holds a merge commit can never run; its subjects go to a person
+		// instead of stopping this and every later loop here.
+		handed, err := tasks.HandOverUnreadableReviews(repo, hosts, subjectIDs)
+		noteHandedOverReviews(handed)
+		if err != nil {
+			if len(handed) > 0 {
+				// Blocked, but a record may be left: the next start retires it, and a close before
+				// that would find the review still recorded.
+				err = fmt.Errorf("%w; run coop loop again to retire their reviews before you close them", err)
+			}
+			return 1, fmt.Errorf("hand final-review round %d subjects to a person: %w", signoffRound, err)
+		}
+		if len(handed) > 0 {
+			subjects = slices.DeleteFunc(subjects, func(s string) bool { return slices.Contains(handed, taskIDsOf([]string{s})[0]) })
+			subjectIDs = taskIDsOf(subjects)
+			if len(subjects) == 0 {
+				break
+			}
+		}
 		roundHead, err := tasks.BeginPendingReviewRound(hosts, subjectIDs, signoffRound)
 		if err != nil {
 			return 1, fmt.Errorf("record final-review round %d: %w", signoffRound, err)

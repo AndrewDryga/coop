@@ -363,7 +363,7 @@ func TestDoneRefusesSeveralBindingsAfterAPendingReviewSubject(t *testing.T) {
 	got := usage.Render(ui.Palette{})
 	for _, want := range []string{
 		"A loop's final review is still waiting on task " + subject.ID + ", and reopening that task replays these later commits.",
-		"Run coop loop, which works the ready tasks and then finishes that review, then retry: coop tasks done " + id,
+		"Run coop loop, which settles that review before other work, then retry: coop tasks done " + id,
 		"Or a person who checked the work closes it as it stands: coop tasks done " + id + " --force",
 	} {
 		if !strings.Contains(got, want) {

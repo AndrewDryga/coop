@@ -65,7 +65,12 @@ The resumed review uses the `Coop-Task: <id>` trailer to find each task's commit
 commits made since the run started. You can sign those commits between runs. If any commit seen
 by a previous review has changed, including a repair commit that was on top of the branch, co:op
 reviews the task again. If it finds no matching commit or more than one, it stops before review
-and lists the task and commits.
+and lists the task and commits. The review reads only a straight line of commits. If a merge
+commit has landed among them, such as upstream work merged while the loop was stopped, co:op
+cannot tell whether the merge hides work from the review. It drops that review, blocks the task
+for your decision and goes on. Check the work, including what the merge brought in, then close it
+with `coop tasks done <id> --force`. Unblocking it has it worked again, but its next review covers
+the same history, so it comes back to you while that merge is in it.
 
 ### Task locks and claims
 
