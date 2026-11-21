@@ -267,8 +267,9 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 		return 1, err
 	}
 	sandbox := sha256.Sum256([]byte(cfg.BaseImage))
-	// Storage and capabilities stay off the poll path: a slow storage measurement must not stall
-	// command starts, result delivery or lease renewal (see workerconnector.LiveReports).
+	// Storage, account usage and capabilities stay off the poll path: a slow storage measurement or
+	// provider read must not stall command starts, result delivery or lease renewal (see
+	// workerconnector.LiveReports).
 	reports := workerconnector.NewLiveReports(privateAPI)
 	hello := func(ctx context.Context, clock time.Time) workerproto.WorkerHello {
 		capacity := workerconnector.LiveCapacity(ctx, privateAPI)
@@ -278,6 +279,7 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 			SandboxDigest: hex.EncodeToString(sandbox[:]),
 			Capabilities:  reports.Capabilities(ctx),
 			Storage:       reports.Storage(ctx),
+			AccountUsage:  reports.AccountUsage(ctx),
 			Capacity:      capacity,
 		}
 	}

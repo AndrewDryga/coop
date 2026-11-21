@@ -413,6 +413,15 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSessionJSON(w, http.StatusOK, report)
 		return
+	case "/v1/usage":
+		// The allowance each account's provider last reported, read with this worker's own
+		// sign-ins at most every few minutes. The connector forwards the nested `usage` object in
+		// the hello; no credential leaves the worker.
+		if !sessionHTTPMethod(w, r, http.MethodGet) || !sessionQueryOnly(w, r) {
+			return
+		}
+		writeSessionJSON(w, http.StatusOK, h.service.AccountUsageReport(r.Context()))
+		return
 	}
 	if r.URL.Path == "/v1/sessions" || strings.HasPrefix(r.URL.Path, "/v1/sessions/") {
 		h.serveSessionPath(w, r)

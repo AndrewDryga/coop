@@ -164,26 +164,7 @@ func (a *app) cmdUsage(args []string) (int, error) {
 			}
 			quotaCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
-			login := row.provider + "@" + row.account
-			if need := box.ProfileSignIn(a.cfg, row.provider, row.account, time.Now()); need != agents.SignedIn {
-				row.quotaErr = &agents.SignInError{Need: need, Target: login}
-				return
-			}
-			input, err := box.UsageQuotaAuthority(a.cfg, row.provider, row.account)
-			if err != nil {
-				row.quotaErr = errors.New("this credential's sign-in could not be checked")
-				return
-			}
-			row.quota, row.quotaErr = ag.Usage().Quota(quotaCtx, input)
-			// The lookup's renewal may have just recorded that the provider refused this sign-in, so
-			// the local answer decides again. A quota service that refuses the access means the same.
-			if row.quotaErr != nil {
-				if need := box.ProfileSignIn(a.cfg, row.provider, row.account, time.Now()); need != agents.SignedIn {
-					row.quotaErr = &agents.SignInError{Need: need, Target: login, Err: row.quotaErr}
-				} else if errors.Is(row.quotaErr, agents.ErrUsageSignIn) {
-					row.quotaErr = &agents.SignInError{Need: agents.SignInAgain, Target: login, Err: row.quotaErr}
-				}
-			}
+			row.quota, row.quotaErr = box.AccountQuota(quotaCtx, a.cfg, row.provider, row.account)
 		}()
 	}
 	go func() {

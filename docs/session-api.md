@@ -161,6 +161,51 @@ deleting a workspace, co:op moves it into a private staging directory belonging 
 cleanup can resume an interrupted removal. Discard reports success only after the data has been
 removed.
 
+### Account usage
+
+Each hello message can also carry an `account_usage` object: the allowance each account the worker
+holds has left, as `coop usage` shows it. The connector reads it from the daemon's
+[`GET /v1/usage`](#health) endpoint and forwards it unchanged, in the background like storage. The
+daemon reads the providers with the worker's own sign-ins at most every five minutes, so no
+credential leaves the worker. An account that isn't signed in is listed but never read. The hello
+is decoded strictly: a controller must accept `account_usage` before a worker that sends it
+connects.
+
+```json
+{
+  "version": 1,
+  "accounts": [
+    {
+      "account": "codex@personal",
+      "sign_in": "signed_in",
+      "checked_at": "2026-11-21T01:00:00Z",
+      "attempted_at": "2026-11-21T01:05:00Z",
+      "error": "unavailable",
+      "plan": "pro", "auth": null, "note": null,
+      "limits": [
+        {"name": "5-hour", "used_percent": 82, "remaining": null,
+         "resets_at": "2026-11-21T03:00:00Z", "available": false, "note": null},
+        {"name": "Credits", "used_percent": null, "remaining": "unlimited",
+         "resets_at": null, "available": null, "note": null}
+      ],
+      "reset_credits": {"available": 2, "expires_at": ["2026-12-21T03:00:00Z"]}
+    }
+  ]
+}
+```
+
+- Every key is present, and `null` means unknown, never zero.
+- `sign_in` is `signed_in`, `not_signed_in` or `sign_in_again`.
+- `checked_at` is when the provider last answered, and `plan`, `auth`, `note`, `limits` and
+  `reset_credits` come from that answer; all are empty until a read succeeds. `attempted_at` is the
+  latest read. When it failed, `error` is `sign_in_refused` or `unavailable` and the last answer
+  stays, so compare `checked_at` with `attempted_at` to tell figures going stale.
+- `used_percent` is the share of the window used, as the provider reports it; it can pass 100.
+  `remaining` is the provider's own amount, such as a credit balance. `available` is the provider's
+  word on whether the window can be spent now. A window's `name` is the provider's own, such as
+  `5-hour`, `Weekly` or a model's name.
+- `auth` names a sign-in with no provider limits to report, such as `API key`.
+
 ### Restart and recovery
 
 Stop the connector with `SIGINT` or `SIGTERM`. Across restarts, keep the identity file, the entire
@@ -553,6 +598,7 @@ use up one of those review attempts.
 | `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1],"checkpoint_upstream_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
+| `GET` | `/v1/usage` | `{"usage": …}`: the allowance each account's provider last reported, read at most every five minutes (see [Account usage](#account-usage)) |
 
 The worker has four slots for model processes, shared by active turns and idle warm sessions. The
 session, turn and workspace counts all describe those same slots, so don't add them together. Time

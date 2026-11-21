@@ -108,6 +108,7 @@
 <li><a href="#session-authority">Session authority</a></li>
 <li class="reference-subsection"><a href="#job-network-rules">Job network rules</a></li>
 <li class="reference-subsection"><a href="#workspace-storage">Workspace storage</a></li>
+<li class="reference-subsection"><a href="#account-usage">Account usage</a></li>
 <li class="reference-subsection"><a href="#restart-and-recovery">Restart and recovery</a></li>
 <li class="reference-subsection"><a href="#upgrading-a-worker">Upgrading a worker</a></li>
 <li class="reference-subsection"><a href="#session-inspection-evidence">Session inspection evidence</a></li>
@@ -269,6 +270,48 @@ protected in <code>/v1/storage</code> and leaves it for manual inspection.</p>
 deleting a workspace, co:op moves it into a private staging directory belonging to its owner, so
 cleanup can resume an interrupted removal. Discard reports success only after the data has been
 removed.</p>
+<h3 id="account-usage">Account usage</h3>
+<p>Each hello message can also carry an <code>account_usage</code> object: the allowance each account the worker
+holds has left, as <code>coop usage</code> shows it. The connector reads it from the daemon&#39;s
+<a href="#health"><code>GET /v1/usage</code></a> endpoint and forwards it unchanged, in the background like storage. The
+daemon reads the providers with the worker&#39;s own sign-ins at most every five minutes, so no
+credential leaves the worker. An account that isn&#39;t signed in is listed but never read. The hello
+is decoded strictly: a controller must accept <code>account_usage</code> before a worker that sends it
+connects.</p>
+<div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">JSON</p><pre class="code" role="region" aria-label="Account usage code example" tabindex="0" data-copy-source=""><code class="language-json">{
+  &#34;version&#34;: 1,
+  &#34;accounts&#34;: [
+    {
+      &#34;account&#34;: &#34;codex@personal&#34;,
+      &#34;sign_in&#34;: &#34;signed_in&#34;,
+      &#34;checked_at&#34;: &#34;2026-11-21T01:00:00Z&#34;,
+      &#34;attempted_at&#34;: &#34;2026-11-21T01:05:00Z&#34;,
+      &#34;error&#34;: &#34;unavailable&#34;,
+      &#34;plan&#34;: &#34;pro&#34;, &#34;auth&#34;: null, &#34;note&#34;: null,
+      &#34;limits&#34;: [
+        {&#34;name&#34;: &#34;5-hour&#34;, &#34;used_percent&#34;: 82, &#34;remaining&#34;: null,
+         &#34;resets_at&#34;: &#34;2026-11-21T03:00:00Z&#34;, &#34;available&#34;: false, &#34;note&#34;: null},
+        {&#34;name&#34;: &#34;Credits&#34;, &#34;used_percent&#34;: null, &#34;remaining&#34;: &#34;unlimited&#34;,
+         &#34;resets_at&#34;: null, &#34;available&#34;: null, &#34;note&#34;: null}
+      ],
+      &#34;reset_credits&#34;: {&#34;available&#34;: 2, &#34;expires_at&#34;: [&#34;2026-12-21T03:00:00Z&#34;]}
+    }
+  ]
+}
+</code></pre></div>
+<ul>
+<li>Every key is present, and <code>null</code> means unknown, never zero.</li>
+<li><code>sign_in</code> is <code>signed_in</code>, <code>not_signed_in</code> or <code>sign_in_again</code>.</li>
+<li><code>checked_at</code> is when the provider last answered, and <code>plan</code>, <code>auth</code>, <code>note</code>, <code>limits</code> and
+<code>reset_credits</code> come from that answer; all are empty until a read succeeds. <code>attempted_at</code> is the
+latest read. When it failed, <code>error</code> is <code>sign_in_refused</code> or <code>unavailable</code> and the last answer
+stays, so compare <code>checked_at</code> with <code>attempted_at</code> to tell figures going stale.</li>
+<li><code>used_percent</code> is the share of the window used, as the provider reports it; it can pass 100.
+<code>remaining</code> is the provider&#39;s own amount, such as a credit balance. <code>available</code> is the provider&#39;s
+word on whether the window can be spent now. A window&#39;s <code>name</code> is the provider&#39;s own, such as
+<code>5-hour</code>, <code>Weekly</code> or a model&#39;s name.</li>
+<li><code>auth</code> names a sign-in with no provider limits to report, such as <code>API key</code>.</li>
+</ul>
 <h3 id="restart-and-recovery">Restart and recovery</h3>
 <p>Stop the connector with <code>SIGINT</code> or <code>SIGTERM</code>. Across restarts, keep the identity file, the entire
 journal directory and the same worker and workspace configuration. A restart loads the existing
@@ -664,6 +707,11 @@ use up one of those review attempts.</p>
 <td><code>GET</code></td>
 <td><code>/v1/storage</code></td>
 <td>Disk use measured by this daemon: <code>storage</code> (the summary for a fleet controller), <code>budget</code>, <code>totals</code>, <code>roots</code>, <code>forks</code> and <code>problems</code></td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/usage</code></td>
+<td><code>{&#34;usage&#34;: …}</code>: the allowance each account&#39;s provider last reported, read at most every five minutes (see <a href="#account-usage">Account usage</a>)</td>
 </tr>
 </tbody>
 </table></div></div>

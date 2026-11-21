@@ -47,11 +47,45 @@ func LiveStorage(ctx context.Context, api API) *workerproto.Storage {
 	return &storage
 }
 
-// LiveReports keeps the hello's two slow or constant reads off the poll path. The poll loop is one
+// accountUsageReport is the daemon's GET /v1/usage envelope, decoded as tolerantly as the
+// storage one; the object inside is decoded strictly and validated.
+type accountUsageReport struct {
+	Usage json.RawMessage `json:"usage"`
+}
+
+// LiveAccountUsage reads the local session daemon's last provider answers for each account. Like
+// LiveStorage it returns nil for every failure, a daemon that predates the report included: the
+// hello's account_usage field is OPTIONAL and must never stop a worker from polling.
+func LiveAccountUsage(ctx context.Context, api API) *workerproto.AccountUsage {
+	if api == nil {
+		return nil
+	}
+	raw, err := api.Do(ctx, Request{Method: "GET", Path: "/v1/usage"})
+	if err != nil {
+		return nil
+	}
+	var report accountUsageReport
+	if json.Unmarshal(raw, &report) != nil || len(report.Usage) == 0 {
+		return nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(report.Usage))
+	decoder.DisallowUnknownFields()
+	var usage workerproto.AccountUsage
+	if decoder.Decode(&usage) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil
+	}
+	if usage.Validate() != nil {
+		return nil
+	}
+	return &usage
+}
+
+// LiveReports keeps the hello's slow or constant reads off the poll path. The poll loop is one
 // goroutine that also starts commands, delivers results and renews leases, and /v1/storage can
 // wait up to the private API's one-minute timeout while the daemon re-measures the state tree or a
 // job source is removed. So Storage never waits: it returns the last report and refreshes it in
-// the background, one refresh at a time. Capabilities are a constant of the running daemon: once
+// the background, one refresh at a time. AccountUsage does the same, since reading the providers
+// can take the daemon most of that minute. Capabilities are a constant of the running daemon: once
 // it answers, that answer holds for the connection.
 type LiveReports struct {
 	api API
@@ -59,6 +93,8 @@ type LiveReports struct {
 	mu           sync.Mutex
 	storage      *workerproto.Storage
 	refreshing   bool
+	usage        *workerproto.AccountUsage
+	reading      bool
 	capabilities []workerproto.Capability
 }
 
@@ -82,6 +118,26 @@ func (r *LiveReports) Storage(ctx context.Context) *workerproto.Storage {
 		}()
 	}
 	return r.storage
+}
+
+// AccountUsage returns the last account usage report, nil until the first one arrives, and starts
+// a read unless one is already running. The read stops when ctx ends.
+func (r *LiveReports) AccountUsage(ctx context.Context) *workerproto.AccountUsage {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.reading {
+		r.reading = true
+		go func() {
+			usage := LiveAccountUsage(ctx, r.api)
+			r.mu.Lock()
+			defer r.mu.Unlock()
+			r.reading = false
+			if usage != nil || ctx.Err() == nil {
+				r.usage = usage
+			}
+		}()
+	}
+	return r.usage
 }
 
 // Capabilities reads the daemon's capabilities until it answers once, then keeps that answer.

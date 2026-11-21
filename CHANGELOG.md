@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A worker reports each account's allowance to its controller.** The hello now carries an
+  optional `account_usage` object with the windows `coop usage` shows for every account the worker
+  holds: how much is used, when it resets, credits and reset credits, and when the provider last
+  answered. The daemon serves the same report at `GET /v1/usage` and reads the providers with the
+  worker's own sign-ins at most every five minutes. Controllers decode the hello strictly, so
+  upgrade the controller to one that accepts `account_usage` before the worker.
+
 ## 15.2.1
 
 - **A restored checkpoint has its empty task queue folders again.** Restore dropped the empty

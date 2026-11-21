@@ -73,3 +73,33 @@ func checkRunHistorySettled(cfg *config.Config, spec RunSpec) error {
 	}
 	return nil
 }
+
+// AccountQuota reads one account's provider allowance, as `coop usage` shows it, within ctx's
+// deadline. An account that is not signed in is not read and answers a SignInError; so does one
+// whose provider refused the sign-in during the read, which renews the account's token as a run
+// would. The CLI and the session daemon share it, so both answer the same way.
+func AccountQuota(ctx context.Context, cfg *config.Config, provider, account string) (agents.UsageQuota, error) {
+	ag, ok := agents.Get(provider)
+	if !ok {
+		return agents.UsageQuota{}, errors.New("unknown quota provider")
+	}
+	login := provider + "@" + account
+	if need := ProfileSignIn(cfg, provider, account, time.Now()); need != agents.SignedIn {
+		return agents.UsageQuota{}, &agents.SignInError{Need: need, Target: login}
+	}
+	input, err := UsageQuotaAuthority(cfg, provider, account)
+	if err != nil {
+		return agents.UsageQuota{}, errors.New("this credential's sign-in could not be checked")
+	}
+	quota, err := ag.Usage().Quota(ctx, input)
+	// The lookup's renewal may have just recorded that the provider refused this sign-in, so the
+	// local answer decides again. A quota service that refuses the access means the same.
+	if err != nil {
+		if need := ProfileSignIn(cfg, provider, account, time.Now()); need != agents.SignedIn {
+			err = &agents.SignInError{Need: need, Target: login, Err: err}
+		} else if errors.Is(err, agents.ErrUsageSignIn) {
+			err = &agents.SignInError{Need: agents.SignInAgain, Target: login, Err: err}
+		}
+	}
+	return quota, err
+}

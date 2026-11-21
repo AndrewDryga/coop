@@ -443,6 +443,12 @@ type Service struct {
 	// storage is this worker's own account of the disk it executes on: the configured limits, the
 	// sticky allocation decision, and the last measurement. See storage.go.
 	storage storageAccountant
+	// accountUsage is the last provider read of each account's allowance (account_usage.go).
+	// testAccountQuota and testUsageAccounts replace the provider read and the account listing in
+	// a test, which would otherwise need signed-in credentials; nil in production.
+	accountUsage      accountUsageState
+	testAccountQuota  accountQuotaReader
+	testUsageAccounts usageAccountLister
 }
 
 func NewService(cfg Config) (*Service, error) {

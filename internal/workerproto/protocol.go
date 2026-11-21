@@ -54,6 +54,10 @@ type WorkerHello struct {
 	// a control plane that does not understand it ignores it; neither may treat its absence as an
 	// empty disk.
 	Storage *Storage `json:"storage,omitempty"`
+	// AccountUsage is OPTIONAL in the same way: a worker that has not read its providers yet, or
+	// whose daemon predates the report, polls without it. A control plane must accept the field
+	// before a worker that sends it connects, because the hello is decoded strictly.
+	AccountUsage *AccountUsage `json:"account_usage,omitempty"`
 }
 
 type Capability struct {
@@ -249,6 +253,11 @@ func (w WorkerHello) validate() error {
 	}
 	if w.Storage != nil {
 		if err := w.Storage.validate(); err != nil {
+			return err
+		}
+	}
+	if w.AccountUsage != nil {
+		if err := w.AccountUsage.validate(); err != nil {
 			return err
 		}
 	}

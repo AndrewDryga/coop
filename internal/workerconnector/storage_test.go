@@ -68,3 +68,43 @@ func TestLiveStorageIsAbsentRatherThanWrong(t *testing.T) {
 		t.Fatalf("published %+v without a daemon", storage)
 	}
 }
+
+const liveAccountUsageReport = `{"usage":{"version":1,"accounts":[{"account":"codex@personal",` +
+	`"sign_in":"signed_in","checked_at":"2026-11-21T01:00:00Z","attempted_at":"2026-11-21T01:00:00Z",` +
+	`"error":null,"plan":"pro","auth":null,"note":null,"limits":[{"name":"5-hour","used_percent":82,` +
+	`"remaining":null,"resets_at":"2026-11-21T03:00:00Z","available":true,"note":null}],` +
+	`"reset_credits":null}]}}`
+
+// The daemon reads the providers; the connector forwards its answer as it is.
+func TestLiveAccountUsageForwardsTheDaemonsReport(t *testing.T) {
+	api := &capabilityAPI{response: json.RawMessage(liveAccountUsageReport)}
+
+	usage := LiveAccountUsage(context.Background(), api)
+	if usage == nil || len(usage.Accounts) != 1 || *usage.Accounts[0].Limits[0].UsedPercent != 82 {
+		t.Fatalf("forwarded usage = %+v", usage)
+	}
+	if api.request.Method != "GET" || api.request.Path != "/v1/usage" || len(api.request.Body) != 0 {
+		t.Fatalf("usage request = %+v", api.request)
+	}
+}
+
+// A daemon too old to answer, or a report that breaks its own contract, leaves the poll as it was.
+func TestLiveAccountUsageIsAbsentRatherThanWrong(t *testing.T) {
+	for name, scripted := range map[string]*capabilityAPI{
+		"no endpoint":   {err: errors.New("404 not_found")},
+		"no report":     {response: json.RawMessage(`{}`)},
+		"null report":   {response: json.RawMessage(`{"usage":null}`)},
+		"not json":      {response: json.RawMessage(`not json`)},
+		"unknown field": {response: json.RawMessage(strings.Replace(liveAccountUsageReport, `"usage":{`, `"usage":{"token":"x",`, 1))},
+		"incoherent":    {response: json.RawMessage(strings.Replace(liveAccountUsageReport, `"error":null`, `"error":"unavailable","x":1`, 1))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if usage := LiveAccountUsage(context.Background(), scripted); usage != nil {
+				t.Fatalf("published %+v from an unusable report", usage)
+			}
+		})
+	}
+	if usage := LiveAccountUsage(context.Background(), nil); usage != nil {
+		t.Fatalf("published %+v without a daemon", usage)
+	}
+}
