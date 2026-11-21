@@ -1054,6 +1054,11 @@ func tasksFolderMoveWith(root string, args []string, newState, verb string, opts
 		return 0, nil
 	}
 	if newState == StateDone {
+		if !opts.forceClose {
+			if err := openDecisionRefusal(t, doneRetry(t, opts)); err != nil {
+				return 1, err
+			}
+		}
 		// Refuse known unfinished work before stopping this caller's lease
 		// holder; trusted completion rechecks current metadata under authority.
 		if err := RequireCompletedChecklist(t); err != nil && !opts.forceClose {
@@ -1147,6 +1152,19 @@ func claimRefusal(t Item) error {
 			[2]string{"For more work, add a task:", `coop tasks add "<title>"`})
 	}
 	return nil
+}
+
+// openDecisionRefusal refuses a plain close of a blocked task whose decision still waits for an
+// answer, as claim and the box's tasks_complete do: the question belongs to a person. Their answer
+// lets the close go on, and so does their --force, which closes the task as it stands.
+func openDecisionRefusal(t Item, retry string) error {
+	if t.State != StateBlocked || !t.HasDecision || answeredDecision(t) {
+		return nil
+	}
+	return ui.CommandFailed(t.Title+" is blocked", "Its decision is waiting for a person's answer.",
+		[2]string{"See it:", "coop tasks decisions"},
+		[2]string{"Answer it:", "coop tasks unblock " + ui.SafeInline(t.ID) + ` "<answer>"`},
+		[2]string{"", "Or a person who checked the work closes it as it stands: " + retry + " --force"})
 }
 
 // logClaim journals who took the task in its log.md, as park, block and unblock journal theirs,

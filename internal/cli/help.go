@@ -1190,6 +1190,7 @@ OPTIONS
   The task must have at least one checklist item, with every item checked.
   Its state.md must not keep the template's <…> text in Done so far or Traps.
   Leave required checks open if they failed, could not run, or have not run.
+  A blocked task waits until a person answers its decision.
   Coop moves the task to done and removes its temporary files.
   The task's instructions, progress and saved evidence stay in the archive.
 

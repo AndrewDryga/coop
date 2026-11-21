@@ -996,6 +996,51 @@ func TestDoneForceClosesAnUnfinishedChecklistAndRecordsIt(t *testing.T) {
 	}
 }
 
+// The 2026-11-21 manual pass closed a blocked task whose decision had no answer with a plain
+// `coop tasks done` from an agent's shell, past the question claim and tasks_complete keep for a
+// person. A plain close now refuses an open or pending decision and names the way on; an answered
+// decision, or none at all, closes as before.
+func TestDoneRefusesABlockedTaskWhoseDecisionWaits(t *testing.T) {
+	const id = "2026-11-21-pick-storage"
+	for name, tc := range map[string]struct {
+		decision string
+		refused  bool
+	}{
+		"open decision":    {renderDecisionScaffold(id, "Pick storage"), true},
+		"pending note":     {"# Decision: Which store?\n\n**Resolution:** pending owner direction\n", true},
+		"answered":         {"# Decision: Which store?\n\n**Resolution:** Postgres.\n", false},
+		"without decision": {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+			root := t.TempDir()
+			taskWithCompletedChecklist(t, root, StateBlocked, id)
+			if tc.decision != "" {
+				writeTaskFile(t, filepath.Join(root, StateBlocked, id, "decision.md"), tc.decision)
+			}
+			code, err := CmdTasksFolder("", root, []string{"done", "pick-storage"})
+			current, _ := mustCurrentTask(t, root, id)
+			if !tc.refused {
+				if code != 0 || err != nil || current.State != StateDone {
+					t.Fatalf("done = (%d, %v), state %s; want it closed", code, err, current.State)
+				}
+				return
+			}
+			if code != 1 || err == nil {
+				t.Fatalf("done = (%d, %v), want a refusal", code, err)
+			}
+			for _, want := range []string{"is blocked", "coop tasks decisions", `coop tasks unblock ` + id + ` "<answer>"`, "coop tasks done " + id + " --force"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal lacks %q:\n%s", want, err)
+				}
+			}
+			if current.State != StateBlocked {
+				t.Fatalf("the refused close moved the task to %s", current.State)
+			}
+		})
+	}
+}
+
 // --force is a person's tool. Without a terminal, which is how agents run commands, it is
 // refused before anything is read or moved.
 func TestDoneForceNeedsATerminal(t *testing.T) {

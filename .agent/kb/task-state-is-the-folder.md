@@ -3,7 +3,7 @@ name: task-state-is-the-folder
 description: a task's state IS its directory; a bare `mv` to a missing state dir silently corrupts the queue
 subsystem: tasks
 sources: [internal/tasks/dir.go, internal/tasks/cmd.go, internal/tasks/queue.go, internal/tasks/projection.go, internal/cli/context.go, internal/cli/session_tasks.go]
-updated: 2026-11-06
+updated: 2026-11-21
 ---
 A task is a folder, and its STATE is which directory it sits in: `00_todo/` `10_in_progress/`
 `50_blocked/` `99_done/` (the numeric prefix only sorts `ls` in lifecycle order). Moving the folder
@@ -35,6 +35,9 @@ one outside it. Release then uses the
 ordinary single-queue handler: it returns an in-progress task to todo and clears the caller's
 claim, preserving progress and handoff notes. It cannot clear a sandbox assignment or another live
 process's claim. Update `state.md` before handing work back, as the CLI help instructs.
+A blocked task whose decision waits for an answer leaves 50_blocked/ only through a person:
+`coop tasks unblock` with the answer, or `coop tasks done --force`. Claim, a plain `coop tasks done`
+and the box's `tasks_complete` all refuse it.
 Explicit `--tasks` overrides configured queues and project-derived discovery.
 `coop context --task` retains the selected Item from that same resolver instead of flattening
 queues, which would let MatchTask choose the first duplicate exact ID. It validates original
@@ -42,6 +45,9 @@ argument boundaries before extracting queue flags, then resolves task metadata b
 Git status; task paths still append last so route reasons and scope ordering stay stable.
 
 ## Changelog
+- 2026-11-21 — a plain `coop tasks done` refuses a blocked task whose decision waits for an
+  answer, as claim and `tasks_complete` already did (task
+  2026-11-21-decide-what-coop-tasks-done-does-with-a-blocked).
 - 2026-11-06 — an exact slug beats a longer ID, lookups ignore case, a parked idea's miss names its
   promote command, and task commands refuse every queue outside a project (task
   2026-11-06-keep-new-task-queues-out-of-git-settle-outside-q).
