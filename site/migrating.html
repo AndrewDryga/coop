@@ -104,6 +104,7 @@
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#v1530-stricter-targets-and-closes-a-new-worker-hello-field-refused-git-links">v15.3.0: stricter targets and closes, a new worker hello field, refused Git links</a></li>
 <li><a href="#v1520-new-session-api-answers-checkpoint-bundles-and-fork-requests">v15.2.0: new session API answers, checkpoint bundles and fork requests</a></li>
 <li><a href="#v1500-session-store-schema-27-has-no-way-back">v15.0.0: session store schema 27 has no way back</a></li>
 <li><a href="#v1500-changed-session-api-answers-service-variables-and-fork-merges">v15.0.0: changed session API answers, service variables and fork merges</a></li>
@@ -136,6 +137,30 @@
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
 <p>Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 <code>git show v12.1.0:MIGRATING.md</code>.</p>
+</section><section class="doc-section reference-section" id="v1530-stricter-targets-and-closes-a-new-worker-hello-field-refused-git-links"><h2>v15.3.0: stricter targets and closes, a new worker hello field, refused Git links</h2>
+<ul>
+<li><strong>Workers and controllers.</strong> A worker&#39;s hello now carries <code>account_usage</code>, and a controller
+that decodes the hello strictly refuses it. Upgrade the controller to one that accepts
+<code>account_usage</code> first, then the worker. Workers also advertise <code>fast-target:1</code>; send a <code>+fast</code>
+job target only to a worker that does.</li>
+<li><strong>Session API.</strong> A cancel now waits about 15 seconds for its turn&#39;s cleanup, up from 5, before
+it answers <code>409 operation_uncertain</code>; keep reading the turn after that answer, as before. A
+restore of a malformed checkpoint bundle answers <code>400 invalid_request</code> instead of
+<code>500 internal_error</code>: do not retry it.</li>
+<li><strong>Claude efforts.</strong> A Claude target with an effort other than low, medium, high, xhigh or max
+is refused before the box starts. Claude Code only warned and ran at its default effort. Fix
+such a target in <code>loop.yaml</code>, a preset or <code>COOP_CLAUDE_MODEL</code>.</li>
+<li><strong><code>COOP_&lt;AGENT&gt;_MODEL</code>.</strong> A run of that agent that reads the setting now refuses a value a
+target would refuse, such as one with two <code>/</code> or an <code>@account</code>.</li>
+<li><strong><code>coop tasks done</code> on a blocked task.</strong> A plain close is refused while the task&#39;s decision has
+no answer. Answer it with <code>coop tasks unblock</code>, or close it yourself with <code>--force</code>.</li>
+<li><strong>Loops.</strong> A final review whose commits now include a merge commit no longer makes the loop
+exit 1 every time: its tasks move to blocked for you, and the loop exits 3 when that is all
+that is left. A loop in a shallow clone refuses at start; run <code>git fetch --unshallow</code> first.</li>
+<li><strong>Git links.</strong> <code>.git/config</code>, <code>.git/commondir</code> and a worktree&#39;s <code>gitdir</code> backlink are refused
+when they are symbolic links. Replace such a link with a copy of the file it names.</li>
+<li><strong><code>coop help</code>.</strong> An unknown option after <code>coop help</code> exits 2. It used to print help and exit 0.</li>
+</ul>
 </section><section class="doc-section reference-section" id="v1520-new-session-api-answers-checkpoint-bundles-and-fork-requests"><h2>v15.2.0: new session API answers, checkpoint bundles and fork requests</h2>
 <ul>
 <li><strong>Session API, publication.</strong> A new-PR publish can now be refused with

@@ -3,6 +3,30 @@
 Upgrade notes for v7 and earlier are in the v12.1.0 copy of this file:
 `git show v12.1.0:MIGRATING.md`.
 
+## v15.3.0: stricter targets and closes, a new worker hello field, refused Git links
+
+- **Workers and controllers.** A worker's hello now carries `account_usage`, and a controller
+  that decodes the hello strictly refuses it. Upgrade the controller to one that accepts
+  `account_usage` first, then the worker. Workers also advertise `fast-target:1`; send a `+fast`
+  job target only to a worker that does.
+- **Session API.** A cancel now waits about 15 seconds for its turn's cleanup, up from 5, before
+  it answers `409 operation_uncertain`; keep reading the turn after that answer, as before. A
+  restore of a malformed checkpoint bundle answers `400 invalid_request` instead of
+  `500 internal_error`: do not retry it.
+- **Claude efforts.** A Claude target with an effort other than low, medium, high, xhigh or max
+  is refused before the box starts. Claude Code only warned and ran at its default effort. Fix
+  such a target in `loop.yaml`, a preset or `COOP_CLAUDE_MODEL`.
+- **`COOP_<AGENT>_MODEL`.** A run of that agent that reads the setting now refuses a value a
+  target would refuse, such as one with two `/` or an `@account`.
+- **`coop tasks done` on a blocked task.** A plain close is refused while the task's decision has
+  no answer. Answer it with `coop tasks unblock`, or close it yourself with `--force`.
+- **Loops.** A final review whose commits now include a merge commit no longer makes the loop
+  exit 1 every time: its tasks move to blocked for you, and the loop exits 3 when that is all
+  that is left. A loop in a shallow clone refuses at start; run `git fetch --unshallow` first.
+- **Git links.** `.git/config`, `.git/commondir` and a worktree's `gitdir` backlink are refused
+  when they are symbolic links. Replace such a link with a copy of the file it names.
+- **`coop help`.** An unknown option after `coop help` exits 2. It used to print help and exit 0.
+
 ## v15.2.0: new session API answers, checkpoint bundles and fork requests
 
 - **Session API, publication.** A new-PR publish can now be refused with

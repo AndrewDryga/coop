@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 15.3.0
 
 - **Fast mode.** A target ending in `+fast` (`coop codex:gpt-6.2-sol+fast`,
   `claude:opus/high+fast@work`) runs in its provider's fast mode: Codex's Fast service tier, set at
