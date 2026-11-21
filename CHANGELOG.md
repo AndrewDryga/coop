@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 15.3.1
 
 - **A killed loop's box no longer keeps working.** When a loop or `coop run` was killed outright
   (`kill -9`, a crash), its box ran on with nobody watching and could still commit to your
