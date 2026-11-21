@@ -240,8 +240,12 @@ func (claudeAgent) Usage() UsageSpec {
 		HistoryFile: func(path string) bool { return strings.HasSuffix(path, ".jsonl") }, ParseHistory: claudeUsageHistory, Price: claudeUsagePrice}
 }
 
-// https://platform.claude.com/docs/en/about-claude/pricing — verified 2026-10-01.
+// https://platform.claude.com/docs/en/about-claude/pricing — verified 2026-10-01; Fable 5.2,
+// Mythos 5.2, Haiku 5.5 and Sonnet 5.5's cache reads verified 2026-11-20. Haiku 5.5 prices a
+// request whose prompt is over 100,000 tokens at five times its rates, cache reads and writes too.
 var claudeUsageRates = map[string]usageTariff{
+	"claude-fable-5-2":          {Input: 8, Read: .2, Write: 10, Write1h: 16, Output: 40},
+	"claude-mythos-5-2":         {Input: 8, Read: .2, Write: 10, Write1h: 16, Output: 40},
 	"claude-fable-5-1":          {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
 	"claude-mythos-5-1":         {Input: 10, Read: .25, Write: 12.5, Write1h: 20, Output: 50},
 	"claude-fable-5":            {Input: 10, Read: 1, Write: 12.5, Write1h: 20, Output: 50},
@@ -252,9 +256,10 @@ var claudeUsageRates = map[string]usageTariff{
 	"claude-opus-4-7":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
 	"claude-opus-4-6":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
 	"claude-opus-4-5":           {Input: 5, Read: .5, Write: 6.25, Write1h: 10, Output: 25},
-	"claude-sonnet-5-5":         {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
+	"claude-sonnet-5-5":         {Input: 2, Read: .1, Write: 2.5, Write1h: 4, Output: 10},
 	"claude-sonnet-5":           {Input: 2, Read: .2, Write: 2.5, Write1h: 4, Output: 10},
 	"claude-sonnet-4-6":         {Input: 3, Read: .3, Write: 3.75, Write1h: 6, Output: 15},
+	"claude-haiku-5-5":          {Input: .1, Read: .01, Write: .125, Write1h: .2, Output: .5, LongAt: 100001, LongInput: 5, LongOutput: 5},
 	"claude-haiku-4-5":          {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
 	"claude-haiku-4-5-20251001": {Input: 1, Read: .1, Write: 1.25, Write1h: 2, Output: 5},
 }
@@ -361,7 +366,7 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	var raw claudeQuotaResponse
 	headers := http.Header{
 		"Authorization": {"Bearer " + source.AccessToken}, "Anthropic-Beta": {"oauth-2025-04-20"},
-		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.319 (external, cli)"},
+		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.330 (external, cli)"},
 	}
 	err = readUsageQuota(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", headers, nil, &raw)
 	if err != nil {
@@ -541,8 +546,8 @@ func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
 		cpu = "x64"
 	}
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.319", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.319"}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.101.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.318"}}},
+		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.330", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.330"}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.109.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.328"}}},
 	}
 }
 
@@ -715,8 +720,9 @@ func (claudeAgent) Login(*config.Config) []string { return []string{"claude", "a
 
 func (claudeAgent) LoginConfig(*config.Config) (MCPConfig, error) { return MCPConfig{}, nil }
 
-// UpdateControls: DISABLE_UPDATES is the first switch the pinned 2.1.319 updater checks, and a
-// manual `claude update` refuses under it too — read out of the binary and its ACP adapter's SDK.
+// UpdateControls: DISABLE_UPDATES is the first switch the updater checks, and a manual `claude
+// update` refuses under it too — read out of the 2.1.319 binary and its ACP adapter's SDK, and still
+// in 2.1.330's and its adapter's 2.1.328.
 func (claudeAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"DISABLE_UPDATES=1"}}
 }
@@ -726,7 +732,7 @@ var claudeAliases = []string{"fable", "opus", "sonnet", "haiku"}
 
 // Models are the aliases plus full ids as examples. Illustrative — any id the CLI accepts works.
 func (claudeAgent) Models() []string {
-	return append(slices.Clone(claudeAliases), "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5")
+	return append(slices.Clone(claudeAliases), "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 }
 
 // ExampleModel: the alias people recognize, and the one coop's examples have always used.
@@ -745,8 +751,10 @@ func validateClaudeEffort(model, effort string) error {
 	if effort != "" {
 		// The pinned SDK drops effort for Haiku 4.5, while ACP exposes no effort option.
 		// Refuse the impossible control instead of accepting a target the client cannot honor.
+		// The haiku alias names Haiku 5.5 since Claude Code made it the default Haiku, and it
+		// takes an effort like the other current models.
 		switch model {
-		case "haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001":
+		case "claude-haiku-4-5", "claude-haiku-4-5-20251001":
 			return fmt.Errorf("haiku 4.5 does not support reasoning effort; run %s without /%s or choose a supporting model", model, effort)
 		}
 	}

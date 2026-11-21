@@ -4,6 +4,17 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Claude Fable 5.2 and the newest clients.** Claude Code 2.1.330, its editor adapter 0.109.0
+  (whose own Claude is 2.1.328), Codex 0.170.0 and Codex's editor adapter 2.8.0. The adapter
+  accepts `claude-fable-5-2`, which the previous one refused, and no longer lists
+  `claude-fable-5-1`; the frontier preset recipe moves to Fable 5.2. `haiku` now names Haiku 5.5,
+  which takes an effort, so `claude:haiku/low` is no longer refused (Haiku 4.5's full IDs still
+  are). Usage prices cover Fable 5.2, Mythos 5.2 and Haiku 5.5 (five times its rates past
+  100,000 prompt tokens), and Sonnet 5.5's cache reads at $0.10. Filtered sign-ins need no new
+  route: Codex's model list now names 0.170.0, and Claude's MCP directory read, refused as before,
+  moved to a new path. Codex stays at 0.170.0 because its adapter requires it; GPT-6.2 arrived in
+  0.171.0. The next launch rebuilds the box image, and filtered runs redo their network setup once.
+
 - **A task with follow-up commits closes without your override.** `coop tasks done` used to
   refuse a task that more than one commit carried the `Coop-Task` trailer of, and an agent whose
   commits were already pushed could only ask you for `--force`. The close now goes through for

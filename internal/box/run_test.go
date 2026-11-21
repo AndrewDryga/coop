@@ -2915,7 +2915,7 @@ func TestCheckEffortsRefusesWhatTheBoxCannotCarry(t *testing.T) {
 
 func TestCheckClaudeHaikuEffortRefusesBeforeRuntime(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
-	cfg.SetActiveModel("claude", "haiku")
+	cfg.SetActiveModel("claude", "claude-haiku-4-5")
 	cfg.SetActiveEffort("claude", "low")
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	code, err := runWithCompositionArtifacts(cfg, recorderRuntime(t, recorder), RunSpec{

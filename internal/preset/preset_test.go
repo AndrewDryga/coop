@@ -328,7 +328,7 @@ func TestScaffold(t *testing.T) {
 		t.Errorf("template should carry two consult roles and a delegate: %+v", p.Roles)
 	}
 	wantRoles := map[string]struct{ agent, model, effort string }{
-		"thinker": {"claude", "claude-fable-5-1", "max"},
+		"thinker": {"claude", "claude-fable-5-2", "max"},
 		"critic":  {"codex", "gpt-6-astra", "xhigh"},
 		"fast":    {"gemini", "gemini-3.8-flash", ""},
 	}

@@ -432,7 +432,7 @@ lead:
 roles:
   thinker:                              # deep thinking + review, read-only
     mode: consult                       # native would run it in the lead's session: every lead must be claude
-    agent: claude:claude-fable-5-1/max  # model + effort ride agent:
+    agent: claude:claude-fable-5-2/max  # model + effort ride agent:
     when: [architecture, debugging, code-review, before-commit]
     prompt: roles/thinker.md            # the persona it answers as
 

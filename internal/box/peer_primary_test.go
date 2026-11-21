@@ -93,13 +93,14 @@ func TestSameProviderPeerKeepsLeadEffortValidation(t *testing.T) {
 			t.Errorf("missing independent effort %q in %v", want, args)
 		}
 	}
-	cfg.SetActiveModel("claude", "haiku")
-	if err := checkEfforts(cfg, spec); err == nil || !strings.Contains(err.Error(), "claude:haiku/low") {
+	// Haiku 4.5 takes no effort; the haiku alias names Haiku 5.5 now, which does.
+	cfg.SetActiveModel("claude", "claude-haiku-4-5")
+	if err := checkEfforts(cfg, spec); err == nil || !strings.Contains(err.Error(), "claude:claude-haiku-4-5/low") {
 		t.Fatalf("valid peer masked unsupported lead effort: %v", err)
 	}
 	cfg.SetActiveModel("claude", "opus")
-	spec.Peers = []agents.Target{{Provider: "claude", Model: "haiku", Effort: "high"}}
-	if err := checkEfforts(cfg, spec); err == nil || !strings.Contains(err.Error(), "claude:haiku/high") {
+	spec.Peers = []agents.Target{{Provider: "claude", Model: "claude-haiku-4-5", Effort: "high"}}
+	if err := checkEfforts(cfg, spec); err == nil || !strings.Contains(err.Error(), "claude:claude-haiku-4-5/high") {
 		t.Fatalf("unsupported peer effort accepted: %v", err)
 	}
 }

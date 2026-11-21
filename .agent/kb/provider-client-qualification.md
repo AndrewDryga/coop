@@ -245,6 +245,18 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-21 — Claude Code 2.1.330, claude-agent-acp 0.109.0 (SDK claude 2.1.328), Codex 0.170.0 (not
+  0.171.0: codex-acp 2.8.0 requires ^0.170.0) and codex-acp 2.8.0, for Claude Fable 5.2. Same method,
+  old and new coop-box images offline through capx with the broker seeds (the kit's `run.sh` is a copy
+  of `apikey-mcp-run.sh`; the native capture was rewritten as the task's `native.sh`). Found: Claude's
+  MCP directory read moved from `GET /mcp-registry/v0/servers?…` to `GET /api/directory/server-urls`
+  (neither is a credentialed route, refused alike); Codex's models query carries 0.170.0 and it no
+  longer reads `plugins/featured` or `ps/plugins/list` at start. API-key and MCP lines, header
+  secrets and the ACP options are unchanged (the adapter lists `mode` last now). The new adapter
+  accepts `claude-fable-5-2` (the old one refused it) and treats an unlisted id such as
+  `claude-fable-5-1` as a lookup that needs the network. Codex still applies the managed layer over
+  `-c` and has `daemon_auto_start`; DISABLE_UPDATES is still in both Claude binaries. Login captures
+  re-taken: Claude's results read as before, Codex's errors carry the same 401 signals.
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K4-7; checked with grep).
 - 2026-11-08 — every client moved to its latest release: Claude Code 2.1.319, claude-agent-acp 0.101.0
   (SDK claude 2.1.318, ACP SDK 2.4.0), Codex 0.166.0 (not 0.167.0: codex-acp 2.6.0 requires ^0.166.0

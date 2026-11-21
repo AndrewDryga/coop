@@ -73,7 +73,7 @@ func TestParseTarget(t *testing.T) {
 }
 
 func TestClaudeHaikuEffortIsRefused(t *testing.T) {
-	for _, model := range []string{"haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001"} {
+	for _, model := range []string{"claude-haiku-4-5", "claude-haiku-4-5-20251001"} {
 		for _, effort := range []string{"low", "high"} {
 			if _, err := ParseTarget("claude:" + model + "/" + effort + "@personal"); err == nil || !strings.Contains(err.Error(), "without /"+effort) {
 				t.Errorf("%s/%s = %v, want actionable unsupported effort refusal", model, effort, err)
@@ -83,7 +83,9 @@ func TestClaudeHaikuEffortIsRefused(t *testing.T) {
 			t.Errorf("%s without effort was refused: %v", model, err)
 		}
 	}
-	for _, model := range []string{"opus", "sonnet", "claude-fable-5-1", "claude-haiku-9", "custom-haiku", "claude-haiku-4-5-custom"} {
+	// The haiku alias is Haiku 5.5 since the pinned Claude Code made it the default Haiku, and
+	// Haiku 5.5 takes an effort like Opus and Sonnet.
+	for _, model := range []string{"haiku", "claude-haiku-5-5", "opus", "sonnet", "claude-fable-5-2", "claude-haiku-9", "custom-haiku", "claude-haiku-4-5-custom"} {
 		if _, err := ParseTarget("claude:" + model + "/low@personal"); err != nil {
 			t.Errorf("supporting or unknown model %s was refused: %v", model, err)
 		}

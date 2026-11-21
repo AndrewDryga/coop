@@ -27,7 +27,7 @@ roles:
     # mode: native would run this role inside the lead's own session instead,
     # which needs every lead above to be the role's provider.
     mode: consult
-    agent: claude:claude-fable-5-1/max
+    agent: claude:claude-fable-5-2/max
     when: [architecture, debugging, code-review, before-commit]
     prompt: roles/thinker.md
 
