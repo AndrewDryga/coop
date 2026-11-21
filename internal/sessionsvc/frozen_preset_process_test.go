@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
@@ -46,6 +47,9 @@ func exerciseFrozenWorkerJob(t *testing.T, review bool) {
 			t.Fatalf("build %s: %v: %s", pkg, err, out)
 		}
 	}
+	// Runs before the temp folder's removal: a stopped coop's box lifeline still calls the scripted
+	// runtime, which writes into that folder.
+	t.Cleanup(func() { awaitLifelines(t, bin) })
 	for _, name := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "COOP_HOME", "TMPDIR"} {
 		dir := filepath.Join(tmp, name)
 		if err := os.MkdirAll(dir, 0700); err != nil {
@@ -210,6 +214,30 @@ exec "$COOP_TEST_SESSION_SCRIPTED_RUNTIME" "$@"
 		data, err := os.ReadFile(filepath.Join(repo, "message.txt"))
 		if err != nil || string(data) != "original message\n" {
 			t.Fatalf("source file changed outside the fork: %q, %v", data, err)
+		}
+	}
+}
+
+// awaitLifelines waits until no box lifeline started from coopBin is running. A helper exits at
+// once after a clean finish and within its own bound after a killed coop.
+func awaitLifelines(t *testing.T, coopBin string) {
+	t.Helper()
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(50 * time.Millisecond) {
+		out, err := exec.Command("ps", "-A", "-o", "args=").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		running := ""
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, coopBin) && strings.Contains(line, box.LifelineCommand) {
+				running = line
+			}
+		}
+		if running == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a box lifeline is still running after the test: %s", running)
 		}
 	}
 }

@@ -800,6 +800,35 @@ func buildTestBinary(t *testing.T, root, output, pkg string) {
 	if err := fixtureBinaries.Copy(t.Context(), root, output, pkg); err != nil {
 		t.Fatalf("build %s: %v", pkg, err)
 	}
+	if pkg == "." {
+		// Runs before the temp folder's removal (cleanups run last-registered first): a stopped
+		// coop's box lifeline still calls the fixture runtime, which writes into that folder.
+		t.Cleanup(func() { awaitLifelines(t, output) })
+	}
+}
+
+// awaitLifelines waits until no box lifeline started from coopBin is running. A helper exits at
+// once after a clean finish and within its own bound after a killed coop.
+func awaitLifelines(t *testing.T, coopBin string) {
+	t.Helper()
+	for deadline := time.Now().Add(wait.Deadline); ; time.Sleep(50 * time.Millisecond) {
+		out, err := exec.Command("ps", "-A", "-o", "args=").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		running := ""
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, coopBin) && strings.Contains(line, box.LifelineCommand) {
+				running = line
+			}
+		}
+		if running == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a box lifeline is still running after the test: %s", running)
+		}
+	}
 }
 
 // scriptedTempDir is t.TempDir by its real path. Coop follows a linked COOP_REPO to the folder it
