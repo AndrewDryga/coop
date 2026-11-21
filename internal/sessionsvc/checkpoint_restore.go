@@ -104,6 +104,10 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 		members[header.Name] = name
 		return errors.Join(err, file.Close())
 	})
+	if errors.Is(err, workerproto.ErrInvalidWorkspaceCheckpointBundle) {
+		// The detail stays fixed: the cause can quote member names from the bundle.
+		return fail(&session.Error{Code: session.CodeInvalidRequest, Detail: "checkpoint bundle is invalid"})
+	}
 	if err != nil {
 		return fail(err)
 	}

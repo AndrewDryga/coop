@@ -294,7 +294,6 @@ var (
 	ErrOperationIntentConflict = &Error{Code: CodeOperationIntentConflict}
 	ErrSessionNotFound         = &Error{Code: CodeSessionNotFound}
 	ErrTurnNotFound            = &Error{Code: CodeTurnNotFound}
-	ErrRevisionConflict        = &Error{Code: CodeRevisionConflict}
 	ErrQueueFull               = &Error{Code: CodeQueueFull}
 	ErrBudgetExhausted         = &Error{Code: CodeBudgetExhausted}
 )

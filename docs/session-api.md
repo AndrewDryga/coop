@@ -700,7 +700,8 @@ must leave `storage.reserve_bytes` free. These checks don't limit how much data 
 task writes in its workspace.
 
 Before reporting support for `job-setup:2`, `repository-freshness:2`, `session-evidence:1`,
-`controller-tools:1`, `project-runtime:1`, `job-preset:1`, `review-commit-message:1` or `checkpoint-upstream:1`, the connector checks the running daemon's
+`controller-tools:1`, `project-runtime:1`, `job-preset:1`, `review-commit-message:1`,
+`existing-pr-publication:1` or `checkpoint-upstream:1`, the connector checks the running daemon's
 `GET /v1/capabilities` response for the matching version. If it can't verify a capability,
 it leaves it out of the next hello.
 
@@ -933,10 +934,9 @@ under the v2 checkpoint description lists every answer.
 Other workspace states you can fix also refuse with `409 invalid_session_state` and say why:
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
 large untracked files, a missing or changed bound task, or a restore that must finish first.
-Restore answers `400 invalid_request` for a malformed descriptor or a bundle it must not apply
-(submodule changes, an unused LFS object, a file that would replace fork authority, a task offer
-other than the session's task). It also
-answers `400 invalid_request` when `Content-Length` is missing or differs from the descriptor's
+Restore answers `400 invalid_request` for a malformed descriptor or bundle, or a bundle it must
+not apply (submodule changes, an unused LFS object, a file that would replace fork authority, a
+task offer other than the session's task). It also answers `400 invalid_request` when `Content-Length` is missing or differs from the descriptor's
 size, and `415` when the content type differs from the descriptor's. A worker fault stays
 `500 internal_error`.
 

@@ -4,7 +4,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -568,5 +570,37 @@ func TestWorkspaceRefsDoNotAuthorizeACheckpointUpstream(t *testing.T) {
 				t.Fatal("capture never consulted the job's own source")
 			}
 		})
+	}
+}
+
+// A bundle whose bytes match its descriptor but whose manifest breaks the contract is the
+// controller's fault: no retry of the same bytes helps, so it answers 400, the same on replay,
+// with a detail that quotes nothing from the bundle.
+func TestRestoreOfAMalformedManifestAnswersInvalidRequest(t *testing.T) {
+	c := newUpstreamCheckpointCase(t, "offer:malformed")
+	upstream, _ := c.rebaseOnUpstream(t, false)
+	captured, bundle := c.captureBundle(t, "malformed-capture")
+	// Same length, so the tar header stays exact: an upstream equal to the base is invalid.
+	field := []byte(`"upstream_revision":"` + upstream + `"`)
+	if bytes.Count(bundle, field) != 1 {
+		t.Fatalf("bundle manifest does not name upstream %s once", upstream)
+	}
+	malformed := bytes.Replace(bundle, field, []byte(`"upstream_revision":"`+c.base+`"`), 1)
+	checkpoint := captured.Checkpoint
+	digest := sha256.Sum256(malformed)
+	checkpoint.Bundle.SHA256 = hex.EncodeToString(digest[:])
+	malformedCapture := captured
+	malformedCapture.Checkpoint = checkpoint
+	worker := c.freshWorker(t)
+	target := c.target(t, worker, "malformed-target", "offer:malformed")
+	for _, attempt := range []string{"first", "replay"} {
+		_, err := restoreCheckpoint(worker, "malformed-restore", target, malformedCapture, malformed)
+		var answer *session.Error
+		if !errors.As(err, &answer) || answer.Code != session.CodeInvalidRequest || answer.Detail != "checkpoint bundle is invalid" {
+			t.Fatalf("%s malformed manifest restore = %v, want 400 invalid_request", attempt, err)
+		}
+	}
+	if got := gitOut(target.Workspace, "rev-parse", "HEAD"); got != c.base {
+		t.Fatalf("refused restore changed the workspace to %s", got)
 	}
 }

@@ -193,3 +193,21 @@ func TestQuarantinedExhaustedSessionClosesAfterRuntimeProof(t *testing.T) {
 		t.Fatalf("exhausted close = %+v, %v; proofs=%d", closed, err, runner.proofs)
 	}
 }
+
+// A stale close names both revisions, as other stale requests do, so a controller can tell how far
+// behind it read.
+func TestStaleCloseNamesBothRevisions(t *testing.T) {
+	repo := storageTestRepo(t)
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, nil)
+	t.Cleanup(func() { _ = service.Stop() })
+	created, err := service.CreateRemoteSession(context.Background(), "stale-create", service.request(t, "stale-close"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Close(context.Background(), "stale-close", session.CloseSessionRequest{SessionID: created.ID, ExpectedRevision: created.Revision + 3})
+	want := fmt.Sprintf("expected revision %d, current revision %d", created.Revision+3, created.Revision)
+	var answer *session.Error
+	if !errors.As(err, &answer) || answer.Code != session.CodeRevisionConflict || answer.Detail != want {
+		t.Fatalf("stale close = %v, want revision_conflict %q", err, want)
+	}
+}

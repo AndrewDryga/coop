@@ -1800,9 +1800,15 @@ func artifactMediaMatches(mediaType string, data []byte) bool {
 
 func validateRevision(sess Session, expected int64) error {
 	if expected != sess.Revision {
-		return &Error{Code: CodeRevisionConflict, Detail: fmt.Sprintf("expected revision %d, current revision %d", expected, sess.Revision)}
+		return RevisionConflict(expected, sess.Revision)
 	}
 	return nil
+}
+
+// RevisionConflict refuses a stale expected revision and names both numbers, so a controller can
+// tell how far behind it read.
+func RevisionConflict(expected, current int64) error {
+	return &Error{Code: CodeRevisionConflict, Detail: fmt.Sprintf("expected revision %d, current revision %d", expected, current)}
 }
 
 func (s *Store) replayTurn(op Operation) (Turn, error) {

@@ -526,6 +526,10 @@ func TestControllerCertificateUntrustedOnlyForAnUnknownAuthority(t *testing.T) {
 	verification := func(cause error) error {
 		return &url.Error{Op: "Post", URL: server.URL, Err: &tls.CertificateVerificationError{Err: cause}}
 	}
+	// macOS's verifier names some untrusted chains only in text (seen on 2026-11-21).
+	if platform := verification(errors.New("x509: “127.0.0.1” certificate is not trusted")); !ControllerCertificateUntrusted(platform) {
+		t.Error("macOS's untyped refusal was not called untrusted")
+	}
 	for name, err := range map[string]error{
 		"another name": verification(x509.HostnameError{Certificate: server.Certificate(), Host: "controller.example"}),
 		"expired":      verification(x509.CertificateInvalidError{Cert: server.Certificate(), Reason: x509.Expired}),

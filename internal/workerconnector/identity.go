@@ -397,10 +397,21 @@ func ControllerUnreachable(err error) bool {
 
 // ControllerCertificateUntrusted reports a controller whose certificate was signed by an authority
 // this worker does not trust, which --ca-file can add. A certificate for another name, or one that
-// has expired, is a different problem that --ca-file does not fix.
+// has expired, is a different problem that --ca-file does not fix. macOS's verifier, used with the
+// system roots, refuses some untrusted chains with an untyped error ("certificate is not trusted"),
+// so a failed verification whose cause Go left untyped counts too.
 func ControllerCertificateUntrusted(err error) bool {
 	var unknownAuthority x509.UnknownAuthorityError
-	return errors.As(err, &unknownAuthority)
+	if errors.As(err, &unknownAuthority) {
+		return true
+	}
+	var verification *tls.CertificateVerificationError
+	if !errors.As(err, &verification) {
+		return false
+	}
+	var hostname x509.HostnameError
+	var invalid x509.CertificateInvalidError
+	return !errors.As(verification.Err, &hostname) && !errors.As(verification.Err, &invalid)
 }
 
 // IdentityStatusError is a controller's answer to a worker identity request that was not the success

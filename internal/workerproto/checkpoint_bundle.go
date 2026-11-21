@@ -11,14 +11,53 @@ import (
 	"time"
 )
 
+// ErrInvalidWorkspaceCheckpointBundle marks a bundle whose own bytes break the checkpoint
+// contract: a fault of whoever made the bundle, which no retry of the same bytes can fix.
+var ErrInvalidWorkspaceCheckpointBundle = errors.New("workspace checkpoint bundle is invalid")
+
 // ReadWorkspaceCheckpointBundle validates a bounded manifest and streams each
 // declared member. Consumers must quarantine any writes until this call succeeds.
+// A failure the bundle's bytes caused wraps ErrInvalidWorkspaceCheckpointBundle; a failed
+// read of the input or an error from visit is returned as it is.
 func ReadWorkspaceCheckpointBundle(checkpoint WorkspaceCheckpoint, input io.Reader,
 	visit func(*tar.Header, io.Reader) error,
 ) (WorkspaceCheckpointBundleManifest, error) {
 	if err := checkpoint.Validate(); err != nil {
 		return WorkspaceCheckpointBundleManifest{}, err
 	}
+	source := &checkpointBundleInput{input: input}
+	var visitErr error
+	visitor := visit
+	if visit != nil {
+		visitor = func(header *tar.Header, body io.Reader) error {
+			visitErr = visit(header, body)
+			return visitErr
+		}
+	}
+	manifest, err := readWorkspaceCheckpointBundle(checkpoint, source, visitor)
+	if err != nil && visitErr == nil && source.err == nil {
+		err = fmt.Errorf("%w: %w", ErrInvalidWorkspaceCheckpointBundle, err)
+	}
+	return manifest, err
+}
+
+// checkpointBundleInput remembers a failed read, so a broken transport is not blamed on the bundle.
+type checkpointBundleInput struct {
+	input io.Reader
+	err   error
+}
+
+func (r *checkpointBundleInput) Read(data []byte) (int, error) {
+	n, err := r.input.Read(data)
+	if err != nil && !errors.Is(err, io.EOF) && r.err == nil {
+		r.err = err
+	}
+	return n, err
+}
+
+func readWorkspaceCheckpointBundle(checkpoint WorkspaceCheckpoint, input io.Reader,
+	visit func(*tar.Header, io.Reader) error,
+) (WorkspaceCheckpointBundleManifest, error) {
 	limited := &io.LimitedReader{R: input, N: checkpoint.Bundle.ByteSize + 1}
 	digest := sha256.New()
 	stream := io.TeeReader(limited, digest)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"testing/iotest"
 )
 
 func TestCapturedCheckpointV2Golden(t *testing.T) {
@@ -174,5 +175,40 @@ func TestCheckpointManifestUpstreamRevisionIsOptionalAndExact(t *testing.T) {
 	}
 	if _, err := DecodeWorkspaceCheckpointBundleManifest(changed); err == nil {
 		t.Fatal("a historical v1 manifest accepted an upstream revision")
+	}
+}
+
+// Only the bundle's own bytes may be blamed on the bundle: a broken input or a failing consumer
+// is not a bundle a controller must stop sending.
+func TestCheckpointBundleFaultsAreToldApartFromReadAndConsumerFaults(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/protocol/workspace-checkpoint-v2.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Checkpoint WorkspaceCheckpoint `json:"checkpoint"`
+		Bundle     string              `json:"bundle_base64"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := base64.StdEncoding.DecodeString(fixture.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupt := bytes.Clone(bundle)
+	corrupt[len(corrupt)/2] ^= 0xff
+	if _, err := ReadWorkspaceCheckpointBundle(fixture.Checkpoint, bytes.NewReader(corrupt), nil); !errors.Is(err, ErrInvalidWorkspaceCheckpointBundle) {
+		t.Fatalf("corrupt bundle = %v, want an invalid bundle", err)
+	}
+	broken := errors.New("connection reset")
+	input := io.MultiReader(bytes.NewReader(bundle[:1024]), iotest.ErrReader(broken))
+	if _, err := ReadWorkspaceCheckpointBundle(fixture.Checkpoint, input, nil); errors.Is(err, ErrInvalidWorkspaceCheckpointBundle) {
+		t.Fatalf("broken input = %v, blamed on the bundle", err)
+	}
+	full := errors.New("disk full")
+	visit := func(*tar.Header, io.Reader) error { return full }
+	if _, err := ReadWorkspaceCheckpointBundle(fixture.Checkpoint, bytes.NewReader(bundle), visit); !errors.Is(err, full) || errors.Is(err, ErrInvalidWorkspaceCheckpointBundle) {
+		t.Fatalf("failing consumer = %v, want its own error", err)
 	}
 }

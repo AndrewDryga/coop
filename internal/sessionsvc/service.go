@@ -211,7 +211,7 @@ func (s *Service) executeEnsureWorkspaceTask(
 			return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
 		}
 		if sess.Revision != req.ExpectedRevision {
-			return session.Session{}, s.failServiceOperation(ctx, op.ID, session.ErrRevisionConflict)
+			return session.Session{}, s.failServiceOperation(ctx, op.ID, session.RevisionConflict(req.ExpectedRevision, sess.Revision))
 		}
 		if sess.State != session.SessionOpen || sess.RepositoryReadOnly || sess.Activity != session.ActivityParked ||
 			sess.ActiveTurnID != "" || sess.QueuedTurnCount != 0 || sess.TurnsUsed != 0 {
@@ -2331,10 +2331,7 @@ func (s *Service) prepareSessionExecution(ctx context.Context, bound session.Ses
 		if inspector, ok := s.runner.(sessionRunnerWarmInspector); ok && inspector.WarmSessionReady(bound) {
 			return policy, nil
 		}
-		return executionConfig{}, &session.Error{
-			Code:   session.CodeRevisionConflict,
-			Detail: fmt.Sprintf("expected revision %d, current revision %d", expectedRevision, bound.Revision),
-		}
+		return executionConfig{}, session.RevisionConflict(expectedRevision, bound.Revision)
 	}
 	if bound.State != session.SessionOpen || bound.Activity != session.ActivityParked ||
 		bound.ActiveTurnID != "" || bound.QueuedTurnCount != 0 {
@@ -2631,7 +2628,7 @@ func (s *Service) Close(ctx context.Context, key string, req session.CloseSessio
 		return session.Session{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if current.Revision != req.ExpectedRevision {
-		return session.Session{}, session.ErrRevisionConflict
+		return session.Session{}, session.RevisionConflict(req.ExpectedRevision, current.Revision)
 	}
 	if current.ActiveTurnID != "" || current.QueuedTurnCount != 0 {
 		// The store refuses this close; refuse it before tearing down the runtime the turn needs,
@@ -2672,7 +2669,7 @@ func (s *Service) refuseCloseWithTurns(ctx context.Context, key string, req sess
 // repair or clean the workspace, and no active or queued turn may be hidden by it.
 func (s *Service) closeQuarantinedSession(ctx context.Context, key string, req session.CloseSessionRequest, current session.Session) (session.Session, error) {
 	if current.Revision != req.ExpectedRevision {
-		return session.Session{}, session.ErrRevisionConflict
+		return session.Session{}, session.RevisionConflict(req.ExpectedRevision, current.Revision)
 	}
 	if (current.State != session.SessionOpen && current.State != session.SessionExhausted) ||
 		current.Activity != session.ActivityParked || current.ActiveTurnID != "" || current.QueuedTurnCount != 0 {

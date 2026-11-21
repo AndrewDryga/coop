@@ -3,7 +3,7 @@ name: worker-connector
 description: the outbound worker journals every controller command before it runs, resends results until acknowledged, streams large API bodies under the same command identity, and never falls back to local execution
 subsystem: worker
 sources: [internal/session/quiescence.go, internal/cli/session_connect.go, internal/cli/session_cmd.go, internal/workerconnector/connector.go, internal/workerconnector/first_download_waits.go, internal/workerconnector/executor.go, internal/workerconnector/bodies.go, internal/workerconnector/journal.go, internal/workerconnector/receipt_page.go, internal/workerconnector/create_origins.go, internal/workerconnector/create_origin_retries.go, internal/workerconnector/acknowledged_results.go, internal/workerconnector/discarded_create.go, internal/workerconnector/http_transport.go, internal/workerconnector/identity.go, internal/workerconnector/redirect_test.go, internal/workerconnector/event_streams.go, internal/workerconnector/unixapi.go, internal/workerconnector/capabilities.go, internal/workerproto/protocol.go, internal/workerproto/job.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/checkpoint_storage.go, internal/workerconnector/temporary.go, internal/sessionsvc/http.go, internal/sessionsvc/review.go, internal/sessionsvc/worker_connector_test.go, docs/session-api.md, internal/workerconnector/storage.go, internal/workerproto/session_evidence.go, internal/sessionsvc/evidence.go, internal/sessionsvc/capacity.go, internal/sessionsvc/activity.go, internal/box/controller_runtime.go, .agent/kb/controller-project-runtime.md, internal/workerconnector/activity_narration.go, internal/workerconnector/job_sources.go]
-updated: 2026-11-19
+updated: 2026-11-21
 ---
 
 `coop sessions connect --controller <https-url> --token-file <path>` connects this machine to a fleet controller. Its
@@ -74,7 +74,7 @@ The traps the code does not make obvious:
 - **First-connection failures a person can fix get a plain block; the rest keep one line.** The enrollment
   route's 401/403 (`IdentityStatusError.TokenRefused`; a renewal sends no token, so its 401/403 is
   not a refused one) and a certificate from an unknown authority (`ControllerCertificateUntrusted`;
-  a wrong host name or an expired certificate is not fixed by `--ca-file`) end `coop sessions
+  a wrong host name or an expired certificate is not fixed by `--ca-file`; macOS's untyped "certificate is not trusted" refusal counts too) end `coop sessions
   connect` in the shared refusal block (`identityRefusal`), with the status kept. `--ca-file`
   replaces the system roots, so when it is given the block says that file lacks the authority.
   Any other status stays `worker identity endpoint returned HTTP n`. A state folder with no saved
@@ -343,3 +343,5 @@ The traps the code does not make obvious:
 - 2026-10-28 — a successful retry whose session was already discarded can retire its exact ACKed receipt after original-operation, frozen-job and terminal-session proof; origin and activity bytes remain unchanged.
 
 - 2026-10-29 - distinguish dormant uncertain discard receipts from executing cleanup; the operation lock proves inactivity without claiming its result.
+
+- 2026-11-21 - an untrusted controller certificate refused by macOS's verifier with an untyped error gets the `--ca-file` block too; a bundle whose own bytes break the checkpoint contract answers restore `400 invalid_request`.

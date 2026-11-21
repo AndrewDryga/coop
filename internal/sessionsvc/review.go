@@ -339,7 +339,7 @@ func (s *Service) captureReviewIntent(ctx context.Context, operationID string, r
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: err.Error()}
 	}
 	if sess.Revision != req.ExpectedRevision {
-		return sessionReviewIntent{}, &session.Error{Code: session.CodeRevisionConflict, Detail: fmt.Sprintf("expected revision %d, current revision %d", req.ExpectedRevision, sess.Revision)}
+		return sessionReviewIntent{}, session.RevisionConflict(req.ExpectedRevision, sess.Revision)
 	}
 	if sess.State != session.SessionOpen && sess.State != session.SessionExhausted {
 		return sessionReviewIntent{}, &session.Error{Code: session.CodeInvalidSessionState, Detail: "review requires an open or exhausted session"}
