@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A killed loop's box no longer keeps working.** When a loop or `coop run` was killed outright
+  (`kill -9`, a crash), its box ran on with nobody watching and could still commit to your
+  repository until the next coop command cleaned it up. Each launch now starts a small helper
+  that removes the box and the run's services within seconds once the process that started them
+  is gone. It never touches a box whose owner is still alive. An editor session's box goes the
+  same way, but its services wait for the next `coop acp`, loop or `coop down`.
+
 - **`coop help <command>` accepts that command's options again.** 15.3.0 refused
   `coop help tasks ls --all` with exit 2. Options after the topic are ignored as before; an
   unknown option before it, as in `coop help --bogus`, still exits 2.
