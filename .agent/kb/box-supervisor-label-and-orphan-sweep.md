@@ -2,14 +2,36 @@
 name: box-supervisor-label-and-orphan-sweep
 description: Every box records the host process supervising it, and only a provably dead one authorizes a reap — scoped to the workspace that launched it
 subsystem: box
-sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/box/mcp_broker.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go, internal/box/network_recover.go]
-updated: 2026-11-17
+sources: [internal/cli/acp_cmd.go, internal/cli/build_cmd.go, internal/cli/modelscache.go, internal/config/runfiles.go, internal/testutil/dockersock/dockersock.go, internal/box/sweep.go, internal/box/services_owner.go, internal/box/services.go, internal/box/filtered_services.go, internal/forkctl/rm.go, internal/box/run.go, internal/box/open_broker.go, internal/box/reap.go, internal/box/mcp_broker.go, internal/cli/boxsweep.go, internal/cli/tempreap.go, internal/cli/doctor.go, internal/runtime/runtime.go, internal/runtime/mounts.go, internal/runtime/docker.go, internal/box/native_open.go, internal/cli/testdata/providerfixture/main.go, internal/runtime/compose.go, internal/box/hostid.go, internal/box/main_test.go, internal/processidentity/identity.go, internal/box/network_recover.go, internal/box/lifeline.go, main.go]
+updated: 2026-11-21
 ---
 A box outlives the coop that started it whenever that coop dies by SIGKILL: `--rm` is the docker
 CLIENT's promise, no Go `defer` runs, and no PID 1 inside the box can help (that limit, and why a
-death signal cannot fix it, is [[box-orphans-survive-pdeathsig]]). Cleanup is therefore **pull-only**
-— some LATER invocation has to decide "nobody owns this box" — and until 2026-08-09 nothing in a
-container's labels said who would have removed it.
+death signal cannot fix it, is [[box-orphans-survive-pdeathsig]]). Two things decide "nobody owns
+this box" with the label below, by the same proof and the same exact-label removal:
+
+- **The launch's lifeline** (`internal/box/lifeline.go`, since 2026-11-21). `runWithCompositionArtifacts`
+  starts it before the run's first container, so every `box.Run` caller has one: loop and fork-loop
+  attempts, `coop run` in a terminal or batch, the inner child of `coop acp`, gates, doctor probes, in
+  every egress mode. It is the coop binary again (`__box-lifeline`, dispatched before `config.Load`;
+  only `main.go` turns spawning on, so a test binary never re-runs its suite), in its own session,
+  cwd `/`, stdio `/dev/null`, plus the read end of an `os.Pipe` (close-on-exec, so no runtime client
+  or provider inherits either end); at start it closes every fd above 3 that lacks close-on-exec
+  (os/exec passes on what an editor handed coop without it). It holds no coop lock while it waits;
+  only the recovery after a death briefly takes the network-state lock, as the sweep does. `stop`
+  (deferred, runs after every teardown) writes `quit`; a filtered launch writes `network <run id>`
+  as soon as `CreateExecution` returns, before the gateway pair exists. EOF without `quit` = the
+  coop died. It then polls
+  up to 5 s for `supervisorProvablyDead` on the box label (an unreaped zombie still looks alive:
+  it fails closed and exits), removes `coop=box`/`coop=broker` with that exact label twice, 2 s apart
+  (the orphaned `docker run` client can still create the box after coop died), reaps services
+  narrowed to the services' own label (`reapOrphanServices(..., only)`: an ACP child's services name
+  its supervisor, which may live), and `RecoverNetworkRuns(runID)` for the gateway pair. All under a
+  30 s budget, then it exits. It does not touch task-channel volumes, filesystem helpers or networks:
+  the next sweep still does. Killing the lifeline too (a reboot, a kill of every coop process) leaves
+  only the sweep.
+- **The next invocation's sweep** — pull-only, the backstop, below. Until 2026-08-09 nothing in a
+  container's labels said who would have removed it.
 
 `internal/box/run.go` now stamps every launch with
 
@@ -271,6 +293,9 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-21 — added the launch lifeline: a killed coop's box, broker, run services and filtered run
+  go within seconds, not at the next launch (task 2026-11-21-stop-a-box-whose-loop-was-killed-from-committing);
+  checked lifeline.go, run.go, sweep.go, cli.go, main.go and the scripted detached crash test.
 - 2026-11-17 — named `sweepBeforeFirstBox` and its launches in the body and the listings trap; the
   broker folder lives in the run folder; the namespace trap now covers network recovery only
   (audit K1-2, K1-3, K1-4; checked internal/cli/boxsweep.go, internal/box/open_broker.go, reap.go,

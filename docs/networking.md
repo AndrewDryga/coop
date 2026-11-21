@@ -756,6 +756,7 @@ record. If it dies because of `SIGKILL`, a crash or a reboot, the run stays `cle
 co:op recovers it. If it died after cleanup but before saving the final record, the status is
 `final record missing`. co:op attempts recovery automatically:
 
+- If the `coop` process is killed while its box runs, the run is recovered within seconds.
 - `coop net inspect` makes one recovery attempt for that run, with a time limit, before
   reporting its cleanup status.
 - Starting a loop, fork or build checks for runs waiting for cleanup and attempts recovery.

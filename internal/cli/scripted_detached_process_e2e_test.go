@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -277,6 +278,13 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitProcessGone(t, workerState.Pid)
+	// Nobody runs a command: the killed worker's lifeline proves it gone and removes its box, which
+	// ends that box's provider. The namesake in the second repo keeps running.
+	awaitProcessGone(t, firstReady.PID)
+	if procharness.ProcessAlive(firstReady.PID) || !procharness.ProcessAlive(secondReady.PID) {
+		t.Fatalf("after the kill, provider %d alive %t (want its box removed), namesake %d alive %t (want kept)",
+			firstReady.PID, procharness.ProcessAlive(firstReady.PID), secondReady.PID, procharness.ProcessAlive(secondReady.PID))
+	}
 
 	unrelated := exec.Command("sleep", "30")
 	if err := unrelated.Start(); err != nil {
@@ -302,7 +310,8 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 	}
 
 	cleaned := runDetachedCLI(t, suite, suite.layout.Repo, suite.env, "fork", "stop", name)
-	if cleaned.Err != nil || cleaned.ExitCode != 0 || !strings.Contains(cleaned.Stderr, "removed 1 orphaned box container") {
+	// The box is gone already, so stop finds none to remove; it still clears the worker's state.
+	if cleaned.Err != nil || cleaned.ExitCode != 0 || strings.Contains(cleaned.Stderr, "orphaned box container") {
 		t.Fatalf("repo-scoped crash cleanup = exit %d err %v\nstdout:\n%s\nstderr:\n%s", cleaned.ExitCode, cleaned.Err, cleaned.Stdout, cleaned.Stderr)
 	}
 	if !procharness.ProcessAlive(unrelated.Process.Pid) || !procharness.ProcessAlive(secondReady.PID) {
@@ -312,12 +321,52 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 		t.Fatal("repo-scoped crash cleanup retained pidfile")
 	}
 	awaitProcessGone(t, firstReady.PID)
+	// A worker whose lifeline died first (a reboot, the whole host session killed) leaves its box to
+	// stop, which removes it by proving the worker gone.
+	secondData, err := os.ReadFile(forkspace.PidPath(secondRepo, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondWorker, err := forkspace.ParseWorkerState(string(secondData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifeline := lifelineOf(t, secondWorker.Pid)
+	for _, pid := range []int{lifeline, secondWorker.Pid} {
+		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+			t.Fatal(err)
+		}
+		awaitProcessGone(t, pid)
+	}
+	if !procharness.ProcessAlive(secondReady.PID) {
+		t.Fatalf("namesake provider %d ended with its worker and no lifeline", secondReady.PID)
+	}
 	secondStop := runDetachedCLI(t, suite, secondRepo, secondEnv, "fork", "stop", name)
-	if secondStop.Err != nil || secondStop.ExitCode != 0 {
+	if secondStop.Err != nil || secondStop.ExitCode != 0 || !strings.Contains(secondStop.Stderr, "removed 1 orphaned box container") {
 		t.Fatalf("stop second repo namesake = exit %d err %v\nstdout:\n%s\nstderr:\n%s", secondStop.ExitCode, secondStop.Err, secondStop.Stdout, secondStop.Stderr)
 	}
 	awaitProcessGone(t, secondReady.PID)
 	assertRuntimeRegistryEmpty(t, suite)
+}
+
+// lifelineOf is the pid of the box lifeline a coop process started.
+func lifelineOf(t *testing.T, parent int) int {
+	t.Helper()
+	var out []byte
+	for deadline := time.Now().Add(wait.Deadline); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		var err error
+		if out, err = exec.Command("ps", "-A", "-o", "pid=,ppid=,command=").Output(); err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			var pid, ppid int
+			if _, err := fmt.Sscan(line, &pid, &ppid); err == nil && ppid == parent && strings.Contains(line, box.LifelineCommand) {
+				return pid
+			}
+		}
+	}
+	t.Fatalf("coop %d has no box lifeline:\n%s", parent, out)
+	return 0
 }
 
 func readProcessForkIdentity(t *testing.T, repo, name string) forkspace.Identity {

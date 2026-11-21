@@ -19,6 +19,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/loop"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -743,7 +744,7 @@ func awaitDescendantPID(t *testing.T, root int, executable string) int {
 				}
 			}
 			for _, process := range processes {
-				if descendants[process.pid] && process.command == executable {
+				if descendants[process.pid] && process.command == executable && !isBoxLifeline(process.pid) {
 					return process.pid
 				}
 			}
@@ -752,6 +753,13 @@ func awaitDescendantPID(t *testing.T, root int, executable string) int {
 	}
 	t.Fatalf("no %s descendant of pid %d appeared within %s", executable, root, wait.Deadline)
 	return 0
+}
+
+// isBoxLifeline reports whether pid is a launch's box lifeline: the same executable as coop, and never
+// the coop a test signals. (macOS ps cuts a column that is not the last, so this asks on its own.)
+func isBoxLifeline(pid int) bool {
+	out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	return err == nil && strings.Contains(string(out), box.LifelineCommand)
 }
 
 func loopRecoveryCommand(suite *directProcessSuite, target string) procharness.Command {

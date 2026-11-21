@@ -120,6 +120,9 @@ func (a *app) ensureRuntimeContext(ctx context.Context) error {
 
 // Main is the process entry point. It returns the exit code to pass to os.Exit.
 func Main(argv []string) int {
+	if len(argv) > 0 && argv[0] == box.LifelineCommand {
+		return box.RunLifeline(argv[1:]) // a launch's own helper: it reads no settings
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		// The version reads no settings, and which build is installed is worth knowing most when

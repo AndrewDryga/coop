@@ -400,6 +400,7 @@ func prepareFilteredExecution(ctx context.Context, cfg *config.Config, rt runtim
 	if err != nil {
 		return f, err
 	}
+	spec.lifeline.network(f.record.ID) // before the gateway pair exists, so a kill from here on settles it
 	if smoke != nil && smoke.registered != nil {
 		smoke.registered(f.record)
 	}

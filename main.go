@@ -5,9 +5,11 @@ package main
 import (
 	"os"
 
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/cli"
 )
 
 func main() {
+	box.EnableLifeline() // here, not in cli.Main: a test binary must never start itself as one
 	os.Exit(cli.Main(os.Args[1:]))
 }

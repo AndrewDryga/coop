@@ -158,6 +158,7 @@ type RunSpec struct {
 	SupervisorID    string             // non-empty for a supervised inner box: tags it coop.supervised=1
 	// (build/update restart it) + coop.sup=<id> (its supervisor kills exactly its boxes)
 	sessionSupervisor string // a supervised box's service label, read once as the run starts (rememberSessionSupervisor)
+	lifeline          *lifeline
 	ShareACPSessions  bool   // mount the primary's per-repository ACP home, so a session survives an account switch
 	ForkName          string // non-empty for a detached fork loop's box: readable runtime label
 	ForkOwner         string // repo-scoped label used by `coop fork stop`; required with ForkName
@@ -703,6 +704,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	} else if spec.ControllerRuntime != nil {
 		return -1, errors.New("project runtime requires a controller job")
 	}
+	// Before the first container of the run (services, task channel, broker, box), so a coop killed
+	// from here on takes them with it.
+	spec.lifeline = startLifeline(rt, spec)
+	defer spec.lifeline.stop()
 	policyRepo := projectPolicyRepo(spec)
 	var p *project.Project
 	var err error

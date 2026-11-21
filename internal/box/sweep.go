@@ -342,11 +342,12 @@ func runProject(workspace, project string) bool {
 // still holds stays too, for ReapOrphanNetworks: only a loop, fork or build start runs that pass.
 func ReapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace string) (int, error) {
 	host, _ := thisHost()
-	return reapOrphanServices(ctx, rt, workspace, host)
+	return reapOrphanServices(ctx, rt, workspace, host, "")
 }
 
 // reapOrphanServices is ReapOrphanServices for a coop on host, which is "" when it cannot name it.
-func reapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace, host string) (int, error) {
+// A non-empty only narrows it to the services that one supervisor label names (a box's lifeline).
+func reapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace, host, only string) (int, error) {
 	containers, err := rt.ContainerLabels(ctx, LabelKey, LabelService, LabelHost, composeProjectLabel)
 	if err != nil {
 		return 0, err
@@ -357,7 +358,7 @@ func reapOrphanServices(ctx context.Context, rt runtime.Runtime, workspace, host
 	for _, container := range containers {
 		project, label := container.Labels[composeProjectLabel], container.Labels[LabelHost]
 		ref, ok := parseSupervisorLabel(label)
-		if !ok || ref.scope != scope || !runProject(workspace, project) ||
+		if !ok || only != "" && label != only || ref.scope != scope || !runProject(workspace, project) ||
 			slices.Contains(dead, run{project, label}) || !supervisorProvablyDead(ref, host) {
 			continue
 		}

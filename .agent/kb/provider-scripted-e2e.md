@@ -3,7 +3,7 @@ name: provider-scripted-e2e
 description: Drive the external Coop CLI through strict runtime/provider fixtures without ambient state
 subsystem: testing
 sources: [Makefile, internal/box/run.go, internal/box/run_test.go, internal/testutil/procharness/harness.go, internal/loop/loop.go, internal/loop/iteration.go, internal/tasks/audit.go, internal/cli/fork_cmd.go, internal/forkctl/meta.go, internal/forkctl/supervise.go, internal/forkctl/merge.go, internal/tasks/lease.go, internal/loop/streamjson.go, internal/loop/telemetry.go, internal/loop/review.go, internal/cli/scripted_process_e2e_test.go, internal/cli/direct_process_e2e_test.go, internal/cli/scripted_fork_process_e2e_test.go, internal/cli/scripted_detached_process_e2e_test.go, internal/cli/scripted_loop_process_e2e_test.go, internal/cli/scripted_loop_completion_process_e2e_test.go, internal/cli/scripted_loop_recovery_process_e2e_test.go, internal/cli/scripted_loop_handoff_telemetry_process_e2e_test.go, internal/cli/scripted_consult_process_e2e_test.go, internal/cli/scripted_loop_review_process_e2e_test.go, internal/cli/scripted_delegate_process_e2e_test.go, internal/cli/scripted_preset_process_e2e_test.go, internal/cli/testdata/providerfixture/main.go, internal/cli/testdata/providerfixture/main_test.go, internal/cli/testdata/providerfixture/runtime_state.go, internal/cli/testdata/providerfixture/loop.go, internal/cli/testdata/providerfixture/delegate.go]
-updated: 2026-11-17
+updated: 2026-11-21
 ---
 
 `make provider-scripted-e2e` builds fresh Coop and fixture executables inside a disposable root,
@@ -55,6 +55,14 @@ inside a small bound: they set `COOP_CONSULT_TIMEOUT=10` (`scripted_consult_proc
 which a heavily loaded host has not been measured against. A shim that sleeps before each git call, or before each fixture
 binary start, reproduces the load failures on demand: 150 ms per git call failed the old readiness
 wait and signoff budget, and 500 ms per fixture start failed the old delegate consult.
+
+**Every box launch has a lifeline, and it is the coop binary too** (`__box-lifeline`, see
+[[box-supervisor-label-and-orphan-sweep]]). So a lookup of "the coop process" by executable name
+must skip it (`awaitDescendantPID` does): a SIGINT sent to it silently kills the lifeline and the
+loop never stops. A coop the suite kills or cancels leaves its lifeline removing that run's boxes
+through the fixture runtime for a few seconds; `directProcessSuite.reset` waits until no orphaned
+lifeline of the suite's binary remains, or those `ps`/`rm` calls land in the next scenario's trace
+(seen as "process trace has 13 events, want 10").
 
 Fork coverage uses disposable parent and fork repositories to cross the external CLI/runtime
 boundary without a second emulator. It proves fresh, resume, and new sessions; all four native
@@ -176,6 +184,8 @@ deleted with the test root (`internal/cli/testdata/providerfixture/main.go`,
 `internal/cli/scripted_process_e2e_test.go`).
 
 ## Changelog
+- 2026-11-21 — box lifelines: `awaitDescendantPID` skips them, `reset` waits out orphaned ones, and
+  the detached crash test proves a killed worker's box goes with no command run.
 - 2026-11-17 — named the consult overflow subtests' 10 s bound, the one small bound whose peers reply (audit K4-5; checked internal/cli/scripted_consult_process_e2e_test.go).
 - 2026-11-07 — the survivor check waits up to 2 s for survivors that are only exiting, after one
   gate run failed `TestProviderScriptedDirectMatrix/grok/cancellation` on two `docker` fixture

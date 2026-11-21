@@ -14,6 +14,9 @@ var cleanupFilesystemRuntime func() error
 func TestMain(m *testing.M) {
 	ownsState := os.Getenv("COOP_TEST_STATE_ROOT") == ""
 	os.Exit(teststate.Isolate(func() int {
+		if code, ok := runLifelineTestProcess(); ok {
+			return code
+		}
 		code := m.Run()
 		if ownsState && cleanupFilesystemRuntime != nil {
 			if err := cleanupFilesystemRuntime(); err != nil {

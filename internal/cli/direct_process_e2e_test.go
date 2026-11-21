@@ -16,6 +16,7 @@ import (
 	"time"
 
 	agents "github.com/AndrewDryga/coop/internal/agent"
+	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/testutil/procharness"
@@ -334,6 +335,7 @@ func (s *directProcessSuite) run(t *testing.T, args []string, scenario any) (pro
 
 func (s *directProcessSuite) reset(t *testing.T, scenario any) {
 	t.Helper()
+	s.awaitOrphanedLifelines(t)
 	if err := os.RemoveAll(filepath.Join(s.layout.State, "runtime-containers")); err != nil {
 		t.Fatal(err)
 	}
@@ -352,6 +354,38 @@ func (s *directProcessSuite) reset(t *testing.T, scenario any) {
 	}
 	if err := os.WriteFile(s.scenarioPath, append(data, '\n'), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// awaitOrphanedLifelines waits out the box lifelines of this suite's coops that were killed or
+// cancelled: each still removes its run's boxes through the fixture runtime, which would land in the
+// next scenario's trace.
+func (s *directProcessSuite) awaitOrphanedLifelines(t *testing.T) {
+	t.Helper()
+	for deadline := time.Now().Add(wait.Deadline); ; time.Sleep(20 * time.Millisecond) {
+		out, err := exec.Command("ps", "-A", "-o", "pid=,ppid=,args=").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		args, parents := map[int]string{}, map[int]int{}
+		for _, line := range strings.Split(string(out), "\n") {
+			var pid, ppid int
+			if _, err := fmt.Sscan(line, &pid, &ppid); err == nil {
+				args[pid], parents[pid] = line, ppid
+			}
+		}
+		orphaned := ""
+		for pid, line := range args {
+			if strings.Contains(line, s.coopBin) && strings.Contains(line, box.LifelineCommand) && !strings.Contains(args[parents[pid]], s.coopBin) {
+				orphaned = line
+			}
+		}
+		if orphaned == "" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a killed coop's box lifeline is still running: %s", orphaned)
+		}
 	}
 }
 

@@ -2,8 +2,8 @@
 name: box-orphans-survive-pdeathsig
 description: Pdeathsig is not inherited across fork, so a forking child (Chromium) orphans into a box and holds it open for the whole descendant drain
 subsystem: box
-sources: [internal/box/supervisor/main.go, internal/loop/watchdog.go, internal/loop/loop.go]
-updated: 2026-11-17
+sources: [internal/box/supervisor/main.go, internal/loop/watchdog.go, internal/loop/loop.go, internal/box/lifeline.go]
+updated: 2026-11-21
 ---
 When a box exits with descendants still alive, the drain names them (see
 [[loop-resume-never-rewrites-history]]). The usual reflex — "give the child `Pdeathsig` so the
@@ -37,8 +37,11 @@ and `ModifyCmdFunc` REPLACES that default rather than adding to it, so it would 
 protection that exists.
 
 The same "no signal saves you" limit applies one level up — a SIGKILLed host coop never fires
-`--rm`, so the BOX itself orphans. That one is not fixable by a death signal either; it is fixed by
-making the orphan identifiable and reaping it on the next run, see
+`--rm`, so the BOX itself orphans. That one is not fixable by a death signal either. It is fixed the
+way the browser case above says: by an fd whose close the kernel enforces. Each launch's lifeline
+(`internal/box/lifeline.go`) holds the read end of a pipe only that coop can write; its EOF without
+"quit" means coop is gone, and the lifeline removes the run's containers once the box's own
+supervisor label proves it. The next run's sweep stays the backstop; see
 [[box-supervisor-label-and-orphan-sweep]].
 
 ## Changelog
@@ -48,3 +51,5 @@ making the orphan identifiable and reaping it on the next run, see
   `commands.go`'s drain handling into `loop.go`; re-verified, both unchanged.
 - 2026-11-17 — the backstop is the supervisor's `procFS.terminate`, not the retired entrypoint's
   `terminate_jobs`; the handoff bound is three per task, not reset by a timeout. Sources repointed.
+- 2026-11-21 — a killed host coop's box is now removed within seconds by its lifeline (a pipe EOF,
+  checked against the supervisor label); the next run's sweep is the backstop, no longer the only cure.

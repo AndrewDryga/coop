@@ -490,8 +490,9 @@ a URL such as `DATABASE_URL=postgres://postgres:dev-password@db:5432/app_dev`, a
 Your development services keep the same Compose project and data between runs. A loop gets its own
 Compose project, network, volumes and published ports for the entire run. It reuses them across
 task and provider retries, then removes them when the run ends. If a loop or editor session is
-killed, the next `coop acp`, loop or `coop down` in that checkout removes them instead, and leaves
-alone the services of a session that is still running. Both stacks can run in one checkout without
+killed while its box runs, co:op removes the box and these services within seconds. Anything still
+left, such as from a loop killed between tasks, goes with the next `coop acp`, loop or `coop down` in
+that checkout, which leaves alone the services of a session that is still running. Both stacks can run in one checkout without
 sharing service data or ports. They still share the source files, so edits are visible through both
 stacks' mounts.
 

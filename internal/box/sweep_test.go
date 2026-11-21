@@ -632,7 +632,7 @@ func TestSweepsWithoutAHostJudgeNothing(t *testing.T) {
 			addFakeService(t, boxes, name+"-db", project, label)
 			addFakeVolume(t, name+"_pgdata", project)
 		}
-		if n, err := reapOrphanServices(context.Background(), rt, workspace, ""); err != nil || n != 0 {
+		if n, err := reapOrphanServices(context.Background(), rt, workspace, "", ""); err != nil || n != 0 {
 			t.Fatalf("reapOrphanServices with no host = (%d, %v), want none", n, err)
 		}
 		want := []string{"old-v1-db", "old-v1-other-platform-db", "v2-other-host-db", "v2-this-host-db"}
