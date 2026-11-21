@@ -1132,11 +1132,13 @@ attachments are kept there under `.coop-output/.inputs/` so later turns can rere
 
 Cancellation first asks ACP to cancel the turn. co:op then closes the turn's ACP process and gives
 it up to five seconds (thirty with filtered networking) to stop and remove its box, kills whatever
-is still running, and removes the box. The cancel request waits as long as that cleanup may take,
-about half a minute at most (a minute and a half with filtered networking), and answers with the
-`cancelled` turn once the cleanup is proven. A process that could not be stopped, or a cleanup
-still running when that wait ends, leaves the cancel `operation_uncertain`. This doesn't undo
-actions already taken in external systems.
+is still running, and removes the box. The cancel request waits about 15 seconds for that
+cleanup, in both network modes, and answers with the `cancelled` turn once the cleanup is proven.
+The wait is capped because a connected worker sends its write requests one at a time, so other
+sessions' requests to the same worker wait behind a cancel. A cleanup still running when the wait
+ends, or a process that could not be stopped, answers `operation_uncertain`; read the turn later,
+since the operation settles once the cleanup finishes. This doesn't undo actions already taken in
+external systems.
 
 ### Events
 

@@ -81,6 +81,10 @@ func (a *UnixAPI) ListEvents(ctx context.Context, sessionID string, after int64,
 	return events, nil
 }
 
+// LocalAPITimeout is how long `coop sessions connect` waits for the local session API to begin
+// answering one request. A daemon request that waits longer, such as a cancel, is never seen.
+const LocalAPITimeout = time.Minute
+
 func NewUnixAPI(socket string, timeout time.Duration) (*UnixAPI, error) {
 	if socket == "" || !filepath.IsAbs(socket) || strings.ContainsRune(socket, 0) {
 		return nil, errors.New("private Coop API socket must be an absolute path")

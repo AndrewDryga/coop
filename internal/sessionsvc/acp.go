@@ -2768,22 +2768,15 @@ func (p *sessionACPProcess) stopProcess() error {
 	return nil
 }
 
-// sessionACPStopBound is the longest stopProcess takes to prove a child gone without failing:
-// the child's own grace, SIGTERM with the same grace, then SIGKILL and the process-group check.
-func sessionACPStopBound(grace time.Duration) time.Duration {
-	return grace + max(sessionACPTermGrace, grace) + 2*sessionACPKillGrace
-}
-
-// sessionCancelCleanupWait is how long a cancel waits for its turn's cleanup: the child's stop,
-// the box removal and the services stop, then the turn's receipts. A shorter wait answered
-// operation_uncertain for a cancel whose slow but successful cleanup then settled it.
-func sessionCancelCleanupWait(networkMode string) time.Duration {
-	grace := sessionACPStopGrace
-	if networkMode == string(egress.Filtered) {
-		grace = sessionACPFilteredStopGrace
-	}
-	return sessionACPStopBound(grace) + 2*sessionRuntimeReapTimeout + 2*sessionACPCleanupTimeout
-}
+// sessionCancelCleanupWait is how long a cancel waits for its turn's cleanup: the longest an
+// ordinary child's stopProcess takes without failing (its grace, in which the proxy removes its
+// own box, SIGTERM with the same grace, then SIGKILL and the process-group check) plus the
+// cancellation receipt, in every
+// network mode. It is capped there because the worker connector sends write requests one at a
+// time, so every other session's request waits behind a cancel. A slower cleanup answers
+// operation_uncertain and settles the operation later.
+const sessionCancelCleanupWait = sessionACPStopGrace + max(sessionACPTermGrace, sessionACPStopGrace) +
+	2*sessionACPKillGrace + sessionACPCleanupTimeout
 
 func pollWait(wait <-chan error) (error, bool) {
 	select {

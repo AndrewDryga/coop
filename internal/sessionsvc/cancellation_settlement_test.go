@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
+	"github.com/AndrewDryga/coop/internal/workerconnector"
 )
 
 func TestCancellationSettlesAfterCallerStopsWaiting(t *testing.T) {
@@ -112,8 +112,9 @@ func TestCancellationSettlesAfterCallerStopsWaiting(t *testing.T) {
 	}
 }
 
-// A cleanup that outlasts the service's shutdown budget but stays inside the child's own stop
-// bound is a successful cancel, not an uncertain one.
+// A cleanup that outlasts the service's shutdown budget but stays inside the cancel's wait is a
+// successful cancel, not an uncertain one. One past the wait answers uncertain and settles later:
+// the "deadline" case of TestCancellationSettlesAfterCallerStopsWaiting.
 func TestCancellationWaitsForASlowButBoundedCleanup(t *testing.T) {
 	repo, git := gitrepo.New(t)
 	git("commit", "-q", "--allow-empty", "-m", "base")
@@ -161,14 +162,15 @@ func TestCancellationWaitsForASlowButBoundedCleanup(t *testing.T) {
 	}
 }
 
-func TestSessionCancelCleanupWaitCoversTheChildStopBound(t *testing.T) {
-	for mode, grace := range map[egress.Mode]time.Duration{egress.Open: sessionACPStopGrace, egress.Filtered: sessionACPFilteredStopGrace} {
-		// The slowest stop that still succeeds: grace, SIGTERM with the same grace, SIGKILL,
-		// then the box removal.
-		slowest := 2*grace + 2*sessionACPKillGrace + sessionRuntimeReapTimeout
-		if got := sessionCancelCleanupWait(string(mode)); got <= slowest {
-			t.Errorf("%s cancel waits %v, slowest successful cleanup takes %v", mode, got, slowest)
-		}
+// The cancel covers an ordinary child's slowest successful stop, and stays well under the
+// connector's own wait for a local API answer, which would otherwise hide it.
+func TestSessionCancelCleanupWaitCoversAnOrdinaryStopAndFitsTheConnector(t *testing.T) {
+	ordinary := 2*sessionACPStopGrace + 2*sessionACPKillGrace
+	if sessionCancelCleanupWait <= ordinary {
+		t.Errorf("cancel waits %v, an ordinary child's slowest successful stop takes %v", sessionCancelCleanupWait, ordinary)
+	}
+	if sessionCancelCleanupWait > workerconnector.LocalAPITimeout/2 {
+		t.Errorf("cancel waits %v, too close to the connector's %v", sessionCancelCleanupWait, workerconnector.LocalAPITimeout)
 	}
 }
 

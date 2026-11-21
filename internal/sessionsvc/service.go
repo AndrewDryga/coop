@@ -3418,7 +3418,7 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 	}
 	done := active.done
 	s.mu.Unlock()
-	cleanupWait := sessionCancelCleanupWait(bound.NetworkMode)
+	cleanupWait := sessionCancelCleanupWait
 	if s.testCancelCleanupWait > 0 {
 		cleanupWait = s.testCancelCleanupWait
 	}

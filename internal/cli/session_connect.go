@@ -255,7 +255,7 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 		return 1, identityRefusal(err, options)
 	}
 	ui.Pass("Worker identity ready: %s", identity.ID)
-	privateAPI, err := workerconnector.NewUnixAPI(socket, time.Minute)
+	privateAPI, err := workerconnector.NewUnixAPI(socket, workerconnector.LocalAPITimeout)
 	if err != nil {
 		return 1, err
 	}
