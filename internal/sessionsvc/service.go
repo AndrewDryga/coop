@@ -417,6 +417,9 @@ type Service struct {
 	testAfterTurnLease           func(session.Turn)
 	testBeforeSubmitAdmission    func()
 	testBeforeRuntimeReservation func()
+	// testCancelCleanupWait replaces the cancel's wait for turn cleanup, which is tens of seconds
+	// in production. Zero in production.
+	testCancelCleanupWait time.Duration
 	// testAdmitNetwork replaces create-time network admission. Real admission needs an owner
 	// key, an approval and a Docker qualification; a test that only cares what the create path
 	// does with the answer injects one. nil in production.
@@ -2100,7 +2103,7 @@ func (s *Service) makeOperationUncertain(
 		}
 	}
 	detail = s.operationalErrorDetail(errors.New(detail))
-	s.log.Warn("session operation intent rejected",
+	s.log.Warn("session operation outcome is uncertain",
 		"operation_id", op.ID, "method", op.Method,
 		"resource_type", op.ResourceType, "resource_id", op.ResourceID,
 		"error_code", session.CodeOperationUncertain, "error_detail", detail,
@@ -3418,7 +3421,11 @@ func (s *Service) CancelTurn(ctx context.Context, key string, req session.Cancel
 	}
 	done := active.done
 	s.mu.Unlock()
-	timer := time.NewTimer(s.stopTimeout)
+	cleanupWait := sessionCancelCleanupWait(bound.NetworkMode)
+	if s.testCancelCleanupWait > 0 {
+		cleanupWait = s.testCancelCleanupWait
+	}
+	timer := time.NewTimer(cleanupWait)
 	defer timer.Stop()
 	select {
 	case <-done:

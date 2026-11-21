@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/testutil/gitrepo"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -40,7 +41,7 @@ func TestCancellationSettlesAfterCallerStopsWaiting(t *testing.T) {
 			defer service.Stop()
 			defer releaseOnce.Do(func() { close(release) })
 			if mode == "deadline" {
-				service.stopTimeout = 20 * time.Millisecond
+				service.testCancelCleanupWait = 20 * time.Millisecond
 			}
 			if err := service.Start(t.Context()); err != nil {
 				t.Fatal(err)
@@ -108,6 +109,66 @@ func TestCancellationSettlesAfterCallerStopsWaiting(t *testing.T) {
 				t.Fatalf("settled receipt: %+v %v", op, err)
 			}
 		})
+	}
+}
+
+// A cleanup that outlasts the service's shutdown budget but stays inside the child's own stop
+// bound is a successful cancel, not an uncertain one.
+func TestCancellationWaitsForASlowButBoundedCleanup(t *testing.T) {
+	repo, git := gitrepo.New(t)
+	git("commit", "-q", "--allow-empty", "-m", "base")
+	started := make(chan struct{})
+	service := newTestSessionService(t, filepath.Join(t.TempDir(), "state"), repo, func(store *session.Store) Runner {
+		return RunnerFunc(func(ctx context.Context, bound session.Session, turn session.Turn) (session.Turn, error) {
+			if _, err := store.MarkTurnSendIntent(ctx, bound.ID, turn.ID); err != nil {
+				return turn, err
+			}
+			if _, err := store.MarkTurnSent(ctx, bound.ID, turn.ID); err != nil {
+				return turn, err
+			}
+			close(started)
+			<-ctx.Done()
+			time.Sleep(300 * time.Millisecond) // the child uses its stop grace
+			return turn, ctx.Err()
+		})
+	})
+	defer service.Stop()
+	service.stopTimeout = 20 * time.Millisecond
+	if err := service.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := service.CreateRemoteSession(t.Context(), "create", service.request(t, "slow-cleanup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.SubmitTurn(t.Context(), "turn", session.SubmitTurnRequest{SessionID: sess.ID, ExpectedRevision: sess.Revision, Prompt: "cancel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(wait.Deadline):
+		t.Fatal("runner did not start")
+	}
+	req := session.CancelTurnRequest{SessionID: sess.ID, TurnID: turn.ID, ExpectedRevision: sess.Revision}
+	got, err := service.CancelTurn(t.Context(), "cancel-slow", req)
+	if err != nil || got.State != session.TurnCancelled {
+		t.Fatalf("slow cleanup cancel = %+v, %v", got, err)
+	}
+	op, err := service.store.GetOperation(t.Context(), "cancel-slow")
+	if err != nil || op.State != session.OperationSucceeded {
+		t.Fatalf("slow cleanup receipt: %+v %v", op, err)
+	}
+}
+
+func TestSessionCancelCleanupWaitCoversTheChildStopBound(t *testing.T) {
+	for mode, grace := range map[egress.Mode]time.Duration{egress.Open: sessionACPStopGrace, egress.Filtered: sessionACPFilteredStopGrace} {
+		// The slowest stop that still succeeds: grace, SIGTERM with the same grace, SIGKILL,
+		// then the box removal.
+		slowest := 2*grace + 2*sessionACPKillGrace + sessionRuntimeReapTimeout
+		if got := sessionCancelCleanupWait(string(mode)); got <= slowest {
+			t.Errorf("%s cancel waits %v, slowest successful cleanup takes %v", mode, got, slowest)
+		}
 	}
 }
 
