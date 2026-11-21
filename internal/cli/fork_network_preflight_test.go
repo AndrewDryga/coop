@@ -421,7 +421,7 @@ func TestDetachedForkLoopChecksTheProjectBuildBeforeStarting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	build := "run 'COOP_REPO=" + workspace + " coop build --egress filtered' on the host"
+	build := "then build it: COOP_REPO=" + workspace + " coop build --egress filtered\n"
 	var required *box.ProjectBuildRequired
 	if code != 1 || !errors.As(runErr, &required) || required.Approved || !strings.Contains(runErr.Error(), build) {
 		t.Errorf("detached fork with unapproved build files = (%d, %v), want exit 1 and the refusal to %q", code, runErr, build)
@@ -454,7 +454,7 @@ func TestForkLoopChecksItsBuildFilesBeforeEachTask(t *testing.T) {
 	if wsErr != nil {
 		t.Fatal(wsErr)
 	}
-	build := "run 'COOP_REPO=" + workspace + " coop build --egress filtered' on the host"
+	build := "then build it: COOP_REPO=" + workspace + " coop build --egress filtered\n"
 	var required *box.ProjectBuildRequired
 	if !slices.Equal(ran, []string{first}) || code != 1 || !errors.As(err, &required) || !strings.Contains(err.Error(), build) {
 		t.Fatalf("fork loop = (%d, %v) after working %v; want it to stop before the next task, refusing with %q\n%s", code, err, ran, build, output)

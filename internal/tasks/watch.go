@@ -51,6 +51,8 @@ type mergedTask struct {
 	stopReason string
 	// approve is the coop approve that reviews a stopped fork's own network request from the project.
 	approve string
+	// build is the coop build that builds a stopped fork's own project box from the project.
+	build string
 	// What the loop that let go of the task said (ProjectTaskLoop): a person stopped it, or it waits
 	// out a usage limit until limitUntil. startingServices: the task's box waits to start its services.
 	stoppedByYou     bool
@@ -187,6 +189,7 @@ func TasksWatch(host Host, repo string, rels []string, jsonOutput ...bool) (int,
 				if task.Item.State == StateInProgress && classifyTask(m).section == sectionStopped {
 					m.stopReason = forkStopReason(repo, task.Fork.Name, loopErrors[*task.Fork], m.stoppedByYou)
 					m.approve = box.ApproveCommand(repo, forkspace.Workspace(repo, task.Fork.Name))
+					m.build = box.BuildCommand(repo, forkspace.Workspace(repo, task.Fork.Name))
 				}
 			} else if task.Item.State == StateInProgress {
 				m.lease = observeTaskLease(task.Item, now)
@@ -951,7 +954,7 @@ func classifyForkTask(m mergedTask) taskRow {
 		row.others = "in fork " + m.fork
 		return row
 	}
-	state, failure, verb, fix := forkStopNext(m.fork, m.approve, m.stopReason)
+	state, failure, verb, fix := forkStopNext(m.fork, m.approve, m.build, m.stopReason)
 	return taskRow{section: sectionStopped, state: state, failure: failure, tone: toneStopped, fixVerb: verb, fix: fix, others: "in fork " + m.fork}
 }
 
@@ -960,11 +963,14 @@ func classifyForkTask(m mergedTask) taskRow {
 // fixing the cause alone does not start the loop again, and a start refused for a stated reason
 // reads as that reason. Any other failure is an error as the loop or its log put it: the state
 // says the loop failed, and the error comes as written, on lines of its own. A fork's approvals are
-// its own, so approve reviews the fork's checkout.
-func forkStopNext(fork, approve, reason string) (state, failure, verb string, fix []string) {
+// its own, so approve reviews the fork's checkout, and so are its build files, which build builds.
+func forkStopNext(fork, approve, build, reason string) (state, failure, verb string, fix []string) {
 	restart := "coop fork " + fork + " --loop -d"
 	if approve == "" {
 		approve = "coop approve"
+	}
+	if build == "" {
+		build = "coop build --egress filtered"
 	}
 	switch {
 	case reason == "":
@@ -973,6 +979,14 @@ func forkStopNext(fork, approve, reason string) (state, failure, verb string, fi
 		return "network access not approved", "", "fix", []string{approve, restart}
 	case strings.Contains(reason, "run coop login"), strings.Contains(reason, "authentication failed"):
 		return "sign-in no longer accepted", "", "fix", []string{"coop login", restart}
+	case strings.Contains(reason, " cannot start because this project's ") && strings.Contains(reason, " is not ready: "):
+		// box.ProjectBuildRequired: build files nobody built or approved as they are now.
+		return "project box needs a build", "", "fix", []string{build, restart}
+	}
+	// box.ProjectBuildRequired for files Coop refused: the reason says what to change, on lines of its
+	// own since it quotes the files, and only then does a build go through.
+	if _, why, ok := strings.Cut(reason, " cannot start because Coop refused the last build of this project's box: "); ok && why != "" {
+		return "project build refused", why, "fix", []string{build, restart}
 	}
 	if _, clause, ok := strings.Cut(reason, " cannot start because "); ok && clause != "" {
 		return clause, "", "resume", []string{restart}

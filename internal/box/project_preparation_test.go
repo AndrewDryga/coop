@@ -162,7 +162,7 @@ func TestCheckProjectBuildRefusesOnlyFilesNobodyApproved(t *testing.T) {
 		t.Helper()
 		err := check(fork, &filtered)
 		var required *ProjectBuildRequired
-		want := "run 'COOP_REPO=" + fork + " coop build --egress filtered' on the host"
+		want := "then build it: COOP_REPO=" + fork + " coop build --egress filtered\n"
 		if !errors.As(err, &required) || required.Approved || !strings.Contains(required.Reason, reason) || !strings.Contains(err.Error(), want) {
 			t.Fatalf("check of build files nobody approved = %v, want %q and the command %q", err, reason, want)
 		}
@@ -674,10 +674,19 @@ func TestAProjectBuildRefusalNamesWhatChanged(t *testing.T) {
 // InvalidDefaultArgInFrom warning, the way the scaffold writes it (QA, 2026-11-06).
 func TestProjectBuildRefusalsReadWhole(t *testing.T) {
 	required := (&ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "no explicit project build is recorded for this client image"}).Error()
-	if want := "this project's .agent/Dockerfile is not ready: no explicit project build is recorded for this client image. " +
-		"Review the Dockerfile and copied build files, then run 'coop build --egress filtered' on the host. " +
-		"Project builds use ordinary networking, not the run's network restrictions."; required != want {
+	// The shared refusal block, whose first line the loop's status board reads (tasks.forkStopNext).
+	if want := "This box cannot start because this project's .agent/Dockerfile is not ready: no explicit project build is recorded for this client image\n\n" +
+		"  Review the Dockerfile and the files it copies, then build it: coop build --egress filtered\n" +
+		"  The build uses ordinary networking, not the run's network restrictions."; required != want {
 		t.Errorf("not-ready refusal = %q, want %q", required, want)
+	}
+	// A launch names its agent and the build for its own project.
+	repo := t.TempDir()
+	spec := RunSpec{Repo: repo, Agent: "claude"}
+	err := withBuildCommand(&config.Config{}, spec, &ProjectBuildRequired{Dockerfile: ".agent/Dockerfile", Reason: "stale"})
+	if name := networkLaunchName(spec); name == "This box" || !strings.HasPrefix(err.Error(), name+" cannot start because this project's .agent/Dockerfile is not ready: stale\n\n") ||
+		!strings.Contains(err.Error(), "then build it: "+projectBuildCommand(&config.Config{}, repo)+"\n") {
+		t.Errorf("launch refusal = %q, want it to name %s and the project's build", err, name)
 	}
 	if got := notDerived(".agent/Dockerfile").Error(); !strings.Contains(got, "start it with `ARG COOP_BASE_IMAGE=coop-box` and `FROM ${COOP_BASE_IMAGE}`") {
 		t.Errorf("not-derived refusal = %q, want the scaffold's ARG default", got)
@@ -764,8 +773,8 @@ func TestARefusedProjectBuildLeavesNoImageAndTheRunSaysWhy(t *testing.T) {
 			if required == nil || !required.Refused || required.Approved || !strings.Contains(required.Reason, test.want) {
 				t.Fatalf("readiness on the refused files = %v, want the refusal", err)
 			}
-			if got := err.Error(); !strings.HasPrefix(got, "Coop refused the last build of this project's box: ") ||
-				!strings.HasSuffix(got, ". After you fix it, run 'coop build --egress filtered' on the host.") {
+			if got := err.Error(); !strings.HasPrefix(got, "This box cannot start because Coop refused the last build of this project's box: ") ||
+				!strings.HasSuffix(got, "\n\n  After you fix it, build it: coop build --egress filtered") {
 				t.Errorf("run refusal = %q", got)
 			}
 
@@ -868,7 +877,7 @@ func TestABuildRefusedBeforeItRanIsRememberedAndTheRunSaysWhy(t *testing.T) {
 			if !required.Refused || required.Approved || required.Reason != test.want {
 				t.Fatalf("readiness on the refused files = %+v, want the refusal %q", required, test.want)
 			}
-			if got, want := required.Error(), "Coop refused the last build of this project's box: "+test.want+". After you fix it, run 'coop build --egress filtered' on the host."; got != want {
+			if got, want := required.Error(), "This box cannot start because Coop refused the last build of this project's box: "+test.want+"\n\n  After you fix it, build it: coop build --egress filtered"; got != want {
 				t.Errorf("run refusal =\n%q\nwant\n%q", got, want)
 			}
 
@@ -1018,7 +1027,7 @@ func TestALinkedIgnoreFileIsRefusedInPlainWords(t *testing.T) {
 			if !required.Refused || required.Approved || required.Reason != want {
 				t.Fatalf("readiness on the linked file = %+v, want the refusal %q", required, want)
 			}
-			if got, want := required.Error(), "Coop refused the last build of this project's box: "+want+". After you fix it, run 'coop build --egress filtered' on the host."; got != want {
+			if got, want := required.Error(), "This box cannot start because Coop refused the last build of this project's box: "+want+"\n\n  After you fix it, build it: coop build --egress filtered"; got != want {
 				t.Errorf("run refusal =\n%q\nwant\n%q", got, want)
 			}
 

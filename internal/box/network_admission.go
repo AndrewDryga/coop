@@ -415,13 +415,14 @@ func commandFor(here, folder, command string) string {
 	return command
 }
 
-// withBuildCommand has a project build miss name the command that builds its files for this
-// process's person (BuildCommand): a launch in another checkout, such as a fork's started from its
-// parent, needs that checkout's.
+// withBuildCommand has a project build miss name who cannot start and the command that builds its
+// files for this process's person (BuildCommand): a launch in another checkout, such as a fork's
+// started from its parent, needs that checkout's.
 func withBuildCommand(cfg *config.Config, spec RunSpec, err error) error {
 	var required *ProjectBuildRequired
 	if errors.As(err, &required) {
 		required.Command = projectBuildCommand(cfg, projectPolicyRepo(spec))
+		required.Name = networkLaunchName(spec)
 	}
 	return err
 }

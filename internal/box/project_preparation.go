@@ -39,13 +39,23 @@ type ProjectBuildRequired struct {
 	// Command builds these files for the person this process serves (BuildCommand), set where the
 	// miss leaves this package. Empty is the plain coop build --egress filtered.
 	Command string
+	// Name is who cannot start (networkLaunchName), set with Command. Empty is "This box".
+	Name string
 }
 
+// Error is the launch's refusal block: who cannot start and why, then the command that builds the
+// files. The loop's status board reads the first line (tasks.forkStopNext), so it keeps the
+// "<who> cannot start because this project's <Dockerfile> is not ready: " shape.
 func (e *ProjectBuildRequired) Error() string {
-	if e.Refused {
-		return fmt.Sprintf("Coop refused the last build of this project's box: %s. After you fix it, run '%s' on the host.", e.Reason, e.BuildCommand())
+	name := e.Name
+	if name == "" {
+		name = "This box"
 	}
-	return fmt.Sprintf("this project's %s is not ready: %s. Review the Dockerfile and copied build files, then run '%s' on the host. Project builds use ordinary networking, not the run's network restrictions.", e.Dockerfile, e.Reason, e.BuildCommand())
+	reason := strings.TrimSuffix(e.Reason, ".")
+	if e.Refused {
+		return fmt.Sprintf("%s cannot start because Coop refused the last build of this project's box: %s\n\n  After you fix it, build it: %s", name, reason, e.BuildCommand())
+	}
+	return fmt.Sprintf("%s cannot start because this project's %s is not ready: %s\n\n  Review the Dockerfile and the files it copies, then build it: %s\n  The build uses ordinary networking, not the run's network restrictions.", name, e.Dockerfile, reason, e.BuildCommand())
 }
 
 // BuildCommand is the command a person runs on the host to build these files.
