@@ -66,8 +66,11 @@ func openStore(root string, settings options, prepareCurrentSchema bool) (*Store
 	if err := ensureDatabaseFile(databasePath); err != nil {
 		return nil, closeStateLock(lock, err)
 	}
-	dsn := (&url.URL{Scheme: "file", Path: databasePath}).String()
-	db, err := sql.Open("sqlite", dsn)
+	// Connection pragmas live in the DSN, not in one-off Execs: the driver discards a connection
+	// whose call a context interrupted, and the replacement would otherwise run with
+	// busy_timeout 0 (an instant SQLITE_BUSY under any writer) and foreign keys off.
+	db, err := sql.Open("sqlite", sqliteFileURI(databasePath, url.Values{"_pragma": {
+		fmt.Sprintf("busy_timeout(%d)", busyTimeout), "foreign_keys(1)"}}))
 	if err != nil {
 		return nil, closeStateLock(lock, fmt.Errorf("open session database: %w", err))
 	}
@@ -78,12 +81,6 @@ func openStore(root string, settings options, prepareCurrentSchema bool) (*Store
 	}
 	if err := db.Ping(); err != nil {
 		return closeOnError(fmt.Errorf("ping session database: %w", err))
-	}
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return closeOnError(fmt.Errorf("enable foreign keys: %w", err))
-	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout = %d", busyTimeout)); err != nil {
-		return closeOnError(fmt.Errorf("set busy timeout: %w", err))
 	}
 	if prepareCurrentSchema {
 		if err := verifyWALMode(db); err != nil {

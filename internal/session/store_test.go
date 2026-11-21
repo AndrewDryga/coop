@@ -120,6 +120,28 @@ func TestOpenProtectsRootDatabaseAndRejectsUnsafeRoots(t *testing.T) {
 	}
 }
 
+// The driver discards a connection whose call a context interrupted. Its replacement once came
+// up with busy_timeout 0, so the next contended write failed at once with SQLITE_BUSY.
+func TestInterruptedCallKeepsConnectionPragmas(t *testing.T) {
+	store := openTestStore(t, t.TempDir())
+	defer store.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	var rows int
+	err := store.db.QueryRowContext(ctx,
+		"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c").Scan(&rows)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("endless query = %v, want an interrupted call", err)
+	}
+	var timeout, foreignKeys int
+	if err := store.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil || timeout != busyTimeout {
+		t.Fatalf("busy_timeout after interrupt = %d, err=%v", timeout, err)
+	}
+	if err := store.db.QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil || foreignKeys != 1 {
+		t.Fatalf("foreign_keys after interrupt = %d, err=%v", foreignKeys, err)
+	}
+}
+
 // Separate open descriptions must conflict on one root, never on another;
 // Close releases that kernel authority even when called twice.
 func TestOpenExclusivelyOwnsStateRootLockAndReopensAfterClose(t *testing.T) {
