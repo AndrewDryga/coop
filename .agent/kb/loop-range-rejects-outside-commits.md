@@ -219,6 +219,10 @@ authority before attempting task-completion authority.
   closed; pinned by `TestLoopRejectsCommitsAfterTaskWait`, `TestLoopKeepsAWaitPastAnotherSessionsCommit`
   and `TestCheckTaskWaitJudgesWhatWasCommittedAfterTheWait`. Corrected the old universal lock-order
   claim against `task-authority-model` and the loop caller.
+- 2026-11-20 — leftover-window recovery returns `*BaselineMutationError` for archived tasks edited
+  after an interrupted command; a person's forced close passes over an error made only of that
+  report (`OnlyBaselineMutations`) and prints it as a note, any other recovery error still stops it
+  (task 2026-11-20-never-let-leftover-window-recovery-stop-a-person).
 - 2026-11-19 — a person's `coop tasks done --force` closes a task bound twice and logs the commits
   (task 2026-11-19-let-a-person-s-coop-tasks-done-force-close-a-tas).
 - 2026-11-05 — host completion refuses a second binding and loop startup lists multi-bound tasks

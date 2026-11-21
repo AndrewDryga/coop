@@ -1073,7 +1073,13 @@ func tasksFolderMoveWith(root string, args []string, newState, verb string, opts
 			// A loop killed during its final review leaves its window behind, and a close would be
 			// enrolled in that dead review. Settle it the way a loop's start does; a live one is skipped.
 			if _, err := ReconcileCompletionWindowsWithActivity([]string{root}); err != nil {
-				return -1, err
+				// Recovery settled and only reports archived tasks someone edited: that is about
+				// those tasks, and a person's close of this one goes on.
+				edited := OnlyBaselineMutations(err)
+				if edited == nil {
+					return -1, fmt.Errorf("settle a completion window an earlier command left behind: %w — then retry: %s", err, doneRetry(t, opts))
+				}
+				noteEditedArchivedTasks(edited)
 			}
 		}
 		if forced, err = complete(); err != nil {
@@ -1321,6 +1327,21 @@ func noteLandedFork(landed *LandedForkTask) {
 }
 
 // noteForcedClose tells the person what a forced close left in the task's log.
+// noteEditedArchivedTasks tells the person what leftover-window recovery found on the way to their
+// forced close: archived tasks whose files changed after an interrupted command counted them done.
+func noteEditedArchivedTasks(ids []string) {
+	safe := make([]string, len(ids))
+	for i, id := range ids {
+		safe[i] = ui.SafeInline(id)
+	}
+	noun, verb := "task", "was"
+	if len(ids) > 1 {
+		noun, verb = "tasks", "were"
+	}
+	ui.Note("  An earlier command was interrupted, and the archived %s %s %s edited since. Coop cleared that leftover record; the %s stay in done.",
+		noun, strings.Join(safe, ", "), verb, noun)
+}
+
 func noteForcedClose(f *forcedClose) {
 	if f == nil {
 		return

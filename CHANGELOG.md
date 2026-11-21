@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop tasks done --force` is no longer stopped by another task's edited archive.** When an
+  earlier command was interrupted and someone later edited an archived task, the forced close of
+  a different task was refused with a message about that archived task. The close now goes on
+  and reports the edited task as a note.
+
 - **A worker reports each account's allowance to its controller.** The hello now carries an
   optional `account_usage` object with the windows `coop usage` shows for every account the worker
   holds: how much is used, when it resets, credits and reset credits, and when the provider last

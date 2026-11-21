@@ -732,6 +732,63 @@ func TestDoneForceKeepsEveryOtherRefusal(t *testing.T) {
 			t.Fatalf("forced close enrolled in a dead review: %t, %v", enrolled, err)
 		}
 	})
+	// In ../responder a person's forced close of one task was refused because an interrupted command
+	// had left a window behind and someone had since edited another, archived task. Recovery
+	// reports that edit; it is not a reason to refuse this close.
+	t.Run("leftover window and an edited archived task", func(t *testing.T) {
+		forceAtTerminal(t)
+		repo := initRepo(t)
+		root := filepath.Join(repo, TasksRoot)
+		archived := taskWithCompletedChecklist(t, root, StateDone, "archived")
+		if err := CompleteTrustedTask("", root, archived); err != nil {
+			t.Fatal(err)
+		}
+		taskForLease(t, root, StateInProgress, "unfinished")
+		windows, err := BeginCompletionWindows([]string{root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := windows.Abandon(); err != nil { // what a killed process leaves
+			t.Fatal(err)
+		}
+		writeTaskFile(t, filepath.Join(root, StateDone, "archived", "log.md"), "edited after it was archived\n")
+		var code int
+		out := captureStderr(t, func() {
+			code, err = CmdTasksFolder("", root, []string{"done", "unfinished", "--force"})
+		})
+		if code != 0 || err != nil {
+			t.Fatalf("done --force past an edited archived task = %d, %v; want the close", code, err)
+		}
+		if want := "the archived task archived was edited since"; !strings.Contains(out, want) {
+			t.Errorf("output does not report the edited task (%q):\n%s", want, out)
+		}
+		if done, ok := mustCurrentTask(t, root, "unfinished"); !ok || done.State != StateDone {
+			t.Fatal("the forced close did not reach done")
+		}
+		if still, ok := mustCurrentTask(t, root, "archived"); !ok || still.State != StateDone {
+			t.Fatal("the edited archived task left done")
+		}
+		if index, err := ReadCompletionWindowIndex(root); err != nil || len(index.Windows) != 0 {
+			t.Fatalf("leftover windows after the close: %d, %v", len(index.Windows), err)
+		}
+	})
+	// Only that report is passed over: an error of any other kind still stops the close.
+	t.Run("recovery reports", func(t *testing.T) {
+		report := &BaselineMutationError{IDs: []string{"b", "a"}}
+		if got := OnlyBaselineMutations(errors.Join(nil, report, &BaselineMutationError{IDs: []string{"a"}})); !slices.Equal(got, []string{"a", "b"}) {
+			t.Errorf("reports only = %v, want [a b]", got)
+		}
+		for name, err := range map[string]error{
+			"nothing":        nil,
+			"another error":  errors.New("lock"),
+			"mixed":          errors.Join(report, errors.New("lock")),
+			"wrapped report": errors.Join(errors.New("context"), errors.New("lock"), report),
+		} {
+			if got := OnlyBaselineMutations(err); got != nil {
+				t.Errorf("%s: passed over as %v", name, got)
+			}
+		}
+	})
 	t.Run("fork owned", func(t *testing.T) {
 		repo, root, _ := proposalAssignment(t, "forced")
 		assigned, _ := mustCurrentTask(t, root, "assigned")

@@ -278,6 +278,23 @@ func classifyCompletionCandidate(
 	return completionCandidateMutation
 }
 
+// BaselineMutationError reports archived tasks whose files changed while a completion window that
+// already counted them as done was left behind. Recovery has settled by the time it is returned:
+// the window is gone and each task's completion receipt is cleared, so the tasks stay in done
+// without one. It is a report, not a blocked state: a retry finds nothing left to recover.
+type BaselineMutationError struct {
+	IDs []string
+}
+
+func (e *BaselineMutationError) Error() string {
+	return fmt.Sprintf(
+		"archived task metadata changed before completion-window recovery for %s; "+
+			"the tasks were already in the window baseline and remain done — inspect or restore "+
+			"their task metadata manually",
+		strings.Join(e.IDs, ", "),
+	)
+}
+
 func baselineCompletionMutationError(tasks []QueuedTask) error {
 	if len(tasks) == 0 {
 		return nil
@@ -286,12 +303,38 @@ func baselineCompletionMutationError(tasks []QueuedTask) error {
 	for i := range tasks {
 		ids[i] = tasks[i].Item.ID
 	}
-	return fmt.Errorf(
-		"archived task metadata changed before completion-window recovery for %s; "+
-			"the tasks were already in the window baseline and remain done — inspect or restore "+
-			"their task metadata manually",
-		strings.Join(ids, ", "),
-	)
+	return &BaselineMutationError{IDs: ids}
+}
+
+// OnlyBaselineMutations returns the archived tasks err reports when every error in it is a
+// BaselineMutationError, and nil when err holds anything else: a recovery that could not finish
+// must still stop its caller.
+func OnlyBaselineMutations(err error) []string {
+	var ids []string
+	var walk func(error) bool
+	walk = func(err error) bool {
+		if err == nil {
+			return true
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, inner := range joined.Unwrap() {
+				if !walk(inner) {
+					return false
+				}
+			}
+			return true
+		}
+		report, ok := err.(*BaselineMutationError)
+		if !ok {
+			return false
+		}
+		ids = append(ids, report.IDs...)
+		return true
+	}
+	if err == nil || !walk(err) || len(ids) == 0 {
+		return nil
+	}
+	return slices.Compact(slices.Sorted(slices.Values(ids)))
 }
 
 func invalidateStaleCandidateReceipts(root string, baseline map[string]CompletionFingerprint, candidates []QueuedTask) error {
