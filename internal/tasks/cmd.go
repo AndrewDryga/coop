@@ -1288,7 +1288,7 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	}
 	if errors.Is(err, errLoopRunning) {
 		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID),
-			"A loop is running in this queue, and its final review cannot take a task that two commits are bound to.",
+			"A loop is running in this queue, and its final review cannot take a task that several commits are bound to.",
 			[2]string{"", "Try again when the loop ends: " + retry})
 	}
 	var commits *PendingReviewCommitsError
@@ -1299,10 +1299,11 @@ func trustedCompletionError(err error, t Item, opts claimOptions) error {
 	var extra *ExtraBindingsError
 	if errors.As(err, &extra) {
 		rows := [][2]string{{"", extra.Remedy() + ", then retry: " + retry}}
-		if !opts.forceClose && !opts.fromFork {
-			// --force is already in a forced retry, and --from-fork needs exactly one commit whatever
-			// the flags; an agent's shell is refused --force before this point.
-			rows = append(rows, [2]string{"", "Are those commits published? You can close it as it stands: " + retry + " --force"})
+		if !opts.forceClose && !opts.fromFork && !extra.Running && !extra.Transient {
+			// --force is already in a forced retry, --from-fork needs exactly one commit whatever the
+			// flags, a forced close waits for a running loop too, and another close finishing needs only
+			// a rerun; an agent's shell is refused --force before this point.
+			rows = append(rows, [2]string{"", "Or a person who checked the work closes it as it stands: " + retry + " --force"})
 		}
 		return ui.CommandFailed("Could not complete "+ui.SafeInline(t.ID), extra.Cause(), rows...)
 	}

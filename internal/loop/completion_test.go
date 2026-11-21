@@ -784,6 +784,65 @@ func TestLoopStartNamesATaskWithTwoBindings(t *testing.T) {
 	}
 }
 
+// The final review takes every task closed during the run as a subject, so the loop marks itself
+// running for the whole run, not only while a box works: a close that would accept several commits
+// carrying one task's trailer refuses while that mark is held (tasks.HoldLoopRun).
+func TestLoopMarksItselfRunningForTheWholeRun(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, git := gitrepo.New(t)
+	writeTaskFile(t, filepath.Join(repo, ".gitignore"), ".agent/\n")
+	git("add", ".gitignore")
+	git("commit", "-m", "base")
+	root := filepath.Join(repo, tasksRoot)
+	writeTaskFile(t, filepath.Join(root, stateTodo, "next", "task.md"), "# Next\n- [ ] work\n")
+	cfg := openConfig(&config.Config{RepoOverride: repo, ConfigDir: t.TempDir(), Homes: true})
+	c := New(cfg, runtime.Runtime{Name: "true"}, "test", Host{})
+	launched, finish := make(chan struct{}), make(chan struct{})
+	refusal := &box.LaunchRefused{Err: errors.New("stop after startup")}
+	c.boxRun = func(box.RunSpec) (int, error) {
+		close(launched)
+		<-finish
+		return -1, refusal
+	}
+	ran := make(chan error, 1)
+	go func() {
+		_, err := c.Run(RunSpec{Repo: repo, Image: "fixture", Agent: "claude", Queues: []string{tasksRoot}, Sink: io.Discard, MaxTasks: 1, Rotation: ladder.NewRotation([]agents.Target{target("claude", "test")})})
+		ran <- err
+	}()
+	<-launched
+	acquired := make(chan func() error, 1)
+	go func() {
+		release, err := tasks.HoldLoopRun(repo)
+		if err != nil {
+			t.Error(err)
+			release = func() error { return nil }
+		}
+		acquired <- release
+	}()
+	select {
+	case release := <-acquired:
+		_ = release()
+		close(finish)
+		<-ran
+		t.Fatal("the run mark was free while the loop ran")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(finish)
+	if err := <-ran; !errors.Is(err, refusal) {
+		t.Fatalf("loop = %v; want it stopped at the first launch", err)
+	}
+	select {
+	case release := <-acquired:
+		if err := release(); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run mark stayed held after the loop exited")
+	}
+}
+
 func TestAssignedCompletionFeedbackRejectsInvalidBindings(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "noglobal"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "nosystem"))

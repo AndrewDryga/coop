@@ -196,6 +196,13 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		return 1, err
 	}
 	defer releaseCheckout()
+	// The final review takes every task closed during the run as a subject, so a close that accepts
+	// several commits carrying one task's trailer must see that a loop runs, between iterations too.
+	releaseRun, err := tasks.HoldLoopRun(repo)
+	if err != nil {
+		return 1, err
+	}
+	defer func() { _ = releaseRun() }()
 	startupProject, err := project.Load(repo)
 	if err != nil {
 		return 1, err

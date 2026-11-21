@@ -121,9 +121,10 @@ func ReleaseSessionTask(root string, t Item, actor ClaimActor) error {
 // normalization, refused when the task is someone else's (boxClaimRefusal). The claim is judged
 // while the completion holds the lease authority, the lock a box session needs to claim, so a
 // claim that lands after the tool's first check still wins. actor is the box session's, or the
-// zero actor for a loop box, which owns no claim.
+// zero actor for a loop box, which owns no claim. A task several commits carry the trailer of
+// closes only for the session that claimed it.
 func CompleteBoxTask(project, root string, task Item, actor ClaimActor) error {
-	_, err := completeTrustedTask(project, root, task, completionOptions{refuse: func(record TaskOwnerRecord) error {
+	_, err := completeTrustedTask(project, root, task, completionOptions{actor: actor, claimed: true, refuse: func(record TaskOwnerRecord) error {
 		return boxClaimRefusal(task.ID, record, actor)
 	}})
 	return err

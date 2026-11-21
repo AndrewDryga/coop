@@ -117,19 +117,60 @@ because the pending subject was archived before it ran.
 `TestProviderScriptedLoopPendingReviewRejectsAForgedSubjectCommit` proves both halves end to end:
 the forging iteration is rejected, and the next loop counts two commits and starts no reviewer.
 
-**One binding per task is checked when a task closes, not when a review fails on it.** A review
-reopen needs exactly one reachable binding for its subject, so a second binding silently accepted
-at close loses a later review's verdict on that task. A task committed after it with more no longer
-matters: the review sets commits its exact replay refuses aside (`captureReviewReopen`).
-`completeTrustedTask` (`coop tasks done`, and a box's `tasks_complete` on another task) refuses a
-task with more than one with `ExtraBindingsError`, and the loop's startup names every queued task
-that already has more (`tasks.ExtraBindings`) before any review runs. A person's
-`coop tasks done --force` waives the refusal (`forcedClose.bindings`), for published commits whose
-trailer cannot be dropped: log.md names the commits, the close waits for any running loop (`errLoopRunning`), and
-the archived task is then one `ExtraBindings` leaves out unless a review names it. `coop tasks claim` and
-`coop tasks unblock` warn earlier still (`boundTaskNote`): a task already bound gets its commit
-named and the rule that further work is an unbound commit naming the task in its body, since a
-partial commit made before a decision is the binding a person taking the task up again misses.
+**A host close accepts several bindings only when no review can lose by them.** A review reopen
+needs exactly one reachable binding for its subject, and a subject's reopen replays the commits
+after it (`CaptureAuditReopen`; `captureReviewReopen` sets aside what the exact replay refuses).
+Outside that, follow-up commits carrying the trailer harm nothing, and agents make them naturally
+(2026-11-20: three pushed, deployed commits ended with "needs you to run --force").
+`completeTrustedTask` (`coop tasks done`, and a box's `tasks_complete` on another task) asks
+`extraBindingsRisk` and refuses with `ExtraBindingsError` (its `Why` names the case) only while:
+a loop runs over the checkout holding the queue (`HoldLoopRun`, held by `loop.Control.Run` for the
+whole run on its checkout folder, so every queue, subprojects and not-yet-created ones included, is
+covered: the final review takes every task closed during the run as a subject via the done-folder
+diff and `EnrollExistingPendingReviews` refuses two bindings, and per-iteration completion windows
+leave gaps between iterations), a live final-review window exists (a loop from a build before the
+lock), a stopped loop left a final review's window (the next start's
+`ReconcileCompletionWindowsWithActivity` would enroll the close), the task is a pending
+final-review subject (matched by id, so a same-id task in another queue counts), or one of its
+commits descends from a pending subject's commit (the reach `tasks.ExtraBindings` gives the
+startup report). The run lock is keyed on a folder's device and inode, so a symlink or a
+letter-case spelling on a case-insensitive volume meets the same lock. The close takes it shared
+on the queue folder and on every folder above it (`lockLoopRunsAbove`), so it meets the loop of
+whichever checkout holds the queue (a fork's queue closed from its parent meets the fork loop) and
+nothing a box can write inside the checkout, such as a planted `.git`, picks the folder. A loop over
+an enclosing checkout (a dotfiles repository in the home folder) refuses such closes too; that is
+only a refusal. Ancestry comes from the parent links of the raw commit walk
+(`rawTaskHistory.descendsFromAny`), never `git merge-base`: Coop's Git view links `shallow` to the
+real Git dir, so a box could plant a shallow file that makes Git answer "not an ancestor", and a
+commit the walk did not read counts as a descendant. When the walk itself fails or passes its
+bounds (100,000 commits, 200,000 parent edges, 128 MB, or an unreadable object; a box can cause
+it), a box's close is refused with advice to block the task for a person, while a host close goes
+through as before, since closing must not get stuck on a large or shallow repository, and log.md
+says the commits were not counted (`uncountedCloseNote`). A live ordinary window without the run
+lock is another close finishing (every close opens one): the close waits up to `windowBusyWait`,
+then says "another completion is in progress; run the same command again", never "wait for the
+loop". Anything else it cannot read refuses: the window index, the claim, a record of this queue
+that does not decode, or one claiming this workspace that does not validate
+(`pendingReviewSubjectIDs`, a listing of the whole lease registry, about 0.2 s at 93,000 entries,
+done only for a task with several commits; other queues' unreadable records are skipped, as a
+loop's start skips them). A run lock Coop cannot probe is an error even `--force` does not pass.
+The close holds the run locks shared until it is done, so a loop cannot start between check and
+move; the loop tries for its lock for `loopRunWait`, then refuses instead of hanging. Not handled,
+being a denial only: a box rotating parallel multi-bound closes could keep the shared side held and
+stop a loop from starting within that wait. A box (`CompleteBoxTask`, `completionOptions.claimed`)
+closes such a task only under its own session claim, and a loop box always meets its own loop's
+lock. Accepted, log.md names the commits (`boundCloseNote`, or the forced note when --force waived
+the checklist), and `ExtraBindings` leaves the archived task out of a later loop's report unless a
+review names it; `--review-task` on it still fails, as it must. Blocking it clears the receipt, so
+the next close is judged again. A person's `coop tasks done --force` waives every case but a
+running loop (`errLoopRunning`). A fork loop holds the lock per pass, not across passes: each
+pass's final review diffs against its own start, so a close between passes is in the next pass's
+baseline, and the rebase pass has no queue. The loop's own completion (exactly one binding in the
+attempt's range), fork landing and `--from-fork` are unchanged. `coop tasks claim` and
+`coop tasks unblock` name an existing binding (`boundTaskNote`): closing it yourself takes further
+commits with the trailer, while a loop binds one commit per task, so work a loop will finish names
+the task in its body instead.
+
 
 The single-writer rule for a loop's checkout still covers **commits**, not just file edits — for two
 narrower reasons now instead of one. A commit that touches a task this iteration also leases,
@@ -207,6 +248,14 @@ loop holds its iteration lease before entering the short ref window; host comple
 authority before attempting task-completion authority.
 
 ## Changelog
+- 2026-11-20 — a host close accepts several bindings when no review can lose by them; refuses
+  while a loop runs (new run-long `HoldLoopRun` lock: the old window check missed the gaps between
+  iterations, also for --force; keyed on the checkout folder's identity, met by the close on the
+  queue and every folder above it, tried with a timeout), a final review's
+  window is live or left, or a pending subject is the task or precedes its commits (raw parent
+  links, since a planted shallow file fools `merge-base`); another close's window is waited out;
+  boxes need their own claim, and a box's close on a history Coop cannot walk is refused while a
+  host close goes through noted (task 2026-11-20-close-a-task-that-several-commits-are-bound-to-w).
 - 2026-11-20 — fold advice names one exact amend form and blocks for a person when the bound commit
   is published or Coop cannot tell (task 2026-11-20-make-the-fold-advice-for-a-task-s-bound-commit-s).
 - 2026-11-17 — real names: (*Control).FastForwardParent, TryTaskLease in lease.go; the land and isolated land paths take the ref-authority lock too; sources gain the files the card names (audit K3-6, K3-7; checked every LockRefAuthority caller).

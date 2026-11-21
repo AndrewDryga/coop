@@ -352,7 +352,10 @@ func CompleteTrustedTask(project, root string, task Item) error {
 // completion every agent path uses.
 type completionOptions struct {
 	force bool       // close despite an unfinished checklist or a second bound commit
-	actor ClaimActor // who ran it, named in the log note a forced close leaves
+	actor ClaimActor // who ran it: a box session's actor when claimed is set
+	// claimed accepts several commits carrying the trailer only from the task's holder (actor), the
+	// rule for a box's tools, which complete any task nobody else holds.
+	claimed bool
 	// refuse, when set, judges the task's owner record while the lease authority is held: a box's
 	// tools refuse a task someone else holds (CompleteBoxTask), and `coop tasks done` refuses the
 	// process a forced claim took the task from (takenOverRefusal).
@@ -369,36 +372,18 @@ var errFinalReviewRunning = errors.New("a loop's final review is running")
 // review would take the close as its subject and stop, since it cannot enroll a second binding.
 var errLoopRunning = errors.New("a loop is running")
 
+// finalReviewRunning reports a final review's window whose owner is alive.
 func finalReviewRunning(root string) (bool, error) {
-	return completionWindowLive(root, true, nil)
-}
-
-// completionWindowLive reports a window whose owner is alive: a final review's only, or any window
-// but this close's own.
-func completionWindowLive(root string, reviewOnly bool, own *CompletionWindowSet) (bool, error) {
 	index, err := ReadCompletionWindowIndex(root)
 	if err != nil {
 		return false, err
 	}
 	for id, window := range index.Windows {
-		if reviewOnly && !window.ReviewWindow {
+		if !window.ReviewWindow {
 			continue
 		}
-		if own != nil && slices.ContainsFunc(own.windows, func(w completionWindow) bool { return w.root == root && w.id == id }) {
-			continue
-		}
-		// The window's lock is what says its owner is alive: a killed loop's record stays behind.
-		live, err := lockLeaseAuthority(root, completionWindowLockPrefix+id, false, syscall.LOCK_SH|syscall.LOCK_NB)
-		switch {
-		case errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN):
-			return true, nil
-		case errors.Is(err, os.ErrNotExist):
-		case err != nil:
-			return false, err
-		default:
-			if err := unlockLeaseFile(live); err != nil {
-				return false, err
-			}
+		if live, err := completionWindowOwnerLive(root, id); err != nil || live {
+			return live, err
 		}
 	}
 	return false, nil
@@ -470,14 +455,27 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 	if current.State == StateDone {
 		_, alreadyAccepted = readLeaseCompletionReceipt(authority, current.Dir)
 	}
+	// Several commits carrying the trailer are accepted when no review can lose by them, and log.md
+	// names them. Otherwise a person may still accept them, since published history cannot drop a
+	// trailer, but never while a loop runs: its final review would take the close as a subject it
+	// cannot enroll.
+	var bound, uncounted *ExtraBindingsError
 	if !alreadyAccepted {
-		// Published history cannot drop a trailer, so a person may accept the second binding. No
-		// review can reopen the task afterwards, which its log.md says.
-		if err := refuseExtraBindings(project, current.ID); err != nil {
-			var extra *ExtraBindingsError
-			if !opts.force || !errors.As(err, &extra) {
-				return nil, err
-			}
+		extra, release, err := extraBindingsRisk(project, root, current.ID, windows, opts)
+		defer func() { retErr = errors.Join(retErr, release()) }()
+		switch {
+		case err != nil:
+			return nil, err
+		case extra == nil:
+		case extra.Uncounted != "":
+			uncounted = extra
+		case extra.Why == "":
+			bound = extra
+		case !opts.force:
+			return nil, extra
+		case extra.Running:
+			return nil, errLoopRunning
+		default:
 			if waived == nil {
 				waived = &forcedClose{}
 			}
@@ -485,8 +483,7 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 		}
 	}
 	// A loop's final review running now would enroll this close, and its reviewer reopens a task with
-	// skipped items, silently undoing the person's decision. So the person waits for it to end. A
-	// task bound twice waits for the whole loop: its final review cannot enroll a second binding.
+	// skipped items, silently undoing the person's decision. So the person waits for it to end.
 	if waived != nil && !alreadyAccepted {
 		running, err := finalReviewRunning(root)
 		if err != nil {
@@ -494,13 +491,6 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 		}
 		if running {
 			return nil, errFinalReviewRunning
-		}
-		if waived.bindings != nil {
-			if running, err = completionWindowLive(root, false, windows); err != nil {
-				return nil, fmt.Errorf("inspect active completion windows: %w", err)
-			} else if running {
-				return nil, errLoopRunning
-			}
 		}
 	}
 	reopen, reopened, err := ReadAuditReopenRecord(root, task.ID)
@@ -587,23 +577,47 @@ func completeTrustedTask(project, root string, task Item, opts completionOptions
 			return nil, fmt.Errorf("task %s is done, but its log.md could not record where its work landed: %w", current.ID, err)
 		}
 	}
-	if waived == nil || alreadyAccepted {
+	if uncounted != nil && !alreadyAccepted {
+		if err := AppendTaskLogStrict(current.Dir, uncountedCloseNote(uncounted)); err != nil {
+			return waived, fmt.Errorf("task %s is done, but its log.md could not say its commits were not counted: %w", current.ID, err)
+		}
+	}
+	switch {
+	case alreadyAccepted:
 		return nil, nil
+	case waived != nil:
+		if waived.bindings == nil {
+			waived.bindings = bound // a forced checklist still names the commits it accepted
+		}
+		// Last, so the note never outlives a close that failed; a retry finds the receipt instead.
+		if err := AppendTaskLogStrict(current.Dir, forcedCompletionNote(waived)); err != nil {
+			return waived, fmt.Errorf("task %s is done, but its log.md could not record the forced close: %w", current.ID, err)
+		}
+		return waived, nil
+	case bound != nil:
+		if err := AppendTaskLogStrict(current.Dir, boundCloseNote(bound)); err != nil {
+			return nil, fmt.Errorf("task %s is done, but its log.md could not name the %d commits that carry its trailer: %w", current.ID, bound.Found, err)
+		}
 	}
-	// Last, so the note never outlives a close that failed; a retry finds the receipt instead.
-	if err := AppendTaskLogStrict(current.Dir, forcedCompletionNote(waived)); err != nil {
-		return waived, fmt.Errorf("task %s is done, but its log.md could not record the forced close: %w", current.ID, err)
-	}
-	return waived, nil
+	return nil, nil
 }
 
-// ExtraBindingsError refuses to close a task whose history already holds more than one commit with
-// its Coop-Task trailer. A final review can reopen a task only while it has exactly one, so a second
-// binding accepted now loses a later review's verdict.
+// ExtraBindingsError is a task whose history holds more than one commit with its Coop-Task trailer.
+// A final review can reopen a task only while it has exactly one, and a subject's reopen replays the
+// commits after it. Without Why it is a report (loop start) or --from-fork's refusal, which needs
+// exactly one commit. With Why it is a close refused because a review could lose its verdict now.
 type ExtraBindingsError struct {
 	TaskID  string
 	Found   int
 	Commits []string // "<short id> by <author>", the first few
+	Why     string   // what a review could lose by the close, as a clause
+	Running bool     // a loop is running: the close goes through once it ends
+	// Uncounted is why a host close could not count the commits at all; it goes through, noted.
+	Uncounted string
+	// Transient is another close finishing: running the same command again goes through.
+	Transient bool
+	// After is the remedy for a Why that waiting on a loop does not fix.
+	After string
 }
 
 func (e *ExtraBindingsError) facts(task string) string {
@@ -612,35 +626,276 @@ func (e *ExtraBindingsError) facts(task string) string {
 }
 
 func (e *ExtraBindingsError) Error() string {
-	return e.facts("task") + "; a task binds one commit, so make the follow-up unbound by dropping its trailer, or file a new task for that work"
+	if e.Why == "" {
+		return e.facts("task") + "; a task binds one commit, so make the follow-up unbound by dropping its trailer, or file a new task for that work"
+	}
+	return e.facts("task") + "; " + e.Why + "; " + strings.ToLower(e.Remedy()[:1]) + e.Remedy()[1:]
 }
 
-// Cause is the refusal as a sentence.
-func (e *ExtraBindingsError) Cause() string { return e.facts("Task") + ". A task binds one commit." }
+// Cause is the refusal as sentences.
+func (e *ExtraBindingsError) Cause() string {
+	if e.Why == "" {
+		return e.facts("Task") + ". A task binds one commit."
+	}
+	return e.facts("Task") + ". " + strings.ToUpper(e.Why[:1]) + e.Why[1:] + "."
+}
 
-// Remedy keeps the follow-up's work and drops only the binding it should not carry.
+// Remedy is the way out: wait for the loop, or what the refusal names; without Why, keep the
+// follow-up's work and drop only the binding it should not carry.
 func (e *ExtraBindingsError) Remedy() string {
+	switch {
+	case e.Running:
+		return "Wait for the loop to end"
+	case e.After != "":
+		return e.After
+	}
 	return "Make the follow-up unbound by dropping its trailer, or file a new task for that work"
 }
 
-// refuseExtraBindings is the binding count a review reopen requires, checked when a task is closed
-// rather than when a review later fails on it. No repository, or no commit yet, has nothing to
-// count; a history Coop cannot walk is left to the checks that need it, which fail closed.
-func refuseExtraBindings(project, id string) error {
+// loopRunLockPrefix names the lock a loop holds on its checkout for its whole run (HoldLoopRun).
+const loopRunLockPrefix = "\x00loop-run"
+
+// loopRunWait bounds how long a loop's start waits for closes holding its run lock shared, and
+// windowBusyWait how long such a close waits for another close's completion window to end. A close
+// holds either for well under a second.
+var loopRunWait, windowBusyWait = 10 * time.Second, 2 * time.Second
+
+// lockLoopRun takes the run lock of the folder dir: a loop takes its checkout's, so every queue in
+// it, the subprojects' and the ones that do not exist yet included, is covered. The key is the
+// folder's device and inode, not its spelling, so two spellings of one folder (a symlink, or letter
+// case on a case-insensitive volume) share one lock.
+func lockLoopRun(dir string, how int) (*os.File, error) {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("read the identity of %s", dir)
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s%d:%d", loopRunLockPrefix, stat.Dev, stat.Ino))
+	file, err := openLeaseAuthorityRecord(fmt.Sprintf("%x.lock", sum), true)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), how); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
+
+// lockLoopRunsAbove takes, shared and without waiting, the run lock of root and of every folder
+// above it, so it meets the loop of whichever checkout holds the queue. Nothing inside the checkout,
+// which a box can write, decides which folder that is. running is a loop holding one of them; the
+// caller releases what it got either way.
+func lockLoopRunsAbove(root string) (release func() error, running bool, err error) {
+	var held []*os.File
+	release = func() error {
+		var errs []error
+		for _, file := range held {
+			errs = append(errs, unlockLeaseFile(file))
+		}
+		held = nil
+		return errors.Join(errs...)
+	}
+	dir, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return release, false, err
+	}
+	for {
+		file, err := lockLoopRun(dir, syscall.LOCK_SH|syscall.LOCK_NB)
+		switch {
+		case errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN):
+			return release, true, nil
+		case err != nil:
+			return release, false, err
+		}
+		held = append(held, file)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return release, false, nil
+		}
+		dir = parent
+	}
+}
+
+// HoldLoopRun marks a loop running over repo's checkout from before it reads the done folders its
+// final review diffs against until it exits: that review takes every task closed meanwhile as a
+// subject, and it cannot enroll a task several commits are bound to. A close accepting such a task
+// holds the same lock shared and refuses while a loop holds it (extraBindingsRisk). The loop waits
+// briefly for such a close to finish, then refuses.
+func HoldLoopRun(repo string) (release func() error, err error) {
+	deadline := time.Now().Add(loopRunWait)
+	for {
+		file, err := lockLoopRun(repo, syscall.LOCK_EX|syscall.LOCK_NB)
+		busy := errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN)
+		switch {
+		case err == nil:
+			return func() error { return unlockLeaseFile(file) }, nil
+		case !busy:
+			return nil, fmt.Errorf("mark the loop running over %s: %w", repo, err)
+		case time.Now().After(deadline):
+			return nil, fmt.Errorf("another coop loop is running over %s, or a task close there has not finished — wait for it, then run this again", repo)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// extraBindingsRisk counts the commits carrying id's trailer and, when there are several, says
+// whether a final review could lose its verdict by closing the task now. That is so while a loop runs
+// (its final review takes the close as a subject), while a final review's window was left by a
+// stopped loop (the next start enrolls what it saw), while id is a pending final-review subject, or
+// while one of its commits follows a pending subject's commit (that subject's reopen replays it); the
+// same reach tasks.ExtraBindings gives the loop's startup report. Anything Coop cannot read counts
+// as a risk, and a run lock it cannot probe is an error even --force does not pass. With no risk the
+// close accepts the commits and log.md names them. release holds the run lock shared until the close
+// is done, so a loop cannot start between this check and the move. No repository, or no commit yet,
+// has nothing to count; a history Coop cannot walk is left to the checks that need it, which fail
+// closed.
+func extraBindingsRisk(project, root, id string, own *CompletionWindowSet, opts completionOptions) (extra *ExtraBindingsError, release func() error, err error) {
+	release = func() error { return nil }
 	repo, head := auditHistory(project)
 	if repo == "" || head == "" {
-		return nil
+		return nil, release, nil
 	}
-	bindings, ok := rawTaskBindings(repo, head)
-	if !ok || len(bindings[id]) < 2 {
-		return nil
+	history, err := readRawTaskHistory(repo, head)
+	switch {
+	case err != nil && opts.claimed:
+		// A box can make the walk fail (a huge commit, a deleted parent object), so its close is
+		// refused rather than skipping every check below.
+		return nil, release, fmt.Errorf("could not count the commits carrying this task's %s trailer (%v), so a session cannot close it; block it for a person instead", CoopTaskTrailer, err)
+	case err != nil:
+		// A person's or host agent's close never gets stuck on a history too large to walk; its log
+		// says the commits were not counted.
+		return &ExtraBindingsError{TaskID: id, Uncounted: err.Error()}, release, nil
 	}
-	return extraBindings(repo, id, bindings[id])
+	shas := history.bindings[id]
+	if len(shas) < 2 {
+		return nil, release, nil
+	}
+	extra = extraBindings(repo, id, shas)
+	refuse := func(why, after string) (*ExtraBindingsError, func() error, error) {
+		extra.Why, extra.After = why, after
+		return extra, release, nil
+	}
+	unreadable := func(what string, err error) (*ExtraBindingsError, func() error, error) {
+		return refuse(fmt.Sprintf("Coop could not read %s to tell whether a final review would lose its verdict (%v)", what, err),
+			"Fix what stops Coop reading it")
+	}
+	const loopRuns = "a loop is running in this checkout, and its final review cannot take a task that several commits are bound to"
+	// The checkout holding the queue, not the project: a fork's queue closed from its parent is the
+	// fork loop's.
+	runs, running, err := lockLoopRunsAbove(root)
+	release = runs
+	switch {
+	case running:
+		extra.Running = true
+		return refuse(loopRuns, "")
+	case err != nil:
+		return nil, release, fmt.Errorf("could not tell whether a loop is running in this checkout: %w", err)
+	}
+	// A loop holds the run lock, so a live window without it is another close finishing, which takes
+	// a moment; a final review's window without it is a loop from a build before the lock.
+	for deadline := time.Now().Add(windowBusyWait); ; time.Sleep(20 * time.Millisecond) {
+		index, err := ReadCompletionWindowIndex(root)
+		if err != nil {
+			return unreadable("this queue's completion windows", err)
+		}
+		busy := false
+		for windowID, window := range index.Windows {
+			if own != nil && slices.ContainsFunc(own.windows, func(w completionWindow) bool { return w.root == root && w.id == windowID }) {
+				continue
+			}
+			live, err := completionWindowOwnerLive(root, windowID)
+			switch {
+			case err != nil:
+				return unreadable("this queue's completion windows", err)
+			case live && window.ReviewWindow:
+				extra.Running = true
+				return refuse(loopRuns, "")
+			case live:
+				busy = true
+			case window.ReviewWindow:
+				return refuse("a loop stopped during its final review, and the next loop would take this close into that review, which cannot enroll a task that several commits are bound to",
+					"Run coop loop to finish that review")
+			}
+		}
+		if !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			extra.Transient = true
+			return refuse("another completion is in progress in this queue", "Run the same command again")
+		}
+	}
+	// A box completes only a task it claimed: its claim is what makes the extra commits its own work.
+	if opts.claimed {
+		record, owned, err := ReadTaskOwnerRecord(root, id)
+		if err != nil {
+			return unreadable("the task's claim", err)
+		}
+		if !owned || record.Kind == TaskOwnerFork || opts.actor.PID == 0 || !sameClaimant(record, opts.actor) {
+			return refuse("this session has not claimed it, and only a task's holder closes it with commits that a final review could not reopen",
+				"Claim it with tasks_claim first, or leave it to its owner")
+		}
+	}
+	subjects, err := pendingReviewSubjectIDs(repo, root)
+	if err == nil {
+		// The task's own record is keyed by its queue, which a workspace scan could miss.
+		var pending bool
+		if _, pending, err = readPendingReviewRecord(root, id); pending {
+			subjects = append(subjects, id)
+		}
+	}
+	if err != nil {
+		return unreadable("the pending final reviews", err)
+	}
+	for _, subject := range slices.Compact(slices.Sorted(slices.Values(subjects))) {
+		switch {
+		case subject == id:
+			return refuse("a loop's final review is still waiting on it, and that review can reopen it only while one commit carries its trailer",
+				"Run coop loop to finish that review")
+		case history.descendsFromAny(shas, history.bindings[subject]):
+			return refuse(fmt.Sprintf("a loop's final review is still waiting on task %s, and reopening that task replays these later commits", bindingLabel(subject)),
+				"Run coop loop to finish that review")
+		}
+	}
+	return extra, release, nil
+}
+
+// completionWindowOwnerLive reports whether the window's owner still holds its lock: a killed loop's
+// record stays behind.
+func completionWindowOwnerLive(root, id string) (bool, error) {
+	live, err := lockLeaseAuthority(root, completionWindowLockPrefix+id, false, syscall.LOCK_SH|syscall.LOCK_NB)
+	switch {
+	case errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN):
+		return true, nil
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return false, unlockLeaseFile(live)
+}
+
+// uncountedCloseNote is the log line a host close leaves when it could not walk the history to count
+// the commits carrying the task's trailer, so no review check ran either.
+func uncountedCloseNote(e *ExtraBindingsError) string {
+	return fmt.Sprintf("Closed without counting the commits carrying its %s trailer: Coop could not read the history (%s), so it could not tell whether a final review would lose its verdict.",
+		CoopTaskTrailer, ui.SafeInline(e.Uncounted))
+}
+
+// boundCloseNote is the log line a close leaves when it accepted several commits carrying the task's
+// trailer because no review could lose by them.
+func boundCloseNote(e *ExtraBindingsError) string {
+	return fmt.Sprintf("Closed with %d commits carrying its %s trailer (%s). No loop was running and no final review was waiting on it or on a task before those commits, so none lost its verdict; a later review cannot reopen this task.",
+		e.Found, CoopTaskTrailer, strings.Join(e.Commits, ", "))
 }
 
 // boundTaskNote is what a person taking a task up again must know when history already binds it:
-// closing it refuses a second commit carrying its trailer (refuseExtraBindings), so further work
-// goes in a commit without one. Empty when nothing binds the task or the history cannot be walked.
+// a loop binds one commit per task, while a close outside a loop accepts follow-up commits carrying
+// the trailer when no review can lose by them (extraBindingsRisk). Empty when nothing binds the task
+// or the history cannot be walked.
 func boundTaskNote(project, id string) (fact, remedy string) {
 	repo, head := auditHistory(project)
 	if repo == "" || head == "" {
@@ -651,11 +906,11 @@ func boundTaskNote(project, id string) (fact, remedy string) {
 	case !ok || len(shas) == 0:
 		return "", ""
 	case len(shas) > 1:
-		extra := extraBindings(repo, id, shas)
-		return extra.Cause(), extra.Remedy() + "."
+		return extraBindings(repo, id, shas).facts("Task") + ".",
+			"A loop cannot finish it, since a loop binds one commit per task. Close it yourself with coop tasks done once no loop is running."
 	default:
-		return fmt.Sprintf("Its commit %s already carries %s: %s, and a task binds one commit.", shortCommit(shas[0]), CoopTaskTrailer, bindingLabel(id)),
-			"Commit further work on it without that trailer, and name the task in the message body instead."
+		return fmt.Sprintf("Its commit %s already carries %s: %s.", shortCommit(shas[0]), CoopTaskTrailer, bindingLabel(id)),
+			"If you close it yourself, further commits may carry that trailer too. If a loop will finish it, name the task in the message body instead: a loop binds one commit per task."
 	}
 }
 
@@ -676,10 +931,11 @@ func ExtraBindings(repo string, snapshot map[string]string, reviewSubjects []str
 	if head == "" {
 		return nil
 	}
-	bindings, ok := rawTaskBindings(repo, head)
-	if !ok {
+	history, err := readRawTaskHistory(repo, head)
+	if err != nil {
 		return nil
 	}
+	bindings := history.bindings
 	var subjectCommits []string
 	for _, id := range reviewSubjects {
 		subjectCommits = append(subjectCommits, bindings[id]...)
@@ -690,24 +946,67 @@ func ExtraBindings(repo string, snapshot map[string]string, reviewSubjects []str
 		if len(shas) < 2 {
 			continue
 		}
-		if snapshot[id] != StateDone || slices.Contains(reviewSubjects, id) || descendsFromAny(repo, shas, subjectCommits) {
+		if snapshot[id] != StateDone || slices.Contains(reviewSubjects, id) || history.descendsFromAny(shas, subjectCommits) {
 			extra = append(extra, extraBindings(repo, id, shas))
 		}
 	}
 	return extra
 }
 
-// descendsFromAny reports whether one of shas has one of the ancestors as a proper ancestor.
-func descendsFromAny(repo string, shas, ancestors []string) bool {
+// rawTaskHistory is HEAD's history as its raw commit objects name it: each task's binding commits
+// and each commit's parents. Ancestry is answered from those links, never from Git's ancestry
+// commands, which a planted shallow or graft file in a box's view of .git can cut.
+type rawTaskHistory struct {
+	bindings map[string][]string
+	parents  map[string][]string
+}
+
+func readRawTaskHistory(repo, head string) (rawTaskHistory, error) {
+	commits, err := rawReachableAuditCommits(repo, head)
+	if err != nil {
+		return rawTaskHistory{}, err
+	}
+	history := rawTaskHistory{bindings: taskBindingsOf(commits), parents: make(map[string][]string, len(commits))}
+	for _, commit := range commits {
+		history.parents[commit.sha] = commit.parentIDs
+	}
+	return history, nil
+}
+
+// descendsFromAny reports whether one of shas has one of ancestors as a proper ancestor. A commit
+// the walk did not read counts as a descendant: history Coop cannot see is a risk.
+func (h rawTaskHistory) descendsFromAny(shas, ancestors []string) bool {
+	if len(ancestors) == 0 {
+		return false
+	}
+	want := map[string]bool{}
 	for _, ancestor := range ancestors {
-		for _, sha := range shas {
-			if sha == ancestor {
-				continue
-			}
-			if _, err := forkspace.GitOutErr(repo, "merge-base", "--is-ancestor", ancestor, sha); err == nil {
-				return true
-			}
+		want[ancestor] = true
+	}
+	var pending []string
+	for _, sha := range shas {
+		parents, ok := h.parents[sha]
+		if !ok {
+			return true
 		}
+		pending = append(pending, parents...)
+	}
+	seen := map[string]bool{}
+	for len(pending) > 0 {
+		commit := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if seen[commit] {
+			continue
+		}
+		seen[commit] = true
+		if want[commit] {
+			return true
+		}
+		parents, ok := h.parents[commit]
+		if !ok {
+			return true
+		}
+		pending = append(pending, parents...)
 	}
 	return false
 }
@@ -1948,8 +2247,9 @@ type rawReachableAuditCommit struct {
 	sha                string
 	taskValues         []string
 	taskBindingInvalid bool
-	parents            int    // as the raw object names them, so no graft or shallow file hides a merge
-	firstParent        string // "" for a root commit
+	parents            int      // as the raw object names them, so no graft or shallow file hides a merge
+	firstParent        string   // "" for a root commit
+	parentIDs          []string // every parent the raw object names, for ancestry no shallow file can cut
 }
 
 func rawReachableAuditCommits(repo, head string) (commits []rawReachableAuditCommit, err error) {
@@ -2045,7 +2345,7 @@ func rawReachableAuditCommitsLimit(
 		seen[current] = true
 		commits = append(commits, rawReachableAuditCommit{
 			sha: current, taskValues: taskValues, taskBindingInvalid: taskBindingInvalid, parents: len(parents),
-			firstParent: firstOf(parents),
+			firstParent: firstOf(parents), parentIDs: parents,
 		})
 		for i := len(parents) - 1; i >= 0; i-- {
 			edges++

@@ -2,11 +2,13 @@ package tasks
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/ui"
@@ -125,110 +127,280 @@ func TestExtraBindingsNamesOnlyTasksAReviewCanReach(t *testing.T) {
 	}
 }
 
-// A follow-up commit carrying the task's own trailer is refused when the task is closed, not later,
-// when a final review's reopen of it (or of an older task) fails on the second binding. Dropping the
-// follow-up's trailer lets the same close through, and the loop's startup names the task too.
-func TestDoneRefusesASecondBinding(t *testing.T) {
+// threeBoundCommits commits three times with id's trailer, as the 2026-11-20 responder agent did: a
+// change and two follow-ups after it saw the deployed result. It returns their short ids.
+func threeBoundCommits(t *testing.T, repo, id string) []string {
+	t.Helper()
+	var shas []string
+	for _, subject := range []string{"Fix login retries", "Cover the retry cap", "Tune the retry delay"} {
+		git(t, repo, "commit", "-q", "--allow-empty", "-m", subject+"\n\nCoop-Task: "+id)
+		shas = append(shas, forkspace.GitOut(repo, "rev-parse", "--short", "HEAD"))
+	}
+	return shas
+}
+
+// Follow-up commits carrying the task's trailer close without a person's override when no review
+// can lose by them: no loop runs, and no final review waits on the task or on a task before them.
+// log.md names the commits once (a re-run of done adds nothing), and a loop that starts afterwards
+// does not list the archived task. Blocked again and closed again, it takes the same rule.
+func TestDoneAcceptsSeveralBindingsNoReviewCanLoseBy(t *testing.T) {
 	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
-	repo, git := gitRepo(t)
-	root := t.TempDir()
+	repo, _ := gitRepo(t)
+	root := filepath.Join(repo, ".agent", "tasks")
 	id := "fix-login-retries"
-	git("commit", "-q", "--allow-empty", "-m", "Fix login retries\n\nCoop-Task: "+id)
-	first := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
-	git("commit", "-q", "--allow-empty", "-m", "Cover the retry cap\n\nCoop-Task: "+id)
-	second := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
 	taskWithCompletedChecklist(t, root, StateInProgress, id)
-	taskWithCompletedChecklist(t, root, StateInProgress, "bound-once")
-	git("commit", "-q", "--allow-empty", "-m", "Other work\n\nCoop-Task: bound-once")
+	shas := threeBoundCommits(t, repo, id)
 
 	snapshot, err := QueueSnapshot([]string{root})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if extra := ExtraBindings(repo, snapshot, nil); len(extra) != 1 || extra[0].TaskID != id || extra[0].Found != 2 {
-		t.Fatalf("startup report = %+v; want only %s with 2 commits", extra, id)
+	if extra := ExtraBindings(repo, snapshot, nil); len(extra) != 1 || extra[0].TaskID != id || extra[0].Found != 3 {
+		t.Fatalf("startup report while open = %+v; want %s with 3 commits", extra, id)
 	}
+	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
+		t.Fatalf("done = %d, %v; want the close", code, err)
+	}
+	done, ok := mustCurrentTask(t, root, id)
+	if !ok || done.State != StateDone || !taskCompletionRecorded(root, done) {
+		t.Fatal("close did not reach done with its receipt")
+	}
+	log := readFileString(filepath.Join(done.Dir, "log.md"))
+	for _, want := range append([]string{"Closed with 3 commits carrying its Coop-Task trailer (", "a later review cannot reopen this task."}, shas...) {
+		if !strings.Contains(log, want) {
+			t.Errorf("log.md omitted %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "--force") {
+		t.Errorf("log.md calls the close forced:\n%s", log)
+	}
+	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
+		t.Fatalf("second done = %d, %v", code, err)
+	}
+	if n := strings.Count(readFileString(filepath.Join(done.Dir, "log.md")), "Closed with 3 commits"); n != 1 {
+		t.Fatalf("log.md has %d notes after a re-run of done, want 1", n)
+	}
+	// A loop starting now neither waits on the close nor lists the archived task.
+	release, err := HoldLoopRun(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot, err = QueueSnapshot([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	if extra := ExtraBindings(repo, snapshot, nil); len(extra) != 0 {
+		t.Fatalf("startup report after the close = %+v; want nothing", extra)
+	}
+
+	if err := moveTrustedTaskFromDone(root, done, StateBlocked); err != nil {
+		t.Fatal(err)
+	}
+	blocked, _ := mustCurrentTask(t, root, id)
+	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
+		t.Fatalf("done after a block = %d, %v (from %s)", code, err, blocked.State)
+	}
+	done, _ = mustCurrentTask(t, root, id)
+	if n := strings.Count(readFileString(filepath.Join(done.Dir, "log.md")), "Closed with 3 commits"); n != 2 {
+		t.Fatalf("log.md has %d notes after closing twice, want 2", n)
+	}
+}
+
+// While a loop can take the close into its final review, the close is refused, and the refusal
+// says why and how out: a running loop (between iterations too, or one from before the run lock in
+// its final review) says to wait for it, and a final review a stopped loop left says to run the loop
+// again. Nothing moves.
+func TestDoneRefusesSeveralBindingsWhileALoopCanTakeTheClose(t *testing.T) {
+	for name, tc := range map[string]struct {
+		start      func(t *testing.T, repo, root string) func()
+		cause, fix string
+		force      bool // the refusal offers a person's --force
+	}{
+		"loop between iterations": {
+			start: func(t *testing.T, repo, _ string) func() {
+				release, err := HoldLoopRun(repo)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return func() { _ = release() }
+			},
+			cause: "A loop is running in this checkout, and its final review cannot take a task that several commits are bound to.",
+			fix:   "Wait for the loop to end, then retry: coop tasks done ",
+		},
+		"final review of a loop without the run lock": {
+			start: func(t *testing.T, _, root string) func() {
+				windows, err := BeginReviewCompletionWindows([]string{root}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return func() { _ = windows.Abandon() }
+			},
+			cause: "A loop is running in this checkout",
+			fix:   "Wait for the loop to end, then retry: coop tasks done ",
+		},
+		"review a stopped loop left": {
+			start: func(t *testing.T, _, root string) func() {
+				windows, err := BeginReviewCompletionWindows([]string{root}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := unlockLeaseFile(windows.windows[0].live); err != nil {
+					t.Fatal(err)
+				}
+				windows.windows[0].live = nil
+				return func() {}
+			},
+			cause: "A loop stopped during its final review, and the next loop would take this close into that review",
+			fix:   "Run coop loop to finish that review, then retry: coop tasks done ",
+			force: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+			repo, _ := gitRepo(t)
+			root := filepath.Join(repo, ".agent", "tasks")
+			id := "fix-login-retries"
+			taskWithCompletedChecklist(t, root, StateInProgress, id)
+			threeBoundCommits(t, repo, id)
+			stop := tc.start(t, repo, root)
+			defer stop()
+			code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo})
+			var usage *ui.UsageError
+			if code == 0 || !errors.As(err, &usage) {
+				t.Fatalf("done = %d, %v; want the drawn refusal", code, err)
+			}
+			got := usage.Render(ui.Palette{})
+			for _, want := range []string{"has 3 commits carrying \"Coop-Task: " + id + "\"", tc.cause, tc.fix + id} {
+				if !strings.Contains(got, want) {
+					t.Errorf("refusal omitted %q:\n%s", want, got)
+				}
+			}
+			if offers := strings.Contains(got, "--force"); offers != tc.force {
+				t.Errorf("refusal offers --force = %t, want %t:\n%s", offers, tc.force, got)
+			}
+			if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateInProgress {
+				t.Fatal("refused task moved")
+			}
+		})
+	}
+}
+
+// Several agent sessions close tasks in one checkout at once. Each close opens a completion window,
+// and with no loop holding the run lock another close's window is not a loop: the close waits for
+// it to end, and if it does not, says to run the same command again, never to wait for a loop.
+func TestDoneWaitsOutAnotherCloseInsteadOfNamingALoop(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	busyWait := windowBusyWait
+	t.Cleanup(func() { windowBusyWait = busyWait })
+	windowBusyWait = 300 * time.Millisecond
+	repo, _ := gitRepo(t)
+	root := filepath.Join(repo, ".agent", "tasks")
+	for _, id := range []string{"held-up", "racing"} {
+		taskWithCompletedChecklist(t, root, StateInProgress, id)
+		threeBoundCommits(t, repo, id)
+	}
+	other, err := BeginCompletionWindows([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := tasksFolderMoveWith(root, []string{"held-up"}, StateDone, "done", claimOptions{project: repo})
+	var usage *ui.UsageError
+	if code == 0 || !errors.As(err, &usage) {
+		t.Fatalf("done beside a close that does not end = %d, %v; want the drawn refusal", code, err)
+	}
+	got := usage.Render(ui.Palette{})
+	for _, want := range []string{"Another completion is in progress in this queue.", "Run the same command again, then retry: coop tasks done held-up"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("refusal omitted %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "loop") || strings.Contains(got, "--force") {
+		t.Errorf("refusal names a loop or --force:\n%s", got)
+	}
+	ended := make(chan error, 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		ended <- other.Abandon()
+	}()
+	if code, err := tasksFolderMoveWith(root, []string{"racing"}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
+		t.Fatalf("done while another close finishes = %d, %v; want the close", code, err)
+	}
+	if err := <-ended; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A final review waiting on a task before the follow-ups replays them when it reopens that task, so
+// the close is refused and names it, and a shallow file a box plants to cut that ancestry does not
+// change the answer. A person's --force still closes it, and log.md says so; while a loop runs, even
+// --force waits.
+func TestDoneRefusesSeveralBindingsAfterAPendingReviewSubject(t *testing.T) {
+	repo, root, _, assignment, subject, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, subject, plan, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	id := "follow-up"
+	taskWithCompletedChecklist(t, root, StateInProgress, id)
+	shas := threeBoundCommits(t, repo, id)
+	// Git's ancestry commands honor .git/shallow: listing the first follow-up there hides its parents.
+	first := forkspace.GitOut(repo, "rev-parse", shas[0])
+	writeTaskFile(t, filepath.Join(repo, ".git", "shallow"), first+"\n")
+	subjectCommit := forkspace.GitOut(repo, "rev-parse", "HEAD~3")
+	if _, err := forkspace.GitOutErr(repo, "merge-base", "--is-ancestor", subjectCommit, "HEAD"); err == nil {
+		t.Fatal("fixture: the planted shallow file did not cut Git's ancestry")
+	}
+
 	code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo})
 	var usage *ui.UsageError
 	if code == 0 || !errors.As(err, &usage) {
 		t.Fatalf("done = %d, %v; want the drawn refusal", code, err)
 	}
 	got := usage.Render(ui.Palette{})
-	for _, want := range []string{"Could not complete " + id, "has 2 commits carrying \"Coop-Task: " + id + "\"",
-		second + " by ", first + " by ", "Make the follow-up unbound by dropping its trailer, or file a new task for that work, then retry: coop tasks done " + id,
-		"Are those commits published? You can close it as it stands: coop tasks done " + id + " --force"} {
+	for _, want := range []string{
+		"A loop's final review is still waiting on task " + subject.ID + ", and reopening that task replays these later commits.",
+		"Run coop loop to finish that review, then retry: coop tasks done " + id,
+		"Or a person who checked the work closes it as it stands: coop tasks done " + id + " --force",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("refusal omitted %q:\n%s", want, got)
 		}
 	}
-	if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateInProgress {
-		t.Fatal("refused task moved")
-	}
-	// A box's tasks_complete on another task takes the same path.
-	box, _ := mustCurrentTask(t, root, id)
-	if err := CompleteBoxTask(repo, root, box, ClaimActor{}); !errors.As(err, new(*ExtraBindingsError)) {
-		t.Fatalf("box completion = %v; want the second binding refused", err)
-	}
-
-	git("reset", "-q", "--soft", "HEAD~2")
-	git("commit", "-q", "--allow-empty", "-m", "Cover the retry cap")
-	git("commit", "-q", "--allow-empty", "-m", "Other work\n\nCoop-Task: bound-once")
-	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
-		t.Fatalf("done after the follow-up was unbound = %d, %v", code, err)
-	}
-}
-
-// Published history cannot drop a trailer, so a person's --force closes a task bound twice and its
-// log.md says so. An agent's close of the same task is still refused.
-func TestForcedDoneAcceptsASecondBinding(t *testing.T) {
-	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
-	repo, git := gitRepo(t)
-	root := t.TempDir()
-	id := "published-twice"
-	git("commit", "-q", "--allow-empty", "-m", "Fix login retries\n\nCoop-Task: "+id)
-	first := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
-	git("commit", "-q", "--allow-empty", "-m", "Cover the retry cap\n\nCoop-Task: "+id)
-	second := forkspace.GitOut(repo, "rev-parse", "--short", "HEAD")
-	taskWithCompletedChecklist(t, root, StateInProgress, id)
-
-	item, _ := mustCurrentTask(t, root, id)
-	if err := CompleteBoxTask(repo, root, item, ClaimActor{}); !errors.As(err, new(*ExtraBindingsError)) {
-		t.Fatalf("box completion = %v; want the second binding refused", err)
-	}
-	// --from-fork needs exactly one commit, so its refusal does not offer --force.
-	if got := trustedCompletionError(extraBindings(repo, id, []string{first, second}), item, claimOptions{fromFork: true}).Error(); strings.Contains(got, "--force") {
-		t.Errorf("--from-fork refusal offers --force:\n%s", got)
-	}
-	// A running loop's final review would take the close as a subject it cannot enroll.
-	loop, err := BeginCompletionWindows([]string{root})
+	snapshot, err := QueueSnapshot([]string{root})
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo, forceClose: true})
-	if code == 0 || err == nil || !strings.Contains(err.Error(), "Try again when the loop ends: coop tasks done "+id+" --force") {
-		t.Fatalf("done --force while a loop runs = %d, %v; want the wait", code, err)
+	if extra := ExtraBindings(repo, snapshot, []string{subject.ID}); len(extra) != 1 || extra[0].TaskID != id {
+		t.Errorf("startup report past the shallow file = %+v; want %s", extra, id)
 	}
-	if current, ok := mustCurrentTask(t, root, id); !ok || current.State != StateInProgress {
-		t.Fatal("refused task moved")
-	}
-	if err := loop.Abandon(); err != nil {
+	if err := os.Remove(filepath.Join(repo, ".git", "shallow")); err != nil {
 		t.Fatal(err)
 	}
-	out := captureStderr(t, func() {
-		code, err = tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo, forceClose: true})
-	})
-	if code != 0 || err != nil {
+	item, _ := mustCurrentTask(t, root, id)
+	if item.State != StateInProgress {
+		t.Fatal("refused task moved")
+	}
+
+	release, err := HoldLoopRun(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := completeTrustedTask(repo, root, item, completionOptions{force: true}); !errors.Is(err, errLoopRunning) {
+		t.Fatalf("forced close while a loop runs = %v; want the wait", err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := tasksFolderMoveWith(root, []string{id}, StateDone, "done", claimOptions{project: repo, forceClose: true}); code != 0 || err != nil {
 		t.Fatalf("done --force = %d, %v; want the close", code, err)
 	}
-	if want := "Its log.md names the 2 commits that carry its trailer. A later review cannot reopen it."; !strings.Contains(out, want) {
-		t.Errorf("output omitted %q:\n%s", want, out)
-	}
-	done, ok := mustCurrentTask(t, root, id)
-	if !ok || done.State != StateDone || !taskCompletionRecorded(root, done) {
-		t.Fatal("forced close did not reach done with its receipt")
-	}
+	done, _ := mustCurrentTask(t, root, id)
 	log := readFileString(filepath.Join(done.Dir, "log.md"))
-	for _, want := range []string{"Closed with coop tasks done --force. 2 commits carry its Coop-Task trailer (", first + " by ", second + " by ", "), so a later review cannot reopen it or an older task whose review spans them."} {
+	for _, want := range append([]string{"Closed with coop tasks done --force. 3 commits carry its Coop-Task trailer ("}, shas...) {
 		if !strings.Contains(log, want) {
 			t.Errorf("log.md omitted %q:\n%s", want, log)
 		}
@@ -242,9 +414,217 @@ func TestForcedDoneAcceptsASecondBinding(t *testing.T) {
 	}
 }
 
+// A task a final review reopened is itself a pending subject: closing its rework with a second
+// commit carrying its trailer is refused, since the review can reopen it only while one does.
+func TestDoneRefusesSeveralBindingsOnAPendingReviewSubject(t *testing.T) {
+	repo, root, _, assignment, subject, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, subject, plan, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := mustCurrentTask(t, root, subject.ID)
+	reopenForRework(t, repo, root, current)
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "Rework\n\nCoop-Task: "+subject.ID)
+	reworked, _ := mustCurrentTask(t, root, subject.ID)
+	var extra *ExtraBindingsError
+	if _, err := completeTrustedTask(repo, root, reworked, completionOptions{}); !errors.As(err, &extra) ||
+		!strings.Contains(extra.Why, "a loop's final review is still waiting on it") {
+		t.Fatalf("close of the reopened subject = %v; want it refused", err)
+	}
+	if after, _ := mustCurrentTask(t, root, subject.ID); after.State != reworked.State {
+		t.Fatalf("refused task moved to %s", after.State)
+	}
+}
+
+// A pending-review record of the task's own queue that Coop cannot read could be the review that
+// loses its verdict, so the close is refused.
+func TestDoneRefusesSeveralBindingsBesideAnUnreadableReviewRecord(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, _ := gitRepo(t)
+	root := filepath.Join(repo, ".agent", "tasks")
+	id := "fix-login-retries"
+	item := taskWithCompletedChecklist(t, root, StateInProgress, id)
+	threeBoundCommits(t, repo, id)
+	name, err := pendingReviewRecordName(root, "broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := OpenLeaseAuthorityRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AtomicWriteTaskFile(registry, name, []byte("{not-json\n")); err != nil {
+		registry.Close()
+		t.Fatal(err)
+	}
+	registry.Close()
+	var extra *ExtraBindingsError
+	if _, err := completeTrustedTask(repo, root, item, completionOptions{}); !errors.As(err, &extra) ||
+		!strings.Contains(extra.Why, "Coop could not read the pending final reviews") {
+		t.Fatalf("close beside an unreadable record = %v; want it refused", err)
+	}
+}
+
+// A person's --force on an unfinished checklist, for a task several commits carry the trailer of
+// with no review at risk, still names those commits in log.md.
+func TestForcedChecklistCloseNamesTheCommitsItAccepted(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, _ := gitRepo(t)
+	root := filepath.Join(repo, ".agent", "tasks")
+	id := "fix-login-retries"
+	item := taskForLease(t, root, StateInProgress, id)
+	if err := RewriteSubtasks(item.Dir, []Subtask{{Text: "the retry cap", Done: false}}); err != nil {
+		t.Fatal(err)
+	}
+	shas := threeBoundCommits(t, repo, id)
+	item, _ = mustCurrentTask(t, root, id)
+	if _, err := completeTrustedTask(repo, root, item, completionOptions{force: true}); err != nil {
+		t.Fatal(err)
+	}
+	done, _ := mustCurrentTask(t, root, id)
+	log := readFileString(filepath.Join(done.Dir, "log.md"))
+	for _, want := range append([]string{"checklist items", "3 commits carry its Coop-Task trailer ("}, shas...) {
+		if !strings.Contains(log, want) {
+			t.Errorf("log.md omitted %q:\n%s", want, log)
+		}
+	}
+}
+
+// A box's tasks_complete takes the same rule, and closes a task several commits carry the trailer
+// of only for the session that claimed it: never a task nobody holds, never from a loop box (which
+// holds no claim and whose loop is running).
+func TestBoxClosesATaskSeveralCommitsCarryOnlyWhenItHoldsIt(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, _ := gitRepo(t)
+	root := filepath.Join(repo, ".agent", "tasks")
+	me := selfActor(t, "claude")
+	for _, id := range []string{"unclaimed", "mine"} {
+		taskWithCompletedChecklist(t, root, StateTodo, id)
+		threeBoundCommits(t, repo, id)
+	}
+	if err := CompleteBoxTask(repo, root, mustTask(t, root, "unclaimed"), me); !strings.Contains(fmt.Sprint(err), "this session has not claimed it") {
+		t.Fatalf("box close of an unclaimed task = %v; want it refused", err)
+	}
+	if _, err := ClaimSessionTask(root, mustTask(t, root, "mine"), me); err != nil {
+		t.Fatal(err)
+	}
+	release, err := HoldLoopRun(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extra *ExtraBindingsError
+	if err := CompleteBoxTask(repo, root, mustTask(t, root, "unclaimed"), ClaimActor{}); !errors.As(err, &extra) || !extra.Running {
+		t.Fatalf("loop box close = %v; want the running loop named", err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompleteBoxTask(repo, root, mustTask(t, root, "mine"), me); err != nil {
+		t.Fatalf("box close of its own task = %v", err)
+	}
+	done := mustTask(t, root, "mine")
+	if done.State != StateDone || !strings.Contains(readFileString(filepath.Join(done.Dir, "log.md")), "Closed with 3 commits carrying its Coop-Task trailer") {
+		t.Fatalf("own task is %s, log:\n%s", done.State, readFileString(filepath.Join(done.Dir, "log.md")))
+	}
+	if current := mustTask(t, root, "unclaimed"); current.State != StateTodo {
+		t.Fatalf("refused task moved to %s", current.State)
+	}
+}
+
+// A second loop over the same checkout, reached through another path, does not hang on the run
+// lock: it waits briefly, then says another loop or a close holds it.
+func TestHoldLoopRunRefusesInsteadOfHanging(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	wait := loopRunWait
+	t.Cleanup(func() { loopRunWait = wait })
+	loopRunWait = 100 * time.Millisecond
+	repo, _ := gitRepo(t)
+	link := filepath.Join(t.TempDir(), "same-checkout")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatal(err)
+	}
+	release, err := HoldLoopRun(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	if _, err := HoldLoopRun(link); err == nil || !strings.Contains(err.Error(), "another coop loop is running over") {
+		t.Fatalf("second run mark = %v; want the plain refusal", err)
+	}
+	// Letter case on a case-insensitive volume names the same folder, so the same lock.
+	upper := filepath.Join(strings.ToUpper(filepath.Dir(repo)), filepath.Base(repo))
+	if info, err := os.Stat(upper); err != nil || upper == repo {
+		t.Logf("no case-insensitive spelling of %s here (%v)", repo, err)
+	} else if same, _ := os.Stat(repo); os.SameFile(info, same) {
+		if _, err := HoldLoopRun(upper); err == nil {
+			t.Fatal("another spelling of the checkout took a second run mark")
+		}
+	}
+}
+
+// The run lock is the checkout holding the queue being closed: a fork's queue closed from its
+// parent's project still meets the fork loop.
+func TestDoneMeetsTheLoopOfTheCheckoutHoldingTheQueue(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	parent, _ := gitRepo(t)
+	fork, _ := gitRepo(t)
+	root := filepath.Join(fork, ".agent", "tasks")
+	id := "fix-login-retries"
+	item := taskWithCompletedChecklist(t, root, StateInProgress, id)
+	threeBoundCommits(t, parent, id)
+	release, err := HoldLoopRun(fork)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = release() }()
+	var extra *ExtraBindingsError
+	if _, err := completeTrustedTask(parent, root, item, completionOptions{}); !errors.As(err, &extra) || !extra.Running {
+		t.Fatalf("close of the fork's queue while its loop runs = %v; want the running loop named", err)
+	}
+}
+
+// A history Coop cannot walk (here a deleted parent object; a huge commit or a long history does the
+// same) skips the count. A box can cause that, so its close is refused; a person's close goes
+// through, never stuck, and log.md says the commits were not counted.
+func TestCloseOnAHistoryCoopCannotWalk(t *testing.T) {
+	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
+	repo, _ := gitRepo(t)
+	root := filepath.Join(repo, ".agent", "tasks")
+	me := selfActor(t, "claude")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "Lost parent")
+	lost := forkspace.GitOut(repo, "rev-parse", "HEAD")
+	for _, id := range []string{"box-task", "host-task"} {
+		taskWithCompletedChecklist(t, root, StateTodo, id)
+		git(t, repo, "commit", "-q", "--allow-empty", "-m", "Work\n\nCoop-Task: "+id)
+	}
+	if err := os.Remove(filepath.Join(repo, ".git", "objects", lost[:2], lost[2:])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ClaimSessionTask(root, mustTask(t, root, "box-task"), me); err != nil {
+		t.Fatal(err)
+	}
+	if err := CompleteBoxTask(repo, root, mustTask(t, root, "box-task"), me); err == nil ||
+		!strings.Contains(err.Error(), "so a session cannot close it; block it for a person instead") {
+		t.Fatalf("box close on an unwalkable history = %v; want it refused", err)
+	}
+	if current := mustTask(t, root, "box-task"); current.State != StateInProgress {
+		t.Fatalf("refused task moved to %s", current.State)
+	}
+	if code, err := tasksFolderMoveWith(root, []string{"host-task"}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
+		t.Fatalf("host close on an unwalkable history = %d, %v; want the close", code, err)
+	}
+	done := mustTask(t, root, "host-task")
+	if log := readFileString(filepath.Join(done.Dir, "log.md")); !strings.Contains(log, "Closed without counting the commits carrying its Coop-Task trailer: Coop could not read the history (") {
+		t.Fatalf("log.md does not say the commits were not counted:\n%s", log)
+	}
+}
+
 // In emisar a person unblocked a task whose partial commit from before the decision was already
 // bound, and the work done after it carried the same trailer: nothing said the task was bound until
-// a final review failed on the second binding. Unblock and claim now say it, and how to commit more.
+// a final review failed on the second binding. Unblock and claim now say it: closing it yourself
+// takes more commits with its trailer, while a loop binds one commit per task.
 func TestUnblockAndClaimSayTheTaskIsAlreadyBound(t *testing.T) {
 	t.Setenv(TestLeaseAuthorityRootEnv, t.TempDir())
 	repo, git := gitRepo(t)
@@ -267,8 +647,8 @@ func TestUnblockAndClaimSayTheTaskIsAlreadyBound(t *testing.T) {
 	for _, args := range [][]string{{"unblock", id, "keep the importer"}, {"claim", id}} {
 		out := run(args...)
 		for _, want := range []string{
-			"Its commit " + bound[:12] + " already carries Coop-Task: " + id + ", and a task binds one commit.",
-			"Commit further work on it without that trailer, and name the task in the message body instead.",
+			"Its commit " + bound[:12] + " already carries Coop-Task: " + id + ".",
+			"If you close it yourself, further commits may carry that trailer too. If a loop will finish it, name the task in the message body instead: a loop binds one commit per task.",
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("coop tasks %s output lacks %q:\n%s", args[0], want, out)
@@ -278,10 +658,10 @@ func TestUnblockAndClaimSayTheTaskIsAlreadyBound(t *testing.T) {
 	if out := run("claim", "not-bound-yet"); strings.Contains(out, "already carries") {
 		t.Errorf("a task with no commit was called bound:\n%s", out)
 	}
-	// A second binding is named, with the remedy done gives when it refuses one.
+	// A second binding is named, and that only a close outside a loop finishes the task.
 	git("commit", "-q", "--allow-empty", "-m", "Finish the importer\n\nCoop-Task: "+id)
 	out := run("claim", id)
-	for _, want := range []string{"has 2 commits carrying \"Coop-Task: " + id + "\"", "Make the follow-up unbound by dropping its trailer, or file a new task for that work."} {
+	for _, want := range []string{"has 2 commits carrying \"Coop-Task: " + id + "\"", "A loop cannot finish it, since a loop binds one commit per task. Close it yourself with coop tasks done once no loop is running."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("claim of a task bound twice lacks %q:\n%s", want, out)
 		}

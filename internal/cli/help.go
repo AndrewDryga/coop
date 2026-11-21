@@ -1182,8 +1182,8 @@ Questions waiting for you: coop tasks decisions -i`,
 Usage: coop tasks done <id> [--tasks <path>]... [<options>]
 
 OPTIONS
-  --force      close it despite an unfinished checklist or a second commit
-               that carries its Coop-Task trailer
+  --force      close it despite an unfinished checklist, or with several
+               commits carrying its Coop-Task trailer while a review waits
   --from-fork  complete a fork's task whose commit is already on this branch
 
   Finish the checks and commit the task's work first.
@@ -1193,12 +1193,16 @@ OPTIONS
   Coop moves the task to done and removes its temporary files.
   The task's instructions, progress and saved evidence stay in the archive.
 
+  Follow-up commits may carry the task's trailer too. Coop closes it and
+  names them in its log, unless a loop is running in the checkout or a final
+  review waits on the task or on a task before those commits.
+
   --force is for a person at a terminal who has checked the work. Coop leaves
   the checklist as it is and notes what was open in the task's log.
-  It also closes a task that two commits carry the trailer of, when both are
-  already published. The log names them. A later review can then reopen
-  neither the task nor an older task whose review spans those commits, and
-  the close waits for a running loop to end.
+  It also closes a task with several commits carrying its trailer while a
+  final review waits, when the commits are already published. The log names
+  them, and a later review cannot reopen the task. The close still waits for
+  a running loop to end.
   Agents never use it.
 
   A fork's task completes when you merge the fork. If you brought the commit

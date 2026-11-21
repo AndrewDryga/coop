@@ -1462,6 +1462,71 @@ func workspacePendingReviews(workspace string) ([]PendingReviewRecord, error) {
 	}
 }
 
+// pendingReviewSubjectIDs names every task with final-review debt recorded for repo's workspace,
+// parked ones included. Unlike workspacePendingReviews it fails, as a loop's start does, on a record
+// that claims the workspace but does not validate, and on a record of root's queue that cannot be
+// read: a caller deciding whether a review can lose by something must then refuse. A record of
+// another queue that does not read is skipped, as a loop's start skips it.
+func pendingReviewSubjectIDs(repo, root string) ([]string, error) {
+	workspace, err := canonicalPendingReviewWorkspace(repo)
+	if err != nil {
+		return nil, err
+	}
+	prefix, err := pendingReviewRecordPrefix(root)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := OpenLeaseAuthorityRoot()
+	if err != nil {
+		return nil, err
+	}
+	defer registry.Close()
+	directory, err := registry.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	var ids []string
+	for {
+		entries, readErr := directory.ReadDir(256)
+		for _, entry := range entries {
+			name := entry.Name()
+			if !strings.HasSuffix(name, pendingReviewFileSuffix) {
+				continue
+			}
+			data, err := registry.ReadFile(name)
+			if errors.Is(err, os.ErrNotExist) {
+				continue // cleared since the listing
+			}
+			var record PendingReviewRecord
+			if err == nil {
+				if record, err = decodePendingReviewRecord(data); err != nil {
+					err = fmt.Errorf("decode pending-review record %q: %w", name, err)
+				}
+			}
+			switch {
+			case err != nil && strings.HasPrefix(name, prefix):
+				return nil, err
+			case err != nil || record.Plan.Workspace != workspace:
+				continue
+			}
+			if err := refuseOldPendingReview(record, name); err != nil {
+				return nil, err
+			}
+			if err := validatePendingReviewRecord(record); err != nil {
+				return nil, fmt.Errorf("validate pending-review record %q: %w", name, err)
+			}
+			ids = append(ids, record.Task.Ref.ID)
+		}
+		if errors.Is(readErr, io.EOF) {
+			return ids, nil
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+}
+
 // EnrollExistingPendingReviews binds receipt-valid host completions discovered by
 // completion-window recovery (and by the explicit --review-task import) to a review plan without
 // manufacturing a new completion receipt. It is idempotent for the exact generation.
