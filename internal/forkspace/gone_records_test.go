@@ -168,8 +168,10 @@ func TestGoneForkRecordsRemovesOnlyRecordsNothingCanUse(t *testing.T) {
 	}
 }
 
-// An empty folder is removed deepest first with a plain rmdir, so a lock file a coop command makes
-// after the check stops the removal there and survives, where RemoveAll would have deleted it.
+// An empty folder is removed deepest first with a plain rmdir, so a record a coop command makes after
+// the check stops the removal there and survives, where RemoveAll would have deleted it. A lock file
+// a coop command makes and holds after the check keeps the folder too; one nobody holds is unlinked
+// as one there before (TestGoneForkRecordsRemovesAFolderOfLockFilesAlone).
 func TestRemoveEmptyFolderKeepsAFileThatAppears(t *testing.T) {
 	root, err := PrivateStateRoot()
 	if err != nil {
@@ -185,9 +187,18 @@ func TestRemoveEmptyFolderKeepsAFileThatAppears(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer forks.Close()
-	writeGoneRecord(t, filepath.Join(folder, "perf.lock"), "") // made after the folder was judged empty
-	if removeEmptyFolder(forks, key) {
-		t.Fatal("a folder that gained a lock file was removed")
+	writeGoneRecord(t, filepath.Join(folder, "perf.lock"), "") // made, and locked, after the folder was judged empty
+	lock, err := os.Open(filepath.Join(folder, "perf.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	removed := removeEmptyFolder(forks, key)
+	_ = lock.Close()
+	if removed {
+		t.Fatal("a folder that gained a held lock file was removed")
 	}
 	if _, err := os.Lstat(filepath.Join(folder, "perf.lock")); err != nil {
 		t.Fatalf("the new lock file is gone: %v", err)
@@ -195,10 +206,82 @@ func TestRemoveEmptyFolderKeepsAFileThatAppears(t *testing.T) {
 	if err := os.Remove(filepath.Join(folder, "perf.lock")); err != nil {
 		t.Fatal(err)
 	}
+	writeGoneRecord(t, filepath.Join(folder, "executions", "1.json"), "{}") // a record made after the check
+	if removeEmptyFolder(forks, key) {
+		t.Fatal("a folder that gained a record was removed")
+	}
+	if _, err := os.Lstat(filepath.Join(folder, "executions", "1.json")); err != nil {
+		t.Fatalf("the new record is gone: %v", err)
+	}
+	if err := os.Remove(filepath.Join(folder, "executions", "1.json")); err != nil {
+		t.Fatal(err)
+	}
 	if !removeEmptyFolder(forks, key) {
 		t.Fatal("an empty folder was kept")
 	}
 	if _, err := os.Lstat(folder); !os.IsNotExist(err) {
 		t.Fatalf("the empty folder is still there: %v", err)
+	}
+}
+
+// Earlier builds left a removed fork's lock file behind, so a project's records folder could hold
+// lock files alone. Such a folder names no project and holds no record: once unchanged long enough
+// it counts as empty, and its removal locks and unlinks each lock file first. A lock a process holds
+// keeps the whole folder.
+func TestGoneForkRecordsRemovesAFolderOfLockFilesAlone(t *testing.T) {
+	now := time.Now()
+	root, err := PrivateStateRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := func(path string) string { return filepath.Join(root, "forks", forkRecordsKeyOf(path)) }
+	oldLocks, heldLocks, newLocks := folder("/old/locks"), folder("/held/locks"), folder("/new/locks")
+	for _, dir := range []string{oldLocks, heldLocks, newLocks} {
+		writeGoneRecord(t, filepath.Join(dir, "chat.lock"), "")
+		writeGoneRecord(t, filepath.Join(dir, "a.lock"), "")
+		if err := os.MkdirAll(filepath.Join(dir, "assignments"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := now.Add(-48 * time.Hour)
+	for _, dir := range []string{oldLocks, heldLocks} {
+		for _, path := range []string{filepath.Join(dir, "assignments"), dir} {
+			if err := os.Chtimes(path, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	found, err := GoneForkRecords(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ours GoneRecords
+	for _, key := range found.Empty {
+		switch key {
+		case filepath.Base(oldLocks), filepath.Base(heldLocks):
+			ours.Empty = append(ours.Empty, key)
+		case filepath.Base(newLocks):
+			t.Error("a folder of lock files changed moments ago counts as empty")
+		}
+	}
+	if len(ours.Empty) != 2 {
+		t.Fatalf("found %d of the two old folders of lock files: %v", len(ours.Empty), found.Empty)
+	}
+	lock, err := os.Open(filepath.Join(heldLocks, "a.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveGoneForkRecords(ours, now)
+	if err != nil || removed != 1 {
+		t.Fatalf("removed %d, %v; want only the folder no process holds a lock in", removed, err)
+	}
+	for path, want := range map[string]bool{oldLocks: false, filepath.Join(heldLocks, "a.lock"): true, filepath.Join(heldLocks, "chat.lock"): true, newLocks: true} {
+		if _, err := os.Lstat(path); (err == nil) != want {
+			t.Errorf("%s exists = %v, want %v", path, err == nil, want)
+		}
 	}
 }

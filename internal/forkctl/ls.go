@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"time"
@@ -100,7 +101,7 @@ func (c *Control) ForkLs(args []string) (int, error) {
 			listing("    %s", s.driftLine())
 		}
 		if s.Agent != "" && s.Agent != "?" {
-			listing("    Agent: %s", s.Agent)
+			listing("    Agent: %s", ui.SafeInline(s.Agent)) // a target the agent can write, parsed but not escaped
 		}
 		if s.Isolated {
 			listing("    Isolated: yes")
@@ -296,20 +297,42 @@ func (c *Control) forkLsJSON(repo string) (int, error) {
 func forkBranch(ws string) string { return forkspace.GitOut(ws, "rev-parse", "--abbrev-ref", "HEAD") }
 
 func forkUpdated(repo, ws string) string {
-	// Show the fork's OWN latest commit. A fresh fork has none, so `git log -1` would report the base
-	// commit it inherited from the clone — misreading a seconds-old fork as hours/days stale (and a
-	// truly idle fork as fresh). When there are no commits beyond the base, fall back to the clone's
-	// own age instead of the inherited time. Both read as ui.Ago: git's own "%cr" would say
-	// "0 seconds ago" where the clone's age says "just now".
+	// Show the fork's OWN latest activity. A fresh fork has no commit, so `git log -1` would report
+	// the base commit it inherited from the clone — misreading a seconds-old fork as hours/days stale
+	// (and a truly idle fork as fresh). So its own commits count only beyond the base, and so does the
+	// clone's own age. A chat or a loop that commits nothing is activity too: the agent note is
+	// rewritten when a launch starts and when an interactive session ends (NoteForkStart), and a loop
+	// writes its log. The latest of these reads as ui.Ago: git's own "%cr" would say "0 seconds ago"
+	// where the clone's age says "just now".
+	var latest time.Time
+	later := func(at time.Time) {
+		if at.After(latest) {
+			latest = at
+		}
+	}
 	if base := forkspace.GitOut(repo, "rev-parse", "HEAD"); base != "" {
 		if n := forkspace.GitOut(ws, "rev-list", "--count", base+"..HEAD"); n != "" && n != "0" {
 			if at, err := strconv.ParseInt(forkspace.GitOut(ws, "log", "-1", "--format=%ct"), 10, 64); err == nil {
-				return ui.Ago(time.Unix(at, 0))
+				later(time.Unix(at, 0))
 			}
 		}
 	}
 	if fi, err := os.Stat(ws); err == nil {
-		return ui.Ago(fi.ModTime())
+		later(fi.ModTime())
 	}
-	return "—"
+	// The note sits where the agent can write, so it is read through the same no-follow root as
+	// every fork note; its time is only shown.
+	if meta, err := tasks.OpenTaskMetadataRoot(filepath.Join(ws, ".coop")); err == nil {
+		if fi, err := meta.Lstat(filepath.Base(forkAgentFile(ws))); err == nil && fi.Mode().IsRegular() {
+			later(fi.ModTime())
+		}
+		_ = meta.Close()
+	}
+	if fi, err := os.Lstat(forkspace.LogPath(repo, filepath.Base(ws))); err == nil {
+		later(fi.ModTime())
+	}
+	if latest.IsZero() {
+		return "—"
+	}
+	return ui.Ago(latest)
 }

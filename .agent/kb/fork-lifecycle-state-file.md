@@ -3,7 +3,7 @@ name: fork-lifecycle-state-file
 description: one generation-bound owner-v2 file names a fork's detached worker by pid+start token; the parent writes it under the lock its child must take first; unreadable bytes stay held and only pid+start-token — never file age — may decide that worker is gone
 subsystem: fork
 sources: [internal/forkspace/state_root.go, internal/forkspace/reservation.go, internal/box/authority_mounts.go, internal/forkspace/forkspace.go, internal/forkspace/create.go, internal/forkspace/state.go, internal/forkspace/generation.go, internal/forkspace/execution.go, internal/forkspace/gitcommand.go, internal/forkctl/supervise.go, internal/box/network_recover.go, internal/forkctl/meta.go, internal/forkctl/ls.go, internal/forkctl/merge.go, internal/forkctl/status.go, internal/tasks/snapshot.go, internal/tasks/watch.go, internal/cli/cli.go, internal/cli/fork_cmd.go, internal/cli/fork_loop_report.go, internal/sessionsvc/workspace.go, internal/processidentity/identity.go, internal/forkctl/rm.go, internal/forkctl/worktree_clean.go, internal/forkspace/discard_stage.go, internal/ui/confirm.go, internal/forkspace/gone_records.go, internal/forkctl/gone_records.go]
-updated: 2026-11-20
+updated: 2026-11-21
 ---
 A fork's detached loop is recorded in ONE small file, `<name>.pid` in the project's fork records
 folder (`forkspace.StateDir`, `~/.local/state/coop/forks/<key>/`), read and
@@ -235,8 +235,17 @@ to a process or a container, or prints, it is supervision.
   even with `--yes` (`goneStdinIsTerminal`), lists, asks, and re-checks each folder at removal: an
   empty folder goes deepest first by plain rmdir, so a file made meanwhile stops it; a gone
   project's folder is kept if any of its `.lock` files is held (a non-blocking flock, released at
-  once) before `os.Root.RemoveAll`. Lock files are never read and a folder with only them is kept:
-  removing a lock file another process holds would split its lock.
+  once) before `os.Root.RemoveAll`. Lock files are never read. A folder of lock files alone counts as
+  empty (builds up to v15.2.1 left one per removed fork): `removeEmptyFolder` locks each without
+  waiting, keeps the folder if any is held, and unlinks them all while it holds them.
+- A lock file is unlinked only while its remover holds it: `RemoveLockLocked` at the end of
+  `coop fork rm`, the orphaned-state removal and merge's delete, and `--gone` above. Unlinking a
+  lock file another process waits on would split the lock, so `LockStateContext` and `TryLockState`
+  (`lockStateFile`) check after the flock that the path still names the file they hold, and lock the
+  one there now if not, as `LockServiceLaunch` does for its sweep. A landed or discarded fork's
+  candidate manifest and `candidate-history/` stay after its removal on purpose
+  (fork-candidate-review-rounds; `TestForkMergeAllReplaysZeroAheadLandBookkeeping` pins it); they
+  name the project's path, so `--gone` can still prove a deleted project's folder.
 - Builds up to v11.3.0 kept the records in `<repo>-forks/.coop`, which a box could write. Builds
   from v12.0.0 to v12.1.0 moved them into the private folder on first use. This build does not move
   them: `RequireNoOldForkRecords` (internal/forkspace/state.go) refuses the project, by name, when
@@ -305,6 +314,11 @@ folder's handle (`openStagedDiscardDir`), and `StageWorkspaceDiscardLocked` move
 no-replace `renameat` between the two folders' descriptors.
 
 ## Changelog
+- 2026-11-21 — a removed fork left its `<name>.lock`, so a folder of lock files alone never looked
+  unused to `--gone`. Removal now unlinks the lock it holds; lockers re-check the path after the
+  flock; `--gone` counts and removes folders of unheld lock files alone. Candidate history stays (by
+  design). `coop fork ls` reads the saved target and the agent
+  note's time (rewritten when a session ends) and the log's (`forkUpdated`).
 - 2026-11-20 — `coop fork rm` (and merge's delete) left `<name>.continue` behind; it now goes with the
   log in `RemoveLeftoverRecordsLocked`. The `.lock` stays (a held lock file is never removed), and
   a fork that never took a task writes no record naming its repository, so `--gone` cannot attribute

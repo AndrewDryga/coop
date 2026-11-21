@@ -4,12 +4,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -248,5 +250,65 @@ func TestForkLsMarksAnIsolatedFork(t *testing.T) {
 	}
 	if !strings.Contains(isolated, `"isolated":true`) || !strings.Contains(ordinary, `"isolated":false`) {
 		t.Errorf("fork ls --json isolated fields: %s and %s", isolated, ordinary)
+	}
+}
+
+// The loop's refusal of an isolated fork names the command that starts a new one with the target the
+// fork ran, account included, or its preset: a bare provider would run the default account, which may
+// need a sign-in the fork's own does not. The notes are the agent's to write, so a target that does
+// not parse falls back to the provider, and one with shell characters is quoted.
+func TestIsolatedRefusalLoopErrorKeepsTheForkTarget(t *testing.T) {
+	repo := initRepo(t)
+	rebase := tasks.ForkCandidateRebase{Onto: strings.Repeat("a", 40), Branch: "main", Cause: tasks.RebaseCauseIsolatedConflict}
+	for _, tc := range []struct {
+		name, agent, target, preset, want string
+	}{
+		{"saved account", "claude", "claude@personal_backup", "", "coop fork i claude@personal_backup --isolated"},
+		{"model and effort", "codex", "codex:gpt-5/high@work", "", "coop fork i codex:gpt-5/high@work --isolated"},
+		{"preset", "claude", "claude", "frontier", "coop fork i frontier --isolated"},
+		{"unparsable target", "claude", "claude@a@b", "", "coop fork i claude --isolated"},
+		{"shell characters", "claude", "claude:x;y@me", "", "coop fork i 'claude:x;y@me' --isolated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			writeTaskFile(t, filepath.Join(ws, ".coop", "agent"), tc.agent+"\n")
+			writeTaskFile(t, filepath.Join(ws, ".coop", "target"), tc.target+"\n")
+			if tc.preset != "" {
+				writeTaskFile(t, filepath.Join(ws, ".coop", "preset"), tc.preset+"\n")
+			}
+			var block *ui.UsageError
+			if err := IsolatedRefusalLoopError(repo, ws, "i", rebase); !errors.As(err, &block) {
+				t.Fatalf("IsolatedRefusalLoopError = %v, want a refusal block", err)
+			}
+			if !slices.Contains(block.Rows, [2]string{"Then start a new isolated fork from main:", tc.want}) {
+				t.Fatalf("rows %q, want the start command %q", block.Rows, tc.want)
+			}
+		})
+	}
+}
+
+// A reviewed task commit main already has, then reverted, is still refused: the rebase skips a
+// commit whose change is anywhere in main's history. The refusal says so, as the ordinary fork's
+// does, so a person who reverted it does not think they did what it asks.
+func TestIsolatedSkippedTaskCommitSaysARevertIsNotEnough(t *testing.T) {
+	removes := func(t *testing.T, ws, id string) {
+		if err := os.WriteFile(filepath.Join(ws, "README.md"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git(t, ws, "commit", "-qam", "remove the line\n\nCoop-Task: "+id)
+	}
+	repo, _, _, identity, c := prepareForkTaskCandidateHistory(t, "task-reverted-isolated", true, removes, nil)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "commit", "-qam", "main removes the line as well")
+	git(t, repo, "revert", "--no-edit", "HEAD")
+	writeTaskFile(t, filepath.Join(repo, "other.txt"), "other\n") // so main's tree is not the published one
+	git(t, repo, "add", "other.txt")
+	git(t, repo, "commit", "-qm", "other work")
+	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
+	if landed || err == nil || !strings.Contains(err.Error(), "would land changed on main") ||
+		!strings.Contains(err.Error(), "Reverting the change on main does not help: the commit must leave main's history.") {
+		t.Fatalf("merge after main reverted the task commit's change = (%v, %v)", landed, err)
 	}
 }

@@ -225,8 +225,12 @@ func ForkRmSafe(unmerged, dirty, force bool) error {
 
 // rmGuardRefusal is ForkRmSafe's refusal for `coop fork rm`: what deleting the fork would discard,
 // and the ways forward. name passed forkspace.ValidExistingName, so it is plain text.
-func rmGuardRefusal(name string, unmerged, dirty bool) error {
+func rmGuardRefusal(repo, name string, unmerged, dirty bool) error {
 	anyway := [2]string{"Delete it anyway:", "coop fork rm " + name + " --force"}
+	mergeIt := [2]string{"Merge it:", "coop fork merge " + name}
+	if forkNeedsRebase(repo, name) {
+		mergeIt = [2]string{"Rebase and review it:", "coop fork " + name + " --loop"}
+	}
 	switch {
 	case dirty && unmerged:
 		return ui.CommandFailed(fmt.Sprintf("Fork %q has uncommitted changes and unmerged commits", name),
@@ -236,8 +240,22 @@ func rmGuardRefusal(name string, unmerged, dirty bool) error {
 			"Deleting it would discard them.", [2]string{"Review it:", "coop fork review " + name}, anyway)
 	default:
 		return ui.CommandFailed(fmt.Sprintf("Fork %q has unmerged commits", name),
-			"Deleting it would discard them.", [2]string{"Merge it:", "coop fork merge " + name}, anyway)
+			"Deleting it would discard them.", mergeIt, anyway)
 	}
+}
+
+// forkNeedsRebase says whether the fork's last merge left an open request for its loop to rebase the
+// reviewed commits and review them again (a conflict, or a change that would land changed). Its merge
+// refuses until then, so a refusal that names merge as the way on sends the person in a circle. An
+// isolated fork's record is no such request (no agent may rebase it), and one the merge alone can
+// explain (a skipped task commit, a merge commit) leaves merge as the way on.
+func forkNeedsRebase(repo, name string) bool {
+	identity, ok, err := forkspace.ReadGeneration(repo, name)
+	if err != nil || !ok {
+		return false
+	}
+	rebase, requested, err := tasks.ReadForkCandidateRebase(repo, identity)
+	return err == nil && requested && (rebase.Cause == tasks.RebaseCauseConflict || rebase.Cause == tasks.RebaseCauseChanged)
 }
 
 // ForkCancelled turns a declined confirmation into the plain sentence a person expects, and refuses
@@ -424,6 +442,9 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return 1, errors.Join(currentErr, fmt.Errorf("orphaned fork %q changed while awaiting confirmation", name))
 		}
 		recovered, recoverErr := RecoverOrphanedGenerationLocked(repo, name, force)
+		if recovered && recoverErr == nil {
+			forkspace.RemoveLockLocked(repo, name)
+		}
 		unlock()
 		if recoverErr != nil {
 			return 1, fmt.Errorf("recover missing fork %q: %w", name, recoverErr)
@@ -453,7 +474,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 	}
 	initialUnmerged, initialDirty := ForkUnmerged(repo, ws), ForkWorktreeClean(ws) != nil
 	if err := ForkRmSafe(initialUnmerged, initialDirty, force); err != nil {
-		return 1, rmGuardRefusal(name, initialUnmerged, initialDirty)
+		return 1, rmGuardRefusal(repo, name, initialUnmerged, initialDirty)
 	}
 	initialIdentity, hasGeneration, err := forkspace.ReadGeneration(repo, name)
 	if err != nil {
@@ -560,6 +581,7 @@ func (c *Control) ForkRm(args []string) (int, error) {
 			return -1, fmt.Errorf("remove fork %s generation: %w", name, err)
 		}
 	}
+	forkspace.RemoveLockLocked(repo, name)
 	ui.OK("Deleted fork %s", name)
 	return 0, nil
 }

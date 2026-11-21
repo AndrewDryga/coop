@@ -339,9 +339,11 @@ func GoBackLabel(ws, label string) string {
 // the fork ready, it says the branch changed since and that a merge checks it again.
 func IsolatedRefusalLoopError(repo, ws, name string, rebase tasks.ForkCandidateRebase) error {
 	words := parentBranchWords(rebase.Branch)
-	agent := ReadForkAgent(ws)
-	if agent == "" {
-		agent = "<agent>"
+	// The target it last ran with, account included: a bare provider would run the default account,
+	// which may need a sign-in the fork's own account does not.
+	agent := "<agent>"
+	if target := ForkRunTarget(ws); target != "" {
+		agent = shellLine([]string{target})
 	}
 	discard := [][2]string{
 		{"Or, if you choose to discard its work, remove the fork:", "coop fork rm " + name + " --force"},

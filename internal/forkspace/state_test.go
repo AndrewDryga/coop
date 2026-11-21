@@ -934,6 +934,43 @@ func TestWorkerCleanupDoesNotWaitForStopLock(t *testing.T) {
 	unlock()
 }
 
+// A fork's removal unlinks its lock file while it holds it. A command that was waiting on that file
+// then holds it, sees the path no longer names it, and locks the file there now, so a later command
+// cannot take the fork's lock beside it.
+func TestLockTakenAgainWhenARemovalUnlinkedIt(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "proj")
+	unlock, err := LockState(repo, "perf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan func(), 1)
+	go func() {
+		unlockWaiter, err := LockState(repo, "perf")
+		if err != nil {
+			t.Error(err)
+			unlockWaiter = func() {}
+		}
+		waited <- unlockWaiter
+	}()
+	time.Sleep(200 * time.Millisecond) // the waiter has opened the old file and polls its lock
+	RemoveLockLocked(repo, "perf")
+	if pathExists(LockPath(repo, "perf")) {
+		t.Fatal("the removal left the lock file")
+	}
+	unlock()
+	var unlockWaiter func()
+	select {
+	case unlockWaiter = <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiter never took the lock")
+	}
+	defer unlockWaiter()
+	if other, ok := TryLockState(repo, "perf"); ok {
+		other()
+		t.Fatal("a later command took the fork's lock while the waiter held it")
+	}
+}
+
 // ClearPidIfMine removes the pidfile only when it names THIS process — never one a different
 // live worker owns (the orphan-cascade guard).
 func TestClearForkPidIfMine(t *testing.T) {

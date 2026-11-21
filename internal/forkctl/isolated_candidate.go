@@ -388,7 +388,10 @@ func isolatedLandedAsReviewed(name, branch string, candidate isolatedCandidate) 
 			return unverifiable(err)
 		}
 		if len(problems) > 0 {
-			cause = words + " already has the change of one of the fork's reviewed commits that belongs to a task, so that commit drops out and its task is left without a commit of its own. " + strings.Join(problems, " ")
+			// As skippedCommitError says for an ordinary fork: the rebase skips a commit whose change is
+			// anywhere in the branch's history, so a person who reverted it must hear that is not enough.
+			cause = words + " already has the change of one of the fork's reviewed commits that belongs to a task, so that commit drops out and its task is left without a commit of its own. " + strings.Join(problems, " ") +
+				" Reverting the change on " + words + " does not help: the commit must leave " + words + "'s history."
 		}
 	}
 	if cause == "" && reviewed != landed {

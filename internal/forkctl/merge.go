@@ -780,8 +780,11 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 		return err
 	}
 	if hasGeneration {
-		return forkspace.RemoveGenerationIfMatchesLocked(repo, identity)
+		if err := forkspace.RemoveGenerationIfMatchesLocked(repo, identity); err != nil {
+			return err
+		}
 	}
+	forkspace.RemoveLockLocked(repo, name)
 	return nil
 }
 
@@ -794,6 +797,15 @@ func destroyLandedFork(rt runtime.Runtime, repo, name string, approval *landedFo
 // the land back. Task landing resumes from its durable intent; trailers alone never complete tasks.
 func (c *Control) mergeOne(repo, img, name string, force bool) (outcome mergeOutcome, retErr error) {
 	return c.mergeOneMode(repo, img, name, force, false)
+}
+
+// noteRebasing says the rebase starts, after the blank line a header left for it (blankBeforeRebase).
+func (c *Control) noteRebasing(target string) {
+	if c.blankBeforeRebase {
+		c.blankBeforeRebase = false
+		ui.Note("")
+	}
+	ui.Note("Rebasing onto %s", target)
 }
 
 // mergeOneMode keeps the batch-only empty decision inside the same lifecycle lock as land-journal
@@ -934,12 +946,12 @@ func (c *Control) mergeOneMode(repo, img, name string, force, skipEmpty bool) (o
 			if err := writeLandIntent(repo, intent); err != nil {
 				return mergeOutcome{}, err
 			}
-			ui.Note("Rebasing onto %s", target)
+			c.noteRebasing(target)
 			finished, landed, err := c.advanceTaskLand(repo, ws, name, img, intent)
 			return finishLand(landed, finished.RebasedHead, err)
 		}
 	}
-	ui.Note("Rebasing onto %s", target)
+	c.noteRebasing(target)
 	// Rebase the fork onto the parent's HEAD inside the fork's OWN clone — an isolated candidate.
 	// The parent tree is NOT touched here, so a red gate below has nothing to roll back.
 	if err := c.rebaseForkOntoParent(repo, ws, name); err != nil {
@@ -1307,7 +1319,13 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	if _, s := c.host.forkCost(ws); s != "" {
 		ui.Note("  Reported cost: %s", s)
 	}
-	ui.Note("")
+	// One blank line ends the header: before the question, or, with --yes, before "Rebasing onto". A
+	// refusal before any rebase brings its own, so the header's would make two.
+	if yes {
+		c.blankBeforeRebase = true
+	} else {
+		ui.Note("")
+	}
 	if !approve("Merge these commits?", yes) {
 		ui.Note("")
 		ui.Note("Cancelled. No commits merged.")
@@ -1315,6 +1333,8 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 	}
 	result, err := c.mergeOne(repo, img, name, force)
 	defer result.approval.close()
+	owedBlank := c.blankBeforeRebase // no rebase started to print it
+	c.blankBeforeRebase = false
 	if result.landed {
 		// Say it BEFORE any error: the commits are in the parent branch either way.
 		ui.Note("")
@@ -1324,6 +1344,9 @@ func (c *Control) ForkMerge(args []string) (int, error) {
 		// A refusal draws its block and exits as that block says; the commits stayed where they were.
 		if block := mergeRefusal(err); block != nil && !result.landed {
 			return blockExit(block), block
+		}
+		if owedBlank {
+			ui.Note("")
 		}
 		// A landed fork whose queue reconciliation failed keeps its workspace and its exit code: the
 		// human is being asked to check the queue, so this is no moment to delete anything.

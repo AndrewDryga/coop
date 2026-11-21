@@ -92,6 +92,9 @@ type Control struct {
 	// afterLandCandidateRestore injects a crash after a red gate restored the reviewed workspace
 	// but before its restoring journal is retired.
 	afterLandCandidateRestore func() error
+	// blankBeforeRebase is a blank line coop fork merge --yes owes its header, printed with
+	// "Rebasing onto" (noteRebasing) so a refusal before any rebase, which brings its own, has one.
+	blankBeforeRebase bool
 }
 
 // New binds a control plane to the caller's config and its runtime as detected SO FAR — the zero

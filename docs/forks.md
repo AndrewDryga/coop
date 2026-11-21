@@ -255,7 +255,7 @@ different effect of `--force` on `coop fork merge`.
 co:op keeps each project's fork records in its private state until you delete the forks, so a
 repository you delete without `coop fork rm` leaves them behind. `coop fork rm --gone`, run from
 anywhere at a terminal, lists the repositories that no longer exist, then asks before it removes
-their records and any record folders that hold nothing. `--yes` skips the question but not the
+their records and any record folders that hold nothing but unused lock files. `--yes` skips the question but not the
 terminal. A repository counts as gone only when it and its forks folder are missing while the folder
 that held it still holds other files and is on the same disk as the folder above it. Any other
 repository keeps its records: one on a disk that isn't connected, one whose whole parent folder was
@@ -465,7 +465,8 @@ and start a new isolated fork from your current branch. Its loop has nothing to 
 can rebase it: `coop fork <name> --loop` refuses at once with the same ways out, and names the
 command that starts a new isolated fork if you choose to discard this one. The merge gives the same two ways out when
 the reviewed commits apply but would not land exactly the reviewed change, for example because your
-branch already has part of it or has the change of a task's commit; `coop fork ls` then shows it as
+branch already has part of it or has the change of a task's commit (as for an ordinary fork,
+reverting that change is not enough: the commit must leave your branch's history); `coop fork ls` then shows it as
 "changed after review" with those ways, and its loop refuses the same way. Both show only while your
 branch is where that merge found it: once you change the branch, `coop fork ls` shows the fork as
 ready again, and the next merge checks it anew. If co:op cannot tell which of an isolated fork's

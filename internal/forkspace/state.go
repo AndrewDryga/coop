@@ -269,12 +269,8 @@ func LockState(repo, name string) (func(), error) {
 // wait forever behind another process. The ordinary command path passes a
 // background context, so it blocks until the lock is free.
 func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
-	f, err := createStateFile(repo, name+".lock", os.O_RDWR)
+	f, err := lockStateFile(repo, name, func(f *os.File) error { return flockWaiting(ctx, f, syscall.LOCK_EX) })
 	if err != nil {
-		return nil, err
-	}
-	if err := flockWaiting(ctx, f, syscall.LOCK_EX); err != nil {
-		_ = f.Close()
 		return nil, err
 	}
 	return func() {
@@ -283,15 +279,71 @@ func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
 	}, nil
 }
 
+// lockRelinkAttempts bounds how often a lock is taken again because the file it locked was unlinked
+// meanwhile. Each unlink is a fork's removal or a person's coop fork rm --gone, so a second attempt
+// all but always holds.
+const lockRelinkAttempts = 8
+
+// lockStateFile opens fork name's lock file and locks it. A removed fork's lock file is unlinked
+// while its remover holds it (RemoveLockLocked, and coop fork rm --gone for a folder of lock files
+// alone), so a command that waited on that file would then hold a lock no later command can see.
+// Once locked, it checks that the path still names the file it holds, and else locks the one there
+// now, which createStateFile makes again.
+func lockStateFile(repo, name string, lock func(*os.File) error) (*os.File, error) {
+	for range lockRelinkAttempts {
+		f, err := createStateFile(repo, name+".lock", os.O_RDWR)
+		if err != nil {
+			return nil, err
+		}
+		if err := lock(f); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if lockStillLinked(repo, name, f) {
+			return f, nil
+		}
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
+	return nil, fmt.Errorf("lock fork %s: its lock file %s kept being removed while Coop waited for it", name, LockPath(repo, name))
+}
+
+// lockStillLinked says whether fork name's lock path names the file f. Only a path that is gone or
+// names another file says no: one Coop cannot read keeps the lock as before this check existed.
+func lockStillLinked(repo, name string, f *os.File) bool {
+	held, err := f.Stat()
+	if err != nil {
+		return true
+	}
+	linked, err := os.Lstat(LockPath(repo, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return err != nil || os.SameFile(held, linked)
+}
+
+// RemoveLockLocked unlinks a removed fork's lock file, which the caller still holds, then removes the
+// records folder if nothing is left in it. A command waiting on the unlinked file locks the new one
+// instead (lockStateFile). A landed or discarded fork's candidate history stays on purpose (see the
+// fork-candidate-review-rounds KB card). Best effort: a lock file left behind is one coop fork rm
+// --gone may remove later.
+func RemoveLockLocked(repo, name string) {
+	dir, err := openExistingStateDir(repo)
+	if err != nil {
+		return
+	}
+	_ = unix.Unlinkat(int(dir.Fd()), name+".lock", 0)
+	_ = dir.Close()
+	pruneEmptyStateFolders(repo)
+}
+
 // TryLockState is used by worker-exit cleanup: if stop already owns the lifecycle lock, the
 // worker must be allowed to exit rather than wait behind the command that's waiting for its exit.
 func TryLockState(repo, name string) (func(), bool) {
-	f, err := createStateFile(repo, name+".lock", os.O_RDWR)
+	f, err := lockStateFile(repo, name, func(f *os.File) error {
+		return syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	})
 	if err != nil {
-		return nil, false
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
 		return nil, false
 	}
 	return func() {
@@ -781,8 +833,8 @@ func RemoveWorkerState(repo, name string) error {
 // private copies its reviews kept. identity is the fork's, or the zero Identity for a fork that never had a generation,
 // which leaves only a log. The caller holds the lifecycle lock.
 //
-// The lock file stays. flock locks the file itself, so a command already waiting on it would lock a
-// file no later command can reach, and two commands could then hold the fork's lock at once.
+// The lock file stays here: the caller unlinks it last, with RemoveLockLocked, once nothing more of the
+// removal needs the lock.
 func RemoveLeftoverRecordsLocked(repo, name string, identity Identity) error {
 	state, err := OpenStateRoot(repo, "", false)
 	if errors.Is(err, os.ErrNotExist) {

@@ -2,10 +2,13 @@ package forkctl
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,6 +22,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // A marker whose private anchor no longer matches it leaves Coop unable to tell which approvals are
@@ -838,6 +842,111 @@ func TestForkUpdatedShowsOwnActivityNotInheritedBase(t *testing.T) {
 	git(t, ws, "commit", "-qm", "fork work")
 	if got := forkUpdated(repo, ws); got != "just now" {
 		t.Errorf("fork with its own commit should show that commit's recent time as just now, got %q", got)
+	}
+}
+
+// A chat that commits nothing is still the fork's latest activity, and the listing names the target
+// the fork runs, account included, not only its provider.
+func TestForkLsShowsLastSessionAndSavedTarget(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkAgent(ws, "claude"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveForkTarget(ws, "claude@personal_backup"); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Now().Add(-3 * time.Hour)
+	for _, path := range []string{forkAgentFile(ws), filepath.Join(ws, ".coop"), ws} {
+		if err := os.Chtimes(path, created, created); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := forkUpdated(repo, ws); got != "3 hours ago" {
+		t.Fatalf("UPDATED of a fork untouched since its creation = %q, want 3 hours ago", got)
+	}
+	NoteForkStart(ws, false, true, nil) // an interactive session ended
+	if got := forkUpdated(repo, ws); got != "just now" {
+		t.Errorf("UPDATED right after a session that committed nothing = %q, want just now", got)
+	}
+	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	if s := c.gatherForkStatus(repo, "chat", tasks.ReadProjectSnapshot(repo, nil)); s.Agent != "claude@personal_backup" {
+		t.Errorf("listed agent = %q, want the saved target claude@personal_backup", s.Agent)
+	}
+}
+
+// Plain coop fork rm of a fork whose merge found a conflict does not send the person to coop fork
+// merge, which refuses until the loop rebases it: it names the loop.
+func TestForkRmOfAConflictedForkNamesTheLoop(t *testing.T) {
+	edit := func(t *testing.T, ws, id string) {
+		writeTaskFile(t, filepath.Join(ws, "README.md"), "fork\n")
+		git(t, ws, "commit", "-qam", "fork edits the readme\n\nCoop-Task: "+id)
+	}
+	repo, _, _, identity, c := prepareForkTaskCandidateHistory(t, "conflicted", false, edit, nil)
+	c.cfg.RepoOverride = repo
+	writeTaskFile(t, filepath.Join(repo, "README.md"), "parent\n")
+	git(t, repo, "commit", "-qam", "parent edits the readme")
+	if landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false); landed || err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Fatalf("merge = (%v, %v), want the conflict refusal", landed, err)
+	}
+	var block *ui.UsageError
+	if code, err := c.ForkRm([]string{identity.Name}); code != 1 || !errors.As(err, &block) ||
+		!slices.Contains(block.Rows, [2]string{"Rebase and review it:", "coop fork " + identity.Name + " --loop"}) ||
+		slices.Contains(block.Rows, [2]string{"Merge it:", "coop fork merge " + identity.Name}) {
+		t.Fatalf("coop fork rm of a conflicted fork = (%d, %v)", code, err)
+	}
+}
+
+// A removed fork leaves no lock file behind, whether coop fork rm or merge's delete removed it. Only
+// a landed fork's candidate history stays, on purpose (TestForkMergeAllReplaysZeroAheadLandBookkeeping);
+// coop fork rm --gone removes a folder of lock files alone.
+func TestRemovedForkLeavesNoLockFile(t *testing.T) {
+	plain := initRepo(t)
+	if _, err := forkspace.Setup(plain, "chat"); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := forkspace.LockState(plain, "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	c := &Control{cfg: &config.Config{RepoOverride: plain, ConfigDir: t.TempDir()}}
+	if code, err := c.ForkRm([]string{"chat", "--yes"}); code != 0 || err != nil {
+		t.Fatalf("coop fork rm = (%d, %v)", code, err)
+	}
+	if pathExists(forkspace.LockPath(plain, "chat")) {
+		t.Fatal("coop fork rm left the fork's lock file")
+	}
+
+	repo, ws, _, identity, landing := prepareForkTaskCandidate(t, "gone")
+	result, err := landing.mergeOne(repo, "", identity.Name, false)
+	t.Cleanup(result.approval.close)
+	if err != nil || !result.landed {
+		t.Fatalf("merge = %+v, %v", result, err)
+	}
+	if !pathExists(forkspace.LockPath(repo, identity.Name)) {
+		t.Fatal("the fixture has no lock file, so this proves nothing")
+	}
+	if err := destroyLandedFork(runtime.Runtime{}, repo, identity.Name, result.approval); err != nil {
+		t.Fatal(err)
+	}
+	if pathExists(ws) {
+		t.Fatal("the fork survived its removal")
+	}
+	var left []string
+	history := filepath.Join(forkspace.StateDir(repo), "candidate-history") + string(filepath.Separator)
+	candidate := filepath.Join(forkspace.StateDir(repo), identity.Name+"."+string(identity.Generation)+".candidate")
+	_ = filepath.WalkDir(forkspace.StateDir(repo), func(path string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() && !strings.HasPrefix(path, history) && !strings.HasPrefix(path, candidate) {
+			left = append(left, path)
+		}
+		return nil
+	})
+	if len(left) > 0 {
+		t.Fatalf("records other than the kept candidate history left after merge's delete: %q", left)
 	}
 }
 

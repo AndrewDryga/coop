@@ -59,6 +59,26 @@ func ReadForkTarget(ws string) string {
 	return agent
 }
 
+// ForkRunTarget is what a person names to run this fork's agent as it last ran, for advice such as
+// a new fork's start command: its preset, else its saved target with model, effort and account,
+// else its provider; "" when the fork has none. The fork's agent can write these notes and the
+// result goes into commands a person copies, so the caller quotes it (shellLine); a preset name
+// that does not load is refused by name when that command runs, as a resume refuses it.
+func ForkRunTarget(ws string) string {
+	if name := ReadForkPreset(ws); name != "" {
+		return name
+	}
+	return forkTargetText(ws)
+}
+
+// forkTargetText is the fork's saved target (ReadForkTarget) once it parses, else its provider.
+func forkTargetText(ws string) string {
+	if target, err := agents.ParseTarget(ReadForkTarget(ws)); err == nil {
+		return target.String()
+	}
+	return ReadForkAgent(ws)
+}
+
 func forkPresetFile(ws string) string { return filepath.Join(ws, ".coop", "preset") }
 
 // SaveForkPreset notes the preset a fork was made with, or last switched to, beside its saved
@@ -102,6 +122,11 @@ func NoteForkStart(ws string, firstStart, agentRan bool, err error) {
 	case agentRan:
 		_ = ClearForkStartError(ws)
 		_ = ClearForkLoopError(ws)
+		// Written again as the session ends, so coop fork ls shows this as the fork's last activity
+		// (forkUpdated) even when the session committed nothing.
+		if agent := ReadForkAgent(ws); agent != "" {
+			_ = SaveForkAgent(ws, agent)
+		}
 	case firstStart && err != nil:
 		_ = saveForkMeta(ws, forkStartErrorFile(ws), startFailure(err))
 	}

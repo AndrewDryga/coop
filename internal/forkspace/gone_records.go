@@ -33,9 +33,9 @@ const goneRecordsReadLimit = 1 << 20
 // and the folders that hold no file at all.
 type GoneRecords struct {
 	Projects []GoneProject
-	// Empty is the folders that hold no file at any depth, unchanged for emptyRecordsAge. A records
-	// folder holds a file for every fork, lock and running command, so an empty one protects nothing
-	// whichever project it belongs to.
+	// Empty is the folders that hold no file at any depth but lock files no process holds, unchanged
+	// for emptyRecordsAge. A records folder holds a record for every fork and running command, so one
+	// without any protects nothing whichever project it belongs to.
 	Empty []string
 	// Kept counts the other folders: their project exists, or no record says which project it is.
 	Kept int
@@ -123,24 +123,53 @@ func RemoveGoneForkRecords(found GoneRecords, now time.Time) (removed int, err e
 	return removed, nil
 }
 
-// removeEmptyFolder removes the records folder key and the folders in it, deepest first, each with
-// a plain rmdir: a file a coop command creates meanwhile, such as its lock, makes the removal fail
-// there and keeps it, where a re-check followed by RemoveAll would delete it. It says whether the
-// whole folder went.
+// removeEmptyFolder removes the records folder key, which holds no file but lock files, and the
+// folders in it, deepest first, each with a plain rmdir: a file a coop command creates meanwhile
+// makes the removal fail there and keeps it, where a re-check followed by RemoveAll would delete it.
+// Each lock file is locked without waiting first, and all of them are unlinked while held, so a
+// lock a process holds keeps the whole folder, and a coop command that opened one meanwhile finds it
+// unlinked once it holds it and locks a new one (lockStateFile). It says whether the whole folder went.
 func removeEmptyFolder(forks *os.Root, key string) bool {
-	var dirs []string
+	var dirs, locks []string
 	err := fs.WalkDir(forks.FS(), key, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() {
+		switch {
+		case entry.IsDir():
+			dirs = append(dirs, path)
+		case entry.Type().IsRegular() && strings.HasSuffix(path, ".lock"):
+			locks = append(locks, path)
+		default:
 			return errors.New("not empty")
 		}
-		dirs = append(dirs, path)
 		return nil
 	})
 	if err != nil {
 		return false
+	}
+	var held []*os.File
+	defer func() {
+		for _, f := range held {
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+			_ = f.Close()
+		}
+	}()
+	for _, path := range locks {
+		f, err := forks.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return false
+		}
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			_ = f.Close()
+			return false
+		}
+		held = append(held, f)
+	}
+	for _, path := range locks {
+		if err := forks.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
 		if forks.Remove(dirs[i]) != nil {
@@ -248,7 +277,10 @@ func goneRecordsFolder(forks *os.Root, key string, now time.Time) (GoneProject, 
 	if err != nil {
 		return project, false, err
 	}
-	if len(files) == 0 {
+	// Lock files are empty and name no project. A fork's removal unlinks its own (RemoveLockLocked),
+	// but earlier builds left one behind for every removed fork, so a folder of lock files alone holds
+	// no record.
+	if !slices.ContainsFunc(files, func(file string) bool { return !strings.HasSuffix(file, ".lock") }) {
 		return project, now.Sub(newest) >= emptyRecordsAge, nil
 	}
 	path := ""

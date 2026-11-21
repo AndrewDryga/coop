@@ -1941,6 +1941,34 @@ func TestForkMergeYesPrintsOneBlankLineBetweenSections(t *testing.T) {
 	}
 }
 
+// A refusal before any rebase brings its own blank line (UsageError.Render), so coop fork merge
+// --yes, which asks nothing, leaves its header without one: the two together printed two blank lines
+// where "Rebasing onto" stands when a rebase starts.
+func TestForkMergeYesRefusalBeforeRebasePrintsOneBlankLine(t *testing.T) {
+	repo := initRepo(t)
+	ws, err := forkspace.Setup(repo, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(ws, "a.txt"), "a\n")
+	git(t, ws, "add", "-A")
+	git(t, ws, "commit", "-qm", "a")
+	writeTaskFile(t, filepath.Join(ws, "a.txt"), "uncommitted\n") // the merge refuses to rebase over it
+	c := &Control{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
+	var err2 error
+	stderr := captureStderr(t, func() { _, err2 = c.ForkMerge([]string{"a", "--yes"}) })
+	var block *ui.UsageError
+	if !errors.As(err2, &block) || !strings.Contains(block.Headline, "uncommitted changes") {
+		t.Fatalf("ForkMerge = %v, want the uncommitted-changes refusal", err2)
+	}
+	if want := "Merge fork a into main\n  1 commit · +1 −0\n"; stderr != want {
+		t.Fatalf("ForkMerge printed\n%q\nbefore its refusal, want\n%q", stderr, want)
+	}
+	if !strings.HasPrefix(block.Render(ui.Palette{}), "\n✗ ") {
+		t.Fatal("the refusal no longer brings its own blank line, so the header needs one again")
+	}
+}
+
 // Task (security 1): every host-side git command coop runs against the PARENT repo must be
 // hardened too — the parent's .git (config + hooks) is agent-writable on a normal box run, so a
 // poisoned knob must not execute host code when coop reads/merges/diffs it. Each case fires a

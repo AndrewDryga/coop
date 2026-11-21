@@ -21,6 +21,7 @@ var goneStdinIsTerminal = func() bool { return ui.IsTerminal(os.Stdin) }
 var errGoneNeedsTerminal = &ui.UsageError{
 	Headline: "coop fork rm --gone needs a person at a terminal",
 	Cause:    "It removes fork records of every project on this machine, with no undo, so --yes does not replace a person.",
+	Rows:     [][2]string{{"Run it in a terminal:", "coop fork rm --gone"}},
 }
 
 // removeGoneRecords is `coop fork rm --gone`: it names the fork records of projects that no longer

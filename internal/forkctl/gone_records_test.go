@@ -1,14 +1,17 @@
 package forkctl
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/fsidentity"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 // `coop fork rm --gone` names the repositories whose fork records it would remove before it asks,
@@ -54,8 +57,10 @@ func TestForkRmGoneListsThenRemovesOnConfirmation(t *testing.T) {
 	goneStdinIsTerminal = func() bool { return terminal }
 	t.Cleanup(func() { goneStdinIsTerminal = old })
 	for _, args := range [][]string{{"--gone"}, {"--gone", "--yes"}} {
-		if code, err := c.ForkRm(args); code != 2 || err == nil || !strings.Contains(err.Error(), "needs a person at a terminal") {
-			t.Fatalf("coop fork rm %s without a terminal = (%d, %v), want the person-only refusal", strings.Join(args, " "), code, err)
+		var block *ui.UsageError
+		if code, err := c.ForkRm(args); code != 2 || !errors.As(err, &block) || !strings.Contains(block.Headline, "needs a person at a terminal") ||
+			!slices.Contains(block.Rows, [2]string{"Run it in a terminal:", "coop fork rm --gone"}) {
+			t.Fatalf("coop fork rm %s without a terminal = (%d, %v), want the person-only refusal naming the command", strings.Join(args, " "), code, err)
 		}
 	}
 	if _, err := os.Lstat(records); err != nil {

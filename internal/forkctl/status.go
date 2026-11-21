@@ -52,7 +52,8 @@ type forkStatus struct {
 // once for all its forks.
 func (c *Control) gatherForkStatus(repo, name string, projectSnapshot tasks.ProjectSnapshot) forkStatus {
 	ws := forkspace.Workspace(repo, name)
-	agent := ReadForkAgent(ws)
+	// The saved target, so the listing names the account and model the fork runs, not only its provider.
+	agent := forkTargetText(ws)
 	if agent == "" {
 		agent = "?" // a fork made before agents were remembered
 	}
