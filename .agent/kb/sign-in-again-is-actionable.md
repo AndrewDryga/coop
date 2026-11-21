@@ -3,7 +3,7 @@ name: sign-in-again-is-actionable
 description: refreshable OAuth stays usable; "Sign in again" means the stored login cannot recover (a provider-refused grant included) and every command words it the same — run the coop login it names
 subsystem: credentials
 sources: [internal/agent/agent.go, internal/agent/target.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/grok.go, internal/box/profiles.go, internal/box/account_renewal.go, internal/box/native_account.go, internal/box/native_broker.go, internal/cli/profiles.go, internal/cli/commands.go, internal/cli/modelscache.go, internal/cli/usage.go, internal/cli/rotation.go, internal/sessionsvc/acp.go, internal/agent/native_credentials.go]
-updated: 2026-11-17
+updated: 2026-11-21
 ---
 `coop credentials` lists an account whose OAuth access token has expired but whose refresh authority
 is valid as healthy: Coop renews it on use, so the row carries no warning. A marker or canonical
@@ -18,7 +18,10 @@ One local answer, worded once. `box.ProfileSignIn` decides the state from local 
 (`Sign in again: coop login grok@default`). The listing and detail view, the model menu's refresh
 cause (`fetchModelCatalog`, `safeModelProbeCause`), `coop usage`'s Limits row, the launch heads-ups
 (`nudgeIfUnauthed`, `selectRunProfile`, a new default) and a launch refused in `planNativeAccounts`
-(what an editor's warm box prints) all use it. The quota adapters say only `credential refresh
+(what an editor's warm box prints) all use it. The model menu reads a catalog with the active
+account only while it is signed in; otherwise `modelCatalogAccount` takes the first runnable account
+in failover order (`accountsFor`) and notes it beside the dead account's remedy, and refuses with
+that remedy only when no account can run. The quota adapters say only `credential refresh
 unavailable` for a failed renewal, and `coop usage` asks `ProfileSignIn` again after its lookup.
 Rotation's repair errors classify with it but keep their own sentence, and the ACP control's
 in-editor `Sign in to <target> on the host` notices are separate.
@@ -55,6 +58,7 @@ A healthy row's `refreshed <age>` reads the marker mtime through `box.ProfileTok
 behind provider expiries.
 
 ## Changelog
+- 2026-11-21 — the model menu falls back to another signed-in account (`modelCatalogAccount`) instead of refusing while one works.
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K5-5; checked with grep).
 - 2026-11-17 — the adapter check is `NativeCredentials().Inspect` on the canonical record;
   `StoredCredentialStatus` had no caller and was removed (audit AG-5).

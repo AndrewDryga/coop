@@ -468,7 +468,9 @@ fast Codex model to one without <code>+fast</code> keeps the tier it started wit
 name a model. <code>coop loop</code> shows the model reported by the agent at the start of each iteration.</p>
 <p><code>coop models</code> lists the models for each agent. Model IDs change, so co:op passes the ID to the
 provider&#39;s CLI without checking it against a fixed catalog, and the CLI reports its own error for
-an invalid one.</p>
+an invalid one. The lists are refreshed with the agent&#39;s default account. If that account needs a
+sign-in, co:op uses the next signed-in account in the order runs fail over to and says which one it
+used.</p>
 </section><section class="doc-section reference-section" id="second-opinions"><h2>Second opinions</h2>
 <p>Add read-only peers when you want the lead to get another model&#39;s opinion on difficult or risky
 decisions. The lead decides whether to ask and how to use the answer, and it makes all changes

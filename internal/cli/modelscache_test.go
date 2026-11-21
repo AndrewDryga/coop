@@ -121,6 +121,39 @@ func TestGrokModelDiscoveryNeverUsesHostLogin(t *testing.T) {
 	}
 }
 
+// A default account that needs a new sign-in must not freeze the menu while another account works:
+// the catalog is read with the next account runs fail over to, and the note names it beside the
+// dead account's remedy. With every account dead the refresh is refused with that remedy, as before.
+func TestModelCatalogFallsBackToAnotherSignedInAccount(t *testing.T) {
+	cfg := freshConfig(t)
+	writeAccount(t, cfg, "claude", "personal", claudeExpiredCredential)
+	writeAccount(t, cfg, "claude", "personal_backup", claudeExpiredCredential)
+	writeAccount(t, cfg, "claude", "work", claudeReadyCredential)
+	setDefault(t, cfg, "claude", "personal")
+
+	account, note, err := modelCatalogAccount(cfg, "claude")
+	if err != nil || account != "work" {
+		t.Fatalf("account = %q, %v; want the signed-in work account", account, err)
+	}
+	if want := "Reading Claude models with claude@work. Sign in again: coop login claude@personal"; note != want {
+		t.Fatalf("note = %q, want %q", note, want)
+	}
+
+	// Every account dead: the real fetch is refused before any runtime, naming the default's login.
+	cfg = freshConfig(t)
+	writeAccount(t, cfg, "claude", "personal", claudeExpiredCredential)
+	writeAccount(t, cfg, "claude", "work", claudeExpiredCredential)
+	setDefault(t, cfg, "claude", "personal")
+	if account, note, err := modelCatalogAccount(cfg, "claude"); err == nil || account != "" || note != "" {
+		t.Fatalf("all dead: account = %q, note = %q, err = %v", account, note, err)
+	}
+	_, err = (&app{cfg: cfg}).fetchModelCatalog("claude")
+	var refusal modelFetchError
+	if !errors.As(err, &refusal) || !refusal.refused || refusal.cause != "Sign in again: coop login claude@personal" {
+		t.Fatalf("all dead: %v", err)
+	}
+}
+
 func TestGrokMissingCatalogRetainsGoodCache(t *testing.T) {
 	a := modelsApp(t)
 	if err := writeModelsCache(a.cfg, "grok", []agents.Model{{ID: "last-good"}}); err != nil {

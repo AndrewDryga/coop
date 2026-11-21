@@ -300,7 +300,9 @@ name a model. `coop loop` shows the model reported by the agent at the start of 
 
 `coop models` lists the models for each agent. Model IDs change, so co:op passes the ID to the
 provider's CLI without checking it against a fixed catalog, and the CLI reports its own error for
-an invalid one.
+an invalid one. The lists are refreshed with the agent's default account. If that account needs a
+sign-in, co:op uses the next signed-in account in the order runs fail over to and says which one it
+used.
 
 ## Second opinions
 

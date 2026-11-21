@@ -50,7 +50,7 @@ func TestModelProbeAdmissionPreservesPolicyAndIsolation(t *testing.T) {
 			var wg sync.WaitGroup
 			for range 2 {
 				wg.Go(func() {
-					probe, target, err := a.admitModelProbe(t.Context(), "claude", repo, io.Discard)
+					probe, target, err := a.admitModelProbe(t.Context(), "claude", "selected", repo, io.Discard)
 					if (err != nil) != (tc.wantError != "") || err != nil && !strings.Contains(err.Error(), tc.wantError) {
 						t.Errorf("admission error = %v, want %q", err, tc.wantError)
 					}
@@ -86,7 +86,7 @@ func TestModelProbeRefusesToBuildAProject(t *testing.T) {
 			got = options
 			return nil, nil
 		}}
-	if _, _, err := a.admitModelProbe(t.Context(), "claude", t.TempDir(), io.Discard); err != nil {
+	if _, _, err := a.admitModelProbe(t.Context(), "claude", "default", t.TempDir(), io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if got.ProjectBuild != box.RefuseProjectBuild {

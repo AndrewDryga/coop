@@ -156,28 +156,50 @@ func (a *app) fetchModelCatalog(agent string) ([]agents.Model, error) {
 	if a.acpModels != nil {
 		return a.acpModels(agent)
 	}
-	// An ACP catalog comes from a session the provider has to authorize, so an account that needs a
-	// sign-in can only fail — say so, as coop credentials does, instead of paying for a container.
-	account := a.cfg.ActiveProfile(agent)
-	if need := box.ProfileSignIn(a.cfg, agent, account, time.Now()); need != agents.SignedIn {
-		// refused: no provider was asked, so the cache has nothing to back off from. Recording it
-		// kept the menu saying "Sign in" for an hour after the sign-in.
-		return nil, modelFetchError{cause: need.Remedy(agent + "@" + account), refused: true}
+	account, note, err := modelCatalogAccount(a.cfg, agent)
+	if err != nil {
+		return nil, err
 	}
-	return a.fetchACPModelCatalog(agent, spec)
+	if note != "" {
+		ui.Note("%s", note)
+	}
+	return a.fetchACPModelCatalog(agent, account, spec)
+}
+
+// modelCatalogAccount picks the account a catalog is read with: the active one while it is signed
+// in, else the first runnable account in the order runs fail over (accountsFor), so one dead
+// sign-in does not freeze the menu while another account works. note names the account used and
+// the dead one's remedy when it fell back. An ACP catalog comes from a session the provider has to
+// authorize, so when no account can run the refresh is refused with the active account's remedy, as
+// coop credentials words it, instead of paying for a container.
+func modelCatalogAccount(cfg *config.Config, agent string) (account, note string, err error) {
+	active := cfg.ActiveProfile(agent)
+	need := box.ProfileSignIn(cfg, agent, active, time.Now())
+	if need == agents.SignedIn {
+		return active, "", nil
+	}
+	for _, other := range accountsFor(cfg, agent) {
+		if other != active {
+			return other, fmt.Sprintf("Reading %s models with %s. %s", titleName(agent),
+				agents.DisplayTarget(agent+"@"+other), need.Remedy(agent+"@"+active)), nil
+		}
+	}
+	// refused: no provider was asked, so the cache has nothing to back off from. Recording it
+	// kept the menu saying "Sign in" for an hour after the sign-in.
+	return "", "", modelFetchError{cause: need.Remedy(agent + "@" + active), refused: true}
 }
 
 // fetchACPModelCatalog launches one inner ACP box, asks for a fresh session's advertised models,
 // then tears down both its process group and any container generation carrying this exact
 // supervisor id. It bypasses the public supervisor: a short-lived probe needs no warm pool,
 // restart replay, or editor control layer.
-func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec) ([]agents.Model, error) {
+func (a *app) fetchACPModelCatalog(agent, account string, catalog agents.ModelCatalogSpec) ([]agents.Model, error) {
 	if err := a.ensureRuntime(); err != nil {
 		return nil, err
 	}
 	repo, err := box.ResolveRepo(a.cfg.RepoOverride)
 	if err != nil {
-		return nil, modelProbeRefusal(agents.Target{Provider: agent, Accounts: []string{a.cfg.ActiveProfile(agent)}}, err, "")
+		return nil, modelProbeRefusal(agents.Target{Provider: agent, Accounts: []string{account}}, err, "")
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -187,7 +209,7 @@ func (a *app) fetchACPModelCatalog(agent string, catalog agents.ModelCatalogSpec
 	launchCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	stderr := &tailBuffer{max: 16 << 10}
-	probe, target, err := a.admitModelProbe(launchCtx, agent, repo, stderr)
+	probe, target, err := a.admitModelProbe(launchCtx, agent, account, repo, stderr)
 	if err != nil {
 		return nil, modelProbeRefusal(target, err, stderr.String())
 	}
@@ -254,9 +276,10 @@ func (a *app) cleanupModelProbe(repo, superID string, filtered bool) error {
 
 // Each catalog has its own account, config and capture: admission mutates the resolved posture,
 // and catalogs refresh concurrently. Unlike an editor, a probe never admits toolbar alternatives.
-func (a *app) admitModelProbe(ctx context.Context, agent, repo string, stderr io.Writer) (*app, agents.Target, error) {
+func (a *app) admitModelProbe(ctx context.Context, agent, account, repo string, stderr io.Writer) (*app, agents.Target, error) {
 	probe := &app{cfg: a.cfg.Clone(), rt: a.rt, rtSet: true, network: a.network, admitNetwork: a.admitNetwork}
-	target := agents.Target{Provider: agent, Accounts: []string{probe.cfg.ActiveProfile(agent)}}
+	probe.cfg.SetActiveProfile(agent, account)
+	target := agents.Target{Provider: agent, Accounts: []string{account}}
 	probe.acpNetworkTargets = []agents.Target{target}
 	options := probe.network.admission()
 	options.ProjectBuild = box.RefuseProjectBuild // a catalog refresh must not start a project build
