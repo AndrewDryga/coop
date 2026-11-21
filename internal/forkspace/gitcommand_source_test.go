@@ -18,8 +18,9 @@ import (
 // reviewed. TrustedGitCommand additionally needs caller-owned metadata; ordinary
 // new call sites use GitCommand, which constructs the trusted view itself.
 var reviewedGitConstructors = map[string]string{
-	"internal/box/supervisor/main.go:run:exec.Command(args[1], args[2:]...)":                                                   "Container-only supervisor launches the explicit provider command; never a host Git inspection path.",
-	"internal/sessionsvc/acp.go:startChildWithRunID:exec.Command(executable, \"fork\", bound.ForkName, \"acp\", bound.Target)": "Direct Coop child launch; optional test injection has no production constructor alias.",
+	"internal/box/supervisor/main.go:run:exec.Command(args[1], args[2:]...)":                                                         "Container-only supervisor launches the explicit provider command; never a host Git inspection path.",
+	"internal/box/lifeline.go:startLifeline:exec.Command(self, LifelineCommand, rt.Name, label, serviceSupervisor(spec), spec.Repo)": "Starts Coop's own box-lifeline helper; it runs only runtime removal commands, never Git.",
+	"internal/sessionsvc/acp.go:startChildWithRunID:exec.Command(executable, \"fork\", bound.ForkName, \"acp\", bound.Target)":       "Direct Coop child launch; optional test injection has no production constructor alias.",
 
 	"tools/releasenotes/main.go:remoteTags:forkspace.TrustedGitCommand(ctx, dir, env, \"init\", \"--bare\", \"--quiet\", \"--template=\")":               "Initializes empty private metadata with isolated configuration.",
 	"tools/releasenotes/main.go:remoteTags:forkspace.TrustedGitCommand(ctx, dir, env, \"ls-remote\", \"--exit-code\", \"--\", remote, ref, ref+\"^{}\")": "Explicit workflow remote and private metadata; no checkout config or transport settings.",
