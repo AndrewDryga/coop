@@ -43,13 +43,14 @@ func composeTarget(agent, model, effort, credential string) (string, error) {
 }
 
 // shellLine is args as one line a person can paste to run the same command: each argument quoted for
-// a shell. An argument with a control character has no such form, so it shows escaped instead.
+// a shell. An argument with a control or invisible character has no such form. Escaped but unquoted it
+// would still hand the shell the rest, such as `$(…)`, so it shows as <value> for the person to fill in.
 func shellLine(args []string) string {
 	words := make([]string, len(args))
 	for i, arg := range args {
 		word, ok := ui.ShellWord(arg)
 		if !ok {
-			word = ui.SafeInline(arg)
+			word = "<value>"
 		}
 		words[i] = word
 	}

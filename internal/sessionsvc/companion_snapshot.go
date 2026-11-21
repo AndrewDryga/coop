@@ -122,7 +122,7 @@ func createCachedSessionSnapshot(ctx context.Context, stateRoot string, binding 
 	if err = ensurePrivateDirectory(parent); err != nil {
 		return err
 	}
-	unlock, err := forkspace.LockStateContext(ctx, stateRoot, "companion-snapshot-"+key)
+	unlock, err := forkspace.LockStateContext(ctx, stateRoot, forkspace.CompanionSnapshotLockPrefix+key)
 	if err != nil {
 		return err
 	}

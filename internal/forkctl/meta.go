@@ -62,13 +62,32 @@ func ReadForkTarget(ws string) string {
 // ForkRunTarget is what a person names to run this fork's agent as it last ran, for advice such as
 // a new fork's start command: its preset, else its saved target with model, effort and account,
 // else its provider; "" when the fork has none. The fork's agent can write these notes and the
-// result goes into commands a person copies, so the caller quotes it (shellLine); a preset name
-// that does not load is refused by name when that command runs, as a resume refuses it.
+// result goes into commands a person copies, so each is checked first: a preset name by
+// plainPresetName, a target by agents.ParseTarget, a provider by agents.Valid. The caller still
+// quotes the result (shellLine).
 func ForkRunTarget(ws string) string {
-	if name := ReadForkPreset(ws); name != "" {
+	if name := ReadForkPreset(ws); plainPresetName(name) {
 		return name
 	}
 	return forkTargetText(ws)
+}
+
+// plainPresetName is preset.NameRule checked here, since forkctl may not import internal/preset (see
+// TestInternalImportDAG): lowercase letters, digits, '.', '_' and '-', starting with a letter or digit,
+// and at most 64 characters, so a name read from a note the agent can write is a plain shell word.
+func plainPresetName(name string) bool {
+	if name == "" || len(name) > 64 {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case i > 0 && (r == '.' || r == '_' || r == '-'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // forkTargetText is the fork's saved target (ReadForkTarget) once it parses, else its provider.

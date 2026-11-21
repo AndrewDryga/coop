@@ -243,8 +243,16 @@ func TestGoneForkRecordsRemovesAFolderOfLockFilesAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The sessions service's companion snapshot locks are another long-running process's, which may be
+	// of a build that does not re-check its lock after taking it: their folder is never empty.
+	companion := folder("/session/state")
+	writeGoneRecord(t, filepath.Join(companion, CompanionSnapshotLockPrefix+"abc.lock"), "")
+	writeGoneRecord(t, filepath.Join(companion, "chat.lock"), "")
+	if err := os.MkdirAll(filepath.Join(companion, "assignments"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	old := now.Add(-48 * time.Hour)
-	for _, dir := range []string{oldLocks, heldLocks} {
+	for _, dir := range []string{oldLocks, heldLocks, companion} {
 		for _, path := range []string{filepath.Join(dir, "assignments"), dir} {
 			if err := os.Chtimes(path, old, old); err != nil {
 				t.Fatal(err)
@@ -262,7 +270,17 @@ func TestGoneForkRecordsRemovesAFolderOfLockFilesAlone(t *testing.T) {
 			ours.Empty = append(ours.Empty, key)
 		case filepath.Base(newLocks):
 			t.Error("a folder of lock files changed moments ago counts as empty")
+		case filepath.Base(companion):
+			t.Error("a folder holding a companion snapshot lock counts as empty")
 		}
+	}
+	forks, err := openForksFolder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer forks.Close()
+	if removeEmptyFolder(forks, filepath.Base(companion)) {
+		t.Error("the removal took a folder holding a companion snapshot lock")
 	}
 	if len(ours.Empty) != 2 {
 		t.Fatalf("found %d of the two old folders of lock files: %v", len(ours.Empty), found.Empty)

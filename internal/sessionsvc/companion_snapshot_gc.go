@@ -121,7 +121,7 @@ func pruneCompanionSnapshotsSweep(ctx context.Context, stateRoot string, now tim
 			continue
 		}
 		attempts++
-		unlock, err := forkspace.LockStateContext(ctx, stateRoot, "companion-snapshot-"+receipt.Key)
+		unlock, err := forkspace.LockStateContext(ctx, stateRoot, forkspace.CompanionSnapshotLockPrefix+receipt.Key)
 		if err != nil {
 			problems = append(problems, err.Error())
 			continue

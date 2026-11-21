@@ -138,7 +138,7 @@ func removeEmptyFolder(forks *os.Root, key string) bool {
 		switch {
 		case entry.IsDir():
 			dirs = append(dirs, path)
-		case entry.Type().IsRegular() && strings.HasSuffix(path, ".lock"):
+		case entry.Type().IsRegular() && forkLockFile(strings.TrimPrefix(path, key+"/")):
 			locks = append(locks, path)
 		default:
 			return errors.New("not empty")
@@ -165,7 +165,17 @@ func removeEmptyFolder(forks *os.Root, key string) bool {
 			return false
 		}
 		held = append(held, f)
+		// The path must still name the file just locked: one another remover replaced meanwhile may be
+		// a lock a live process holds, and unlinking it would split that lock.
+		lockedInfo, statErr := f.Stat()
+		linked, lstatErr := forks.Lstat(path)
+		if statErr != nil || lstatErr != nil || !os.SameFile(lockedInfo, linked) {
+			return false
+		}
 	}
+	// Safe to unlink while held: a coop command that opened one of these files meanwhile finds, once
+	// it holds it, that the path no longer names it, and locks a new one (lockStateFile). A process of
+	// a build before that re-check could keep holding the unlinked file; that is the residual risk.
 	for _, path := range locks {
 		if err := forks.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return false
@@ -280,7 +290,7 @@ func goneRecordsFolder(forks *os.Root, key string, now time.Time) (GoneProject, 
 	// Lock files are empty and name no project. A fork's removal unlinks its own (RemoveLockLocked),
 	// but earlier builds left one behind for every removed fork, so a folder of lock files alone holds
 	// no record.
-	if !slices.ContainsFunc(files, func(file string) bool { return !strings.HasSuffix(file, ".lock") }) {
+	if !slices.ContainsFunc(files, func(file string) bool { return !forkLockFile(file) }) {
 		return project, now.Sub(newest) >= emptyRecordsAge, nil
 	}
 	path := ""
@@ -302,6 +312,16 @@ func goneRecordsFolder(forks *os.Root, key string, now time.Time) (GoneProject, 
 		}
 	}
 	return project, false, nil
+}
+
+// forkLockFile says whether file, a path in a records folder, is a fork's lifecycle lock: <name>.lock
+// at the top, for a valid fork name. Other locks there (the sessions service's companion snapshot
+// locks, which it takes through LockStateContext in a records folder of its own) belong to a
+// long-running process that may be of an earlier build, so a folder holding one is never counted
+// as empty.
+func forkLockFile(file string) bool {
+	name, ok := strings.CutSuffix(file, ".lock")
+	return ok && !strings.Contains(name, "/") && ValidExistingName(name) && !strings.HasPrefix(name, CompanionSnapshotLockPrefix)
 }
 
 // recordProject is the project path a record names, proven by its hash being key, or "" when it

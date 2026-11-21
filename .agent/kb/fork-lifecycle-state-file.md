@@ -237,7 +237,10 @@ to a process or a container, or prints, it is supervision.
   project's folder is kept if any of its `.lock` files is held (a non-blocking flock, released at
   once) before `os.Root.RemoveAll`. Lock files are never read. A folder of lock files alone counts as
   empty (builds up to v15.2.1 left one per removed fork): `removeEmptyFolder` locks each without
-  waiting, keeps the folder if any is held, and unlinks them all while it holds them.
+  waiting, keeps the folder if any is held or its path no longer names the file locked, and unlinks
+  them all while it holds them. Only top-level fork lifecycle locks count (`forkLockFile`): a folder
+  holding any other lock, such as the sessions service's `companion-snapshot-*` ones
+  (`CompanionSnapshotLockPrefix`), whose long-running owner may predate the re-check below, is kept.
 - A lock file is unlinked only while its remover holds it: `RemoveLockLocked` at the end of
   `coop fork rm`, the orphaned-state removal and merge's delete, and `--gone` above. Unlinking a
   lock file another process waits on would split the lock, so `LockStateContext` and `TryLockState`

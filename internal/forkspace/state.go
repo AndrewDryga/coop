@@ -279,6 +279,11 @@ func LockStateContext(ctx context.Context, repo, name string) (func(), error) {
 	}, nil
 }
 
+// CompanionSnapshotLockPrefix starts the name of the sessions service's companion snapshot locks,
+// which it takes through LockStateContext in a records folder of its own. coop fork rm --gone leaves
+// a folder holding one alone (forkLockFile).
+const CompanionSnapshotLockPrefix = "companion-snapshot-"
+
 // lockRelinkAttempts bounds how often a lock is taken again because the file it locked was unlinked
 // meanwhile. Each unlink is a fork's removal or a person's coop fork rm --gone, so a second attempt
 // all but always holds.
@@ -332,6 +337,9 @@ func RemoveLockLocked(repo, name string) {
 	if err != nil {
 		return
 	}
+	// Safe while held: flock locks the file, not the name, so a command already waiting on this file
+	// would end up holding a lock no later command sees; lockStateFile's re-check after the flock
+	// sends it to the new file instead. A process of a build before that re-check is the residual.
 	_ = unix.Unlinkat(int(dir.Fd()), name+".lock", 0)
 	_ = dir.Close()
 	pruneEmptyStateFolders(repo)
