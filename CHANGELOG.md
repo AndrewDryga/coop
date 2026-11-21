@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **A task with follow-up commits closes without your override.** `coop tasks done` used to
+  refuse a task that more than one commit carried the `Coop-Task` trailer of, and an agent whose
+  commits were already pushed could only ask you for `--force`. The close now goes through for
+  anyone when no loop review can lose by it, and the task's log names the commits. It is still
+  refused while a loop runs over the checkout or a final review is waiting on an earlier task,
+  and the refusal says which and what to do. A loop still takes one commit per task.
+
 - **`coop tasks done --force` is no longer stopped by another task's edited archive.** When an
   earlier command was interrupted and someone later edited an archived task, the forced close of
   a different task was refused with a message about that archived task. The close now goes on

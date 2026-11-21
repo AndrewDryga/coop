@@ -268,6 +268,13 @@ authority before attempting task-completion authority.
   closed; pinned by `TestLoopRejectsCommitsAfterTaskWait`, `TestLoopKeepsAWaitPastAnotherSessionsCommit`
   and `TestCheckTaskWaitJudgesWhatWasCommittedAfterTheWait`. Corrected the old universal lock-order
   claim against `task-authority-model` and the loop caller.
+- 2026-11-20 — decided NOT to pin a box's history at close (task
+  2026-11-20-count-a-task-s-bound-commits-on-a-history-a-box, closed with no code change): a
+  session box works in the person's own checkout and can move any ref or commit another trailer
+  after the close, so the close-time count guards against honest mistakes, not a hostile box. What
+  protects a review is unchanged: pending final review needs exactly one commit per subject and
+  refuses to start otherwise. The worst a box gains is a refused review or a stopped loop, which
+  planting a trailer already gives it. A box's close is refused when history cannot be walked.
 - 2026-11-20 — leftover-window recovery returns `*BaselineMutationError` for archived tasks edited
   after an interrupted command; a person's forced close passes over an error made only of that
   report (`OnlyBaselineMutations`) and prints it as a note, any other recovery error still stops it
