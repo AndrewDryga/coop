@@ -470,14 +470,29 @@ func TestHelpRejectsUnknownOptions(t *testing.T) {
 		{[]string{"help", "--bogus"}, 2},
 		{[]string{"help", "--all", "--bogus"}, 2},
 		{[]string{"help", "--all", "tasks"}, 2},
+		{[]string{"help", "tasks", "--bogus"}, 2},
+		{[]string{"help", "tasks", "ls", "-x"}, 2},
+		{[]string{"help", "tasks", "--all"}, 2},
 		{[]string{"help", "--all"}, 0},
+		{[]string{"help", "--all", "--help"}, 0},
+		{[]string{"help", "--all", "-h"}, 0},
 		{[]string{"help", "--help"}, 0},
 		{[]string{"help", "tasks"}, 0},
+		{[]string{"help", "tasks", "-h"}, 0},
+		{[]string{"help", "tasks", "--help"}, 0},
+		{[]string{"help", "--"}, 0},
+		{[]string{"help", "--", "tasks"}, 0},
+		{[]string{"help", "tasks", "--", "--bogus"}, 0},
+		{[]string{"help", "--all", "--", "x"}, 0},
 	} {
 		var code int
-		stderr := captureStderr(t, func() { captureStdout(t, func() { code = Main(tc.argv) }) })
+		var stdout string
+		stderr := captureStderr(t, func() { stdout = captureStdout(t, func() { code = Main(tc.argv) }) })
 		if code != tc.want {
 			t.Errorf("Main(%v) = %d, want %d; stderr:\n%s", tc.argv, code, tc.want, stderr)
+		}
+		if tc.want == 0 && tc.argv[1] == "--all" && !strings.Contains(stdout, "Usage:\n  coop build") {
+			t.Errorf("Main(%v) should print the manual; got:\n%.300s", tc.argv, stdout)
 		}
 		if tc.want == 2 && !strings.Contains(stderr, `for "coop help"`) {
 			t.Errorf("Main(%v) should name coop help in its refusal; stderr:\n%s", tc.argv, stderr)

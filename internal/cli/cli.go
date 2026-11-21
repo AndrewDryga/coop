@@ -151,17 +151,12 @@ func Main(argv []string) int {
 		// `coop help <cmd> [<sub>]` shows that command's help — the same page as
 		// `coop <cmd> [<sub>] --help`. Bare `coop help` (or -h/--help) is the top-level menu.
 		if argv[0] == "help" && len(argv) > 1 {
+			if err := checkHelpArgs(argv[1:]); err != nil {
+				return reportExit(2, err)
+			}
 			if argv[1] == "--all" { // the whole manual: docs/cli.md's bytes (see RenderManual), then this project's presets
-				if len(argv) > 2 {
-					return reportExit(2, extraArgErr(argv[2], "coop help", "coop help --all", []string{"--all"}))
-				}
 				fmt.Print(RenderManual() + presetManualPages(cfg))
 				return 0
-			}
-			// `--all` is help's one option; any other leading option is a typo, refused like every
-			// other command's, rather than read as an empty topic and answered with the menu.
-			if strings.HasPrefix(argv[1], "-") && !helpRequested(argv[1:2]) {
-				return reportExit(2, unknownOptionErr(argv[1], "coop help", []string{"--all"}))
 			}
 			return reportExit(helpForPath(helpPath(argv[1:]), cfg, true))
 		}
@@ -186,6 +181,29 @@ func Main(argv []string) int {
 	// startTempReap); a detached worker reaches one only after it has proved its reservation.
 	a := &app{cfg: cfg, argv: argv, tempReapPending: true}
 	return reportExit(a.dispatch(argv))
+}
+
+// checkHelpArgs refuses what `coop help` cannot take, like every other command refuses an unknown
+// option: its one option, --all, comes first; -h and --help are accepted anywhere; any other option
+// is a typo, never read as an empty topic and answered with a page. Words after "--" are not
+// looked at, as before.
+func checkHelpArgs(args []string) error {
+	for i, arg := range args {
+		switch {
+		case arg == "--":
+			return nil
+		case arg == "-h" || arg == "--help" || (arg == "--all" && i == 0):
+		case strings.HasPrefix(arg, "-"):
+			valid := []string{"--all"}
+			if i > 0 { // --all is help's option, not the topic's: never suggest it after one
+				valid = nil
+			}
+			return unknownOptionErr(arg, "coop help", valid)
+		case args[0] == "--all": // the manual has no topic
+			return extraArgErr(arg, "coop help", "coop help --all", nil)
+		}
+	}
+	return nil
 }
 
 // isVersionCommand is the one list of the version's spellings, so a broken settings file cannot
