@@ -332,6 +332,7 @@ func applyEvalConfiguration(cfg *config.Config, c eval.FrozenConfig) (string, er
 	if target.Effort != "" {
 		cfg.SetActiveEffort(name, target.Effort)
 	}
+	cfg.SetActiveFast(name, target.Fast)
 	// More than one account is a LADDER — fine for a loop that may rotate mid-run, but an eval
 	// measures ONE configuration, so it is refused rather than silently narrowed to the first.
 	if len(target.Accounts) > 1 {

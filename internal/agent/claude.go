@@ -581,6 +581,9 @@ func (claudeAgent) base(cfg *config.Config) []string {
 	}
 	cmd = withModel(cmd, cfg.ModelFor("claude"))
 	cmd = withEffort(cmd, claudeAgent{}, cfg.EffortFor("claude"))
+	if cfg.FastFor("claude") {
+		cmd = append(cmd, "--settings", `{"fastMode":true}`)
+	}
 	if cfg.EvalDisableWebTools {
 		cmd = append(cmd, "--disallowedTools", "WebSearch,WebFetch")
 	}
@@ -1171,8 +1174,15 @@ func (claudeAgent) ACPRateLimitSignals() []ACPSignal {
 	return []ACPSignal{{Key: "errorKind", Value: "rate_limit"}}
 }
 
+// fastMode: Claude Code's fast mode, which claude-agent-acp exposes as its "fast" option and the
+// CLI reads as the fastMode setting.
+func (claudeAgent) fastMode() {}
+
 // ACPSessionSettings keeps Claude's live session aligned with Coop's target. Model
-// precedes effort because each model owns its available effort levels.
+// precedes effort because each model owns its available effort levels, and fast mode comes last:
+// Fable 5.2 keeps only a fast mode turned on while it is the selected model (claude-agent-acp
+// 0.109.0). The adapter offers "fast" only for a model that has it; for any other, its refusal of
+// the setting is swallowed with the rest of Coop's forced replies and the run keeps standard speed.
 func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 	settings := []ACPSessionSetting{{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"}}
 	if target.Model != "" {
@@ -1180,6 +1190,9 @@ func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 	}
 	if target.Effort != "" {
 		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "effort", Value: target.Effort})
+	}
+	if target.Fast {
+		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "fast", Value: "on"})
 	}
 	return settings
 }

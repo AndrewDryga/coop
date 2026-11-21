@@ -27,6 +27,16 @@ func TestParseTarget(t *testing.T) {
 		{"gemini:pro/high", "gemini", "pro", "high", nil},                                     // gemini thinks at low or high
 		{"gemini/low@work", "gemini", "", "low", []string{"work"}},
 	}
+	fast := []string{"codex:gpt-6.2-sol+fast", "codex:gpt-6.2-sol/high+fast@work", "claude:opus/xhigh+fast@work", "claude+fast"}
+	for _, in := range fast {
+		got, err := ParseTarget(in)
+		if err != nil || !got.Fast {
+			t.Errorf("ParseTarget(%q) = %+v, %v; want fast mode", in, got, err)
+		}
+		if got.String() != in {
+			t.Errorf("round-trip %q -> %q", in, got.String())
+		}
+	}
 	for _, c := range ok {
 		got, err := ParseTarget(c.in)
 		if err != nil {
@@ -59,6 +69,10 @@ func TestParseTarget(t *testing.T) {
 		"gemini/medium":               "Gemini takes effort low or high", // Gemini 3 has no medium level
 		"gemini:gemini-2.5-pro/xhigh": "Gemini takes effort low or high",
 		"gemini:gemini-9/high":        "run gemini-9 without an effort", // no thinking base reaches it
+		"gemini:pro/high+fast":        "Gemini has no fast mode",
+		"grok+fast":                   "Grok has no fast mode",
+		"codex:gpt-6.2-sol+turbo":     `Write fast mode as "+fast"`,
+		"codex:gpt-6.2-sol+fast/high": `Write fast mode as "+fast"`, // +fast follows the effort
 	}
 	for in, want := range bad {
 		_, err := ParseTarget(in)

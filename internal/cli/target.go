@@ -221,5 +221,6 @@ func (a *app) applyRunTarget(t agents.Target, command string) error {
 	}
 	a.selectRunModel(t.Provider, t.Model)
 	a.selectRunEffort(t.Provider, t.Effort)
+	a.selectRunFast(t.Provider, t.Fast)
 	return nil
 }

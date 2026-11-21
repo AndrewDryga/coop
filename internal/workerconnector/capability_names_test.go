@@ -157,6 +157,25 @@ func TestJobPresetCapabilityRequiresExactLiveDaemonProof(t *testing.T) {
 	}
 }
 
+// A controller asks for a provider's fast mode (a +fast target) only on a worker whose job parser
+// accepts it; an older worker refuses the whole job as an invalid target.
+func TestFastTargetCapabilityRequiresExactLiveProof(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		want int
+	}{
+		{`{"fast_target_versions":[1]}`, 1},
+		{`{}`, 0},
+		{`{"fast_target_versions":[2]}`, 0},
+		{`{"fast_target_versions":[1,2]}`, 0},
+	} {
+		got := LiveCapabilities(context.Background(), &capabilityAPI{response: json.RawMessage(test.body)})
+		if len(got) != test.want || (test.want == 1 && (got[0].Name != "fast-target" || got[0].Version != "1")) {
+			t.Fatalf("capability for %s = %+v", test.body, got)
+		}
+	}
+}
+
 // A controller sends a checkpoint naming an upstream revision only to a worker that can restore it.
 func TestCheckpointUpstreamCapabilityRequiresExactLiveProof(t *testing.T) {
 	for _, test := range []struct {

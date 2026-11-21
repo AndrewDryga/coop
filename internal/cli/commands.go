@@ -562,6 +562,14 @@ func (a *app) selectRunEffort(tool, effort string) {
 	}
 }
 
+// selectRunFast applies a single run's explicit fast mode (the target's +fast) to tool's top tier.
+// False is a no-op: a run asks for the faster, pricier tier only by name.
+func (a *app) selectRunFast(tool string, fast bool) {
+	if fast {
+		a.cfg.SetActiveFast(tool, true)
+	}
+}
+
 // applyOneOff applies a single run's decomposed one-off (model, account) to tool: model may
 // carry a model@account shortcut (matching a preset ladder entry), and credential pins the
 // account. Both empty is a no-op — the preset/default stands. It's the single-run analog of

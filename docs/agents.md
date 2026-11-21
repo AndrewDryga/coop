@@ -276,6 +276,23 @@ Effort uses the same priority order as model selection, and you can set both tog
 For example, `signoff.agent: [claude:opus/xhigh]` uses xhigh effort for final review while you keep
 the work step at low effort.
 
+### Fast mode
+
+Add `+fast` after the model and effort to run a target in its provider's fast mode:
+`coop codex:gpt-6.2-sol+fast`, `coop claude:opus/high+fast@work`. It answers about twice as fast
+and costs more: Codex's Fast tier uses more of the plan's allowance, and Claude's fast mode is
+billed at a higher rate.
+
+| Agent | How co:op turns it on |
+| --- | --- |
+| Codex | `service_tier = "priority"` at the top of the box's generated `config.toml` |
+| Claude | `--settings {"fastMode":true}` on the CLI, and the adapter's `fast` option in an editor or job |
+
+Only Codex and Claude have a fast mode; co:op refuses `+fast` for any other agent. Not every model
+has one. A Claude model without it keeps standard speed, and Codex uses the tier only for a model
+whose catalog lists it. A box generates Codex's configuration once, so a ladder that moves from a
+fast Codex model to one without `+fast` keeps the tier it started with.
+
 ### Which model runs
 
 Each consult peer follows the same model-selection rules and uses its own default when you don't
@@ -452,7 +469,7 @@ roles:
 ### Run a preset
 
 Use the preset name where the command expects a target, and co:op runs its lead. A
-target in that position (`<agent>[:model][/effort][@account]`) runs the agent directly:
+target in that position (`<agent>[:model][/effort][+fast][@account]`) runs the agent directly:
 
 ```bash
 coop presets init                # scaffold the recipe + starter prompt files, ready to edit

@@ -9,26 +9,29 @@ import (
 )
 
 // Target is coop's single addressing scheme — WHO runs on WHAT: a provider, optionally a
-// model, optionally a reasoning effort, optionally one or more accounts. It is the ONE spelling
-// used on the CLI and in preset `agent:` keys, parsed by ParseTarget. The
-// wire grammar is
+// model, optionally a reasoning effort, optionally the provider's fast mode, optionally one or
+// more accounts. It is the ONE spelling used on the CLI and in preset `agent:` keys, parsed by
+// ParseTarget. The wire grammar is
 //
-//	provider[:model][/effort][@account[,account…]]
+//	provider[:model][/effort][+fast][@account[,account…]]
 //
 //	claude                     provider only          (model → the CLI default; all accounts)
 //	claude:opus                provider + model
 //	claude:opus/xhigh          provider + model + reasoning effort
+//	codex:gpt-6.2-sol+fast     provider + model, in the provider's fast mode
 //	codex/high@work            provider + effort + account (default model)
 //	claude:opus@work,personal  provider + model + an ACCOUNT LADDER (fan out work → personal)
 //
 // `:` splits provider from model; `/` sets reasoning effort (a level the agent's CLI accepts —
-// low/medium/high/xhigh/max — coop passes it through, the agent validates); `@` starts the
-// account slot; `,` separates ACCOUNTS (and only accounts, at every level — a list of peers is
-// repeated flags, never a comma list).
+// low/medium/high/xhigh/max — coop passes it through, the agent validates); `+fast` asks for the
+// provider's faster, pricier service (FastMode); `@` starts the account slot; `,` separates
+// ACCOUNTS (and only accounts, at every level — a list of peers is repeated flags, never a comma
+// list).
 type Target struct {
 	Provider string   // a registered agent; required
 	Model    string   // "" = the agent CLI's own default model
 	Effort   string   // "" = the agent CLI's own default; else a reasoning-effort level passed to the agent
+	Fast     bool     // the provider's fast mode (`+fast`), for an agent with FastMode
 	Accounts []string // nil/empty = every signed-in account (the widest ladder); else the explicit subset, in order
 }
 
@@ -170,6 +173,11 @@ func ParseTarget(s string) (Target, error) {
 	if strings.Contains(accountSlot, "@") {
 		return invalid(`Use one "@" before the account name.`)
 	}
+	// Fast mode closes the model and effort, before the account (provider:model/effort+fast@a).
+	head, fast := strings.CutSuffix(head, fastSuffix)
+	if strings.Contains(head, "+") {
+		return invalid(`Write fast mode as "+fast", after the model and effort.`)
+	}
 	// Effort binds to the model, before the account (provider:model/effort@account). A '/' in the
 	// account slot is left to the account path-safety check below, which rejects it as an invalid
 	// account — so `@work/high` and a traversal like `@../x` both get the account error.
@@ -220,7 +228,14 @@ func ParseTarget(s string) (Target, error) {
 			return invalid(strings.ToUpper(cause[:1]) + cause[1:] + ".")
 		}
 	}
-	t := Target{Provider: provider, Model: model, Effort: effort}
+	if fast {
+		a, _ := Get(provider) // registered: Valid(provider) held above
+		if !SupportsFast(a) {
+			return bad(strings.ToUpper(provider[:1])+provider[1:]+" has no fast mode",
+				fmt.Sprintf("Remove %q from %q.", fastSuffix, DisplayTarget(raw)), "models")
+		}
+	}
+	t := Target{Provider: provider, Model: model, Effort: effort, Fast: fast}
 	if hasAt {
 		for _, a := range strings.Split(accountSlot, ",") {
 			a = strings.TrimSpace(a)
@@ -279,7 +294,7 @@ func (t Target) Account() string {
 	return t.Accounts[0]
 }
 
-// String renders a target back to its wire form (provider[:model][/effort][@a,b]) — for
+// String renders a target back to its wire form (provider[:model][/effort][+fast][@a,b]) — for
 // messages, config round-trips, and tests. A Target with only a provider is just the provider.
 func (t Target) String() string {
 	s := t.Provider
@@ -288,6 +303,9 @@ func (t Target) String() string {
 	}
 	if t.Effort != "" {
 		s += "/" + t.Effort
+	}
+	if t.Fast {
+		s += fastSuffix
 	}
 	if len(t.Accounts) > 0 {
 		s += "@" + strings.Join(t.Accounts, ",")

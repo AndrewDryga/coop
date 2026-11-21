@@ -595,7 +595,7 @@ use up one of those review attempts.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1],"checkpoint_upstream_versions":[1]}`. Check these versions before choosing which protocol features to use. |
+| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1],"checkpoint_upstream_versions":[1],"fast_target_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
 | `GET` | `/v1/usage` | `{"usage": …}`: the allowance each account's provider last reported, read at most every five minutes (see [Account usage](#account-usage)) |
@@ -793,6 +793,10 @@ advertising `project-runtime:1`, proven by `project_runtime_versions: [1]` on th
 The runtime's `environment` holds frozen project defaults, with a 64 KiB limit measured as escaped
 JSON. Candidate `review.env` overrides those defaults. The job's root `environment` and
 `check.environment` remain controller authority and override candidate values.
+
+A job target may end its model and effort with `+fast` (`codex:gpt-6.2-sol/medium+fast@default`) to
+run in the provider's fast mode. Send one only to a worker advertising `fast-target:1`, proven by
+`fast_target_versions: [1]` on the local daemon; an older worker refuses the target.
 
 A job can also include a version 1 `preset`. Its `name`, `lead_prompt` and ordered
 `roles` are frozen alongside the job's lead `targets`. Each role carries `name`,

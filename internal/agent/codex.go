@@ -884,6 +884,36 @@ fi
 	}}
 }
 
+// fastMode: Codex's Fast service tier ("priority": about twice the speed for more of the plan's
+// allowance), which codex-acp 2.8.0 offers no option for. The box's generated config.toml sets it
+// (codexServiceTier), so the CLI and the adapter in that box both run it.
+func (codexAgent) fastMode() {}
+
+// codexFastTier is the config.toml line that asks Codex 0.170.0 for its Fast tier.
+const codexFastTier = "service_tier = \"priority\"\n"
+
+// codexServiceTier puts the Fast tier at the top of a generated config.toml, where a top-level key
+// must sit before any table, in place of a tier the profile's own config already set.
+func codexServiceTier(configTOML string, fast bool) string {
+	if !fast {
+		return configTOML
+	}
+	var kept []string
+	inTable := false
+	for _, line := range strings.SplitAfter(configTOML, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			inTable = true
+		}
+		if !inTable && strings.HasPrefix(trimmed, "service_tier") &&
+			strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, "service_tier")), "=") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return codexFastTier + strings.Join(kept, "")
+}
+
 // Models are common codex model ids. Illustrative — any id the CLI accepts works.
 func (codexAgent) Models() []string {
 	return []string{
@@ -1172,6 +1202,7 @@ func (codexAgent) MCP(cfg *config.Config, workdir string) (MCPConfig, error) {
 		return MCPConfig{}, err
 	}
 	cx, _ = ensureCodexTrust(cx, workdir)
+	cx = codexServiceTier(cx, cfg.FastFor("codex"))
 	return MCPConfig{
 		Mounts:      []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}},
 		RequiredEnv: requiredEnv,
@@ -1191,6 +1222,7 @@ func (codexAgent) ControllerJobMCP(cfg *config.Config, workdir string) (MCPConfi
 		return MCPConfig{}, err
 	}
 	cx, _ = ensureCodexTrust(cx, workdir)
+	cx = codexServiceTier(cx, cfg.FastFor("codex"))
 	return MCPConfig{
 		Mounts:      []MCPMount{{Content: cx, BoxPath: cfg.HomeInBox + "/.codex/config.toml"}},
 		RequiredEnv: requiredEnv,

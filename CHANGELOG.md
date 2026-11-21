@@ -4,6 +4,13 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Fast mode.** A target ending in `+fast` (`coop codex:gpt-6.2-sol+fast`,
+  `claude:opus/high+fast@work`) runs in its provider's fast mode: Codex's Fast service tier, set at
+  the top of the box's generated `config.toml`, and Claude Code's fast mode, passed as a setting
+  on the CLI and through the adapter's `fast` option in an editor or job. Only Codex and Claude
+  have one. Workers advertise `fast-target:1` (`fast_target_versions: [1]`), so a controller sends
+  a `+fast` job target only to a worker that accepts it.
+
 - **Claude Fable 5.2 and the newest clients.** Claude Code 2.1.330, its editor adapter 0.109.0
   (whose own Claude is 2.1.328), Codex 0.170.0 and Codex's editor adapter 2.8.0. The adapter
   accepts `claude-fable-5-2`, which the previous one refused, and no longer lists

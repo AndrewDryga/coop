@@ -845,6 +845,22 @@ func matchExact(value string, candidates []string) (string, bool) {
 	return "", false
 }
 
+// fastSuffix is how a target asks for the provider's fast mode: provider:model/effort+fast@account.
+const fastSuffix = "+fast"
+
+// FastMode marks an agent whose provider serves a faster, pricier tier of the same model, which a
+// target asks for with +fast: Claude Code's fast mode and Codex's Fast service tier. Each agent
+// turns it on its own way (see its ACPSessionSettings and generated configuration).
+type FastMode interface {
+	fastMode()
+}
+
+// SupportsFast reports whether a target may ask the agent for its provider's fast mode.
+func SupportsFast(a Agent) bool {
+	_, ok := a.(FastMode)
+	return ok
+}
+
 // SupportsEffort reports whether the agent has any reasoning-effort control (a CLI flag, an env
 // var, or generated settings). A target that names an effort for an agent without one is rejected
 // in ParseTarget.

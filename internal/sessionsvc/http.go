@@ -321,6 +321,9 @@ type sessionCapabilitiesDTO struct {
 	// CheckpointUpstreamVersions proves restore reads a bundle manifest's upstream_revision, so a
 	// controller sends a checkpoint that names one only to a worker that can restore it.
 	CheckpointUpstreamVersions []int `json:"checkpoint_upstream_versions"`
+	// FastTargetVersions proves a job target may ask for the provider's fast mode (+fast), so a
+	// controller sends one only to a worker that would not refuse the target.
+	FastTargetVersions []int `json:"fast_target_versions"`
 }
 
 type sessionHTTPErrorBody struct {
@@ -387,6 +390,7 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ReviewCommitMessageVersions:        []int{1},
 			ExistingPRPublicationVersions:      []int{1},
 			CheckpointUpstreamVersions:         []int{1},
+			FastTargetVersions:                 []int{1},
 		})
 		return
 	case "/v1/capacity":

@@ -23,6 +23,8 @@ type sessionCapabilities struct {
 	ExistingPRPublicationVersions []int `json:"existing_pr_publication_versions,omitempty"`
 	// CheckpointUpstreamVersions proves restore reads a checkpoint's upstream_revision.
 	CheckpointUpstreamVersions []int `json:"checkpoint_upstream_versions,omitempty"`
+	// FastTargetVersions proves a job target may carry +fast.
+	FastTargetVersions []int `json:"fast_target_versions,omitempty"`
 }
 
 // LiveCapabilities adds implementation capabilities only after the exact local
@@ -80,6 +82,9 @@ func readCapabilities(ctx context.Context, api API) ([]workerproto.Capability, b
 	}
 	if proves(document.CheckpointUpstreamVersions, 1) {
 		result = append(result, workerproto.Capability{Name: "checkpoint-upstream", Version: "1"})
+	}
+	if proves(document.FastTargetVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "fast-target", Version: "1"})
 	}
 	return result, true
 }

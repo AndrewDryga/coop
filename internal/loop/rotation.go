@@ -25,6 +25,7 @@ func (c *Control) applyTarget(r *ladder.Rotation) string {
 	c.cfg.SetActiveProfile(t.Provider, t.Account())
 	c.cfg.SetTargetModel(t.Provider, t.Model)
 	c.cfg.SetTargetEffort(t.Provider, t.Effort)
+	c.cfg.SetTargetFast(t.Provider, t.Fast)
 	return t.Provider
 }
 

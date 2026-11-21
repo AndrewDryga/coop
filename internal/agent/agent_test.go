@@ -1279,6 +1279,49 @@ func TestCodexMCPRequiresEveryReferencedEnvironmentName(t *testing.T) {
 	}
 }
 
+// Codex 0.170.0 takes its Fast tier only from configuration (codex-acp offers no option for it),
+// so a +fast run's box config.toml leads with it, for the CLI and the adapter alike; a controller
+// job's box gets it the same way. A run that asked for no fast mode keeps the file as it was.
+func TestCodexFastTargetSetsTheServiceTierInTheBoxConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
+	codex, _ := Get("codex")
+	job, _ := codex.(ControllerJobConfig)
+	standard, err := codex.MCP(cfg, "/workspace")
+	if err != nil || strings.Contains(standard.Mounts[0].Content, "service_tier") {
+		t.Fatalf("standard run config = %+v, %v; want no service tier", standard, err)
+	}
+	cfg.SetActiveFast("codex", true)
+	for name, generate := range map[string]func(*config.Config, string) (MCPConfig, error){
+		"box": codex.MCP, "controller job": job.ControllerJobMCP,
+	} {
+		wiring, err := generate(cfg, "/workspace")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if content := wiring.Mounts[0].Content; !strings.HasPrefix(content, codexFastTier) {
+			t.Fatalf("%s config does not lead with the Fast tier:\n%s", name, content)
+		}
+	}
+	if got := codexServiceTier("service_tier = \"flex\"\nmodel = \"m\"\n\n[x]\nservice_tier = \"kept\"\n", true); got != codexFastTier+"model = \"m\"\n\n[x]\nservice_tier = \"kept\"\n" {
+		t.Fatalf("a profile's own tier was not replaced, or a table's key was: %q", got)
+	}
+}
+
+// Claude Code reads fast mode from its settings; a +fast CLI run passes it with --settings.
+func TestClaudeFastTargetPassesFastModeSetting(t *testing.T) {
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+	claude := claudeAgent{}
+	if slices.Contains(claude.base(cfg), "--settings") {
+		t.Fatalf("a standard run passed settings: %v", claude.base(cfg))
+	}
+	cfg.SetActiveFast("claude", true)
+	cmd := claude.base(cfg)
+	if i := slices.Index(cmd, "--settings"); i < 0 || i+1 >= len(cmd) || cmd[i+1] != `{"fastMode":true}` {
+		t.Fatalf("fast run command = %v, want --settings {\"fastMode\":true}", cmd)
+	}
+}
+
 // Without shared MCP, claude and grok need no generated file; codex and gemini still get their
 // always-on box overlay, because that is where the managed-client defaults live.
 func TestMCPWithoutSharedSourceBuildsOnlyTheAlwaysOnOverlays(t *testing.T) {
@@ -1574,6 +1617,20 @@ func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 	}
 	if got := codex.BoxEnv("/home/node"); len(got) != 1 || got[0] != "CODEX_SQLITE_HOME=/home/node/.codex-state" {
 		t.Errorf("codex BoxEnv = %v, want [CODEX_SQLITE_HOME=/home/node/.codex-state]", got)
+	}
+	// Fast mode comes after the model, the only order Fable 5.2 keeps it in; Codex has no ACP
+	// option for its Fast tier, which rides the box's config.toml instead.
+	fast := Target{Model: "model-x", Effort: "xhigh", Fast: true}
+	if got := claude.ACPSessionSettings(fast); !slices.Equal(got, []ACPSessionSetting{
+		{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"},
+		{Method: ACPSetConfigOption, ConfigID: "model", Value: "model-x"},
+		{Method: ACPSetConfigOption, ConfigID: "effort", Value: "xhigh"},
+		{Method: ACPSetConfigOption, ConfigID: "fast", Value: "on"},
+	}) {
+		t.Errorf("claude fast ACPSessionSettings = %v", got)
+	}
+	if got := codex.ACPSessionSettings(fast); len(got) != 2 {
+		t.Errorf("codex fast ACPSessionSettings = %v, want model and effort only", got)
 	}
 	gemini, _ := Get("gemini")
 	if got := gemini.ACPSessionSettings(target); !slices.Equal(got, []ACPSessionSetting{{Method: ACPSetModel, Value: "model-x"}}) {

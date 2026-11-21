@@ -115,6 +115,7 @@ func (a *app) applyPreset(p *preset.Preset, lead string) {
 		}
 		a.cfg.SetTargetModel(lead, first.Model)
 		a.cfg.SetTargetEffort(lead, first.Effort)
+		a.cfg.SetTargetFast(lead, first.Fast)
 	}
 	a.preset = p
 }

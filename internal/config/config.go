@@ -99,6 +99,8 @@ type Config struct {
 
 	activeEfforts map[string]string // per-run EXPLICIT reasoning effort (target /effort) — the top tier
 	targetEfforts map[string]string // the active rotation target's effort, below explicit
+	activeFast    map[string]bool   // per-run EXPLICIT fast mode (target +fast) — the top tier
+	targetFast    map[string]bool   // the active rotation target's fast mode, below explicit
 }
 
 // Explicit reports whether the user explicitly set key (env var or conf file) — false when the
@@ -713,6 +715,31 @@ func (c *Config) SetTargetEffort(agent, effort string) {
 		c.targetEfforts = map[string]string{}
 	}
 	c.targetEfforts[agent] = effort
+}
+
+// SetActiveFast turns on the provider's fast mode for a run of agent — only an EXPLICIT
+// target +fast lands here. False leaves the rotation target's choice.
+func (c *Config) SetActiveFast(agent string, fast bool) {
+	if c.activeFast == nil {
+		c.activeFast = map[string]bool{}
+	}
+	c.activeFast[agent] = fast
+}
+
+// SetTargetFast selects the active rotation target's fast mode — applied at loop start and on
+// every rotation, below an explicit target +fast.
+func (c *Config) SetTargetFast(agent string, fast bool) {
+	if c.targetFast == nil {
+		c.targetFast = map[string]bool{}
+	}
+	c.targetFast[agent] = fast
+}
+
+// FastFor reports whether a run of agent uses its provider's fast mode: an explicit +fast on the
+// run's target, or on the active rotation target. There is no agent-wide default: fast mode
+// costs more, so only a target asks for it.
+func (c *Config) FastFor(agent string) bool {
+	return c.activeFast[agent] || c.targetFast[agent]
 }
 
 // AgentEffortDefault is the agent-wide default reasoning effort — the effort part of
