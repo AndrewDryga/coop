@@ -253,12 +253,13 @@ Set reasoning effort on the same target by adding `/effort` after the provider o
 model: `coop codex/high`, `coop codex:gpt-6-astra/high`, `coop claude:opus/xhigh`,
 `coop loop claude:opus/low`. The levels are `low`, `medium`, `high`, `xhigh` and `max`.
 
-co:op refuses known unsupported model-and-effort combinations before starting. It passes any other
-level to the agent's CLI:
+co:op refuses known unsupported model-and-effort combinations before starting, and a Claude level
+other than these five, which Claude Code would ignore. It passes any other level to the agent's
+CLI:
 
 | Agent | Where the level goes |
 | --- | --- |
-| Claude | `--effort` |
+| Claude | `--effort` (`low` to `max` only) |
 | Codex | `model_reasoning_effort` |
 | Grok | `--reasoning-effort` |
 | Gemini | its thinking setting (`low` or `high` only) |

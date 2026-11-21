@@ -398,8 +398,9 @@ Choose each fork&#39;s target or preset in <code>coop fork &lt;name&gt; &lt;targ
 <p>Set reasoning effort on the same target by adding <code>/effort</code> after the provider or the optional
 model: <code>coop codex/high</code>, <code>coop codex:gpt-6-astra/high</code>, <code>coop claude:opus/xhigh</code>,
 <code>coop loop claude:opus/low</code>. The levels are <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> and <code>max</code>.</p>
-<p>co:op refuses known unsupported model-and-effort combinations before starting. It passes any other
-level to the agent&#39;s CLI:</p>
+<p>co:op refuses known unsupported model-and-effort combinations before starting, and a Claude level
+other than these five, which Claude Code would ignore. It passes any other level to the agent&#39;s
+CLI:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Reasoning effort table"><table class="ref">
 <thead>
 <tr>
@@ -410,7 +411,7 @@ level to the agent&#39;s CLI:</p>
 <tbody>
 <tr>
 <td>Claude</td>
-<td><code>--effort</code></td>
+<td><code>--effort</code> (<code>low</code> to <code>max</code> only)</td>
 </tr>
 <tr>
 <td>Codex</td>

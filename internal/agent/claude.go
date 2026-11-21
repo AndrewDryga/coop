@@ -750,7 +750,15 @@ func (claudeAgent) Effort() EffortSpec {
 	return EffortSpec{Flag: "--effort", Validate: validateClaudeEffort}
 }
 
+// claudeEfforts are the levels the pinned Claude Code lists for --effort (2.1.330). It only warns
+// about any other level and runs at its default effort, so a typo in a preset would quietly lower
+// every run: Coop refuses the rest itself. Recheck this list when the pin moves.
+var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+
 func validateClaudeEffort(model, effort string) error {
+	if effort != "" && !slices.Contains(claudeEfforts, effort) {
+		return fmt.Errorf("claude takes effort %s, not %q", list(claudeEfforts, "or"), effort)
+	}
 	if effort != "" {
 		// The pinned SDK drops effort for Haiku 4.5, while ACP exposes no effort option.
 		// Refuse the impossible control instead of accepting a target the client cannot honor.

@@ -111,6 +111,29 @@ func TestClaudeHaikuEffortIsRefused(t *testing.T) {
 	}
 }
 
+// Claude Code only warns about an effort it does not know and runs at its default, so Coop refuses
+// one before launch, naming the levels; every level the pinned client lists still works.
+func TestClaudeUnknownEffortIsRefused(t *testing.T) {
+	for _, target := range []string{"claude:opus/bogus", "claude/mxa", "claude:haiku/minimal@work"} {
+		if _, err := ParseTarget(target); err == nil || !strings.Contains(err.Error(), "low, medium, high, xhigh, or max") {
+			t.Errorf("%s = %v, want refused naming the levels", target, err)
+		}
+	}
+	for _, effort := range claudeEfforts {
+		for _, target := range []string{"claude/" + effort, "claude:opus/" + effort, "claude:claude-fable-5-2/" + effort} {
+			if _, err := ParseTarget(target); err != nil {
+				t.Errorf("%s was refused: %v", target, err)
+			}
+		}
+	}
+	// Agents that hand the level on unchecked keep doing so, so a provider's new level works.
+	for _, target := range []string{"codex:gpt-6.2-sol/ultra", "codex/minimal", "grok:grok-4.7/high"} {
+		if _, err := ParseTarget(target); err != nil {
+			t.Errorf("%s was refused: %v", target, err)
+		}
+	}
+}
+
 // COOP_<AGENT>_MODEL holds a target's model[/effort] slots, so config refuses what a target would,
 // with the target's own reason and the setting's name, from the environment and from coop.conf.
 func TestModelSettingIsCheckedLikeATarget(t *testing.T) {

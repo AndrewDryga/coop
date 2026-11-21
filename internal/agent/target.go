@@ -24,7 +24,7 @@ import (
 //	claude:opus@work,personal  provider + model + an ACCOUNT LADDER (fan out work → personal)
 //
 // `:` splits provider from model; `/` sets reasoning effort (a level the agent's CLI accepts —
-// low/medium/high/xhigh/max — coop passes it through, the agent validates); `+fast` asks for the
+// low/medium/high/xhigh/max — see isEffortLevel for which agents coop checks); `+fast` asks for the
 // provider's faster, pricier service (FastMode); `@` starts the account slot; `,` separates
 // ACCOUNTS (and only accounts, at every level — a list of peers is repeated flags, never a comma
 // list).
@@ -302,8 +302,9 @@ func list(items []string, conj string) string {
 
 // isEffortLevel reports whether s is a syntactically valid reasoning-effort token: lowercase
 // letters only (low/medium/high/xhigh/max/minimal, and whatever future levels an agent adds).
-// coop does NOT check the value against a per-agent list — like a model id it's passed straight
-// to the agent, whose own CLI rejects an unknown one, so a new level works the day it ships.
+// Only an agent that would quietly drop an unknown level checks it against its own list
+// (EffortSpec.Validate: Claude, Gemini); the rest pass it straight to the agent, like a model id,
+// so a new level works the day it ships.
 func isEffortLevel(s string) bool {
 	if s == "" {
 		return false

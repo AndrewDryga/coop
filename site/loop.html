@@ -141,7 +141,8 @@ unless the commit carries another task&#39;s <code>Coop-Task</code> trailer. The
 <p>Choose an agent (<code>claude</code>, <code>codex</code>, <code>gemini</code> or <code>grok</code>) or a preset that defines the lead agent.
 To run a custom command for each task, set <code>work.command</code> in <code>.agent/loop.yaml</code>. It replaces the
 whole iteration command and turns off preflight, the review after each task, the final review and
-verify.</p>
+verify. Still name an agent or preset: the box starts with that agent&#39;s account and network
+settings.</p>
 <p>When the model reaches a rate or usage limit, the loop tries the next configured target. If
 every target is limited, it waits with a countdown until one can run, then retries the same
 task. A rate limit doesn&#39;t count as a failed task attempt.</p>

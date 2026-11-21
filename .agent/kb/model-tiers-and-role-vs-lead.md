@@ -46,9 +46,13 @@ Native CLI acceptance is not proof an effort was applied. Captured on Claude SDK
 exposed no effort option. Claude's existing EffortSpec.Validate
 refuses explicit effort for the three known alias/current IDs during target parsing and resolved box
 configuration validation, before a client starts. Haiku without effort remains valid; unknown future IDs stay delegated
-to the client. Do not ignore an ACP setting failure to hide an impossible target.
+to the client. Do not ignore an ACP setting failure to hide an impossible target. The same Validate
+also refuses a level outside `claudeEfforts` (low…max): Claude Code 2.1.330 only warns about one and
+runs at its default effort. Codex (0.170 prints `reasoning effort: bogus` and sends it; its catalog
+adds levels such as `ultra` per model) and Grok (free-form `--reasoning-effort`) stay unchecked.
 
 ## Changelog
+- 2026-11-21 — Claude refuses an effort its pinned CLI does not list (task 2026-11-21-refuse-a-reasoning-effort-the-agent-does-not-hav); checked `claude --help`, `codex debug models`, `grok --help`.
 - 2026-11-21 — `COOP_<AGENT>_MODEL` is now refused at load when a target would refuse its model[/effort] (task 2026-11-21-check-coop-agent-model-like-a-target).
 - 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go).
 - 2026-10-10 — real Claude same-provider peer launch omitted the consult wrapper and authorization;

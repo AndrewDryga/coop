@@ -2894,11 +2894,17 @@ func TestCheckEffortsRefusesWhatTheBoxCannotCarry(t *testing.T) {
 	if err := checkEfforts(cfg, role); err == nil || !strings.Contains(err.Error(), "gemini-9") {
 		t.Fatalf("role rung on an unmapped model = %v, want refused", err)
 	}
-	// An agent whose own CLI judges the level is not second-guessed here.
-	cfg.SetActiveEffort("claude", "whatever")
-	if err := checkEfforts(cfg, RunSpec{Homes: true, Agent: "claude"}); err != nil {
-		t.Fatalf("claude effort was judged by coop: %v", err)
+	// An agent that passes the level on to be judged is not second-guessed here; Claude, which
+	// would quietly run at its default instead, is.
+	cfg.SetActiveEffort("codex", "whatever")
+	if err := checkEfforts(cfg, RunSpec{Homes: true, Agent: "codex"}); err != nil {
+		t.Fatalf("codex effort was judged by coop: %v", err)
 	}
+	cfg.SetActiveEffort("claude", "whatever")
+	if err := checkEfforts(cfg, RunSpec{Homes: true, Agent: "claude"}); err == nil || !strings.Contains(err.Error(), "xhigh, or max") {
+		t.Fatalf("claude effort whatever = %v, want refused naming the levels", err)
+	}
+	cfg.SetActiveEffort("claude", "")
 
 	recorder := filepath.Join(t.TempDir(), "runtime.log")
 	cfg.SetActiveEffort("gemini", "medium")
