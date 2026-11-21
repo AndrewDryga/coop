@@ -117,6 +117,7 @@ func RunLifeline(args []string) int {
 		return 2
 	}
 	closeInheritedFiles()
+	syscall.CloseOnExec(3) // the runtime commands it runs must not hold the pipe either
 	watchLifeline(pipe, runtime.Runtime{Name: args[0]}, lifelineOwner{box: args[1], services: args[2], workspace: args[3]}, defaultLifelineWaits)
 	return 0
 }

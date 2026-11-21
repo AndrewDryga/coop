@@ -341,9 +341,21 @@ func TestProviderScriptedDetachedCrashCleanupIsRepoScoped(t *testing.T) {
 	if !procharness.ProcessAlive(secondReady.PID) {
 		t.Fatalf("namesake provider %d ended with its worker and no lifeline", secondReady.PID)
 	}
+	// Its pid now names an unrelated process: stop must judge the worker dead by its start token,
+	// remove its box, and never signal the process that reused the pid.
+	secondReused, err := (forkspace.WorkerState{Pid: unrelated.Process.Pid, Token: secondWorker.Token, Generation: secondWorker.Generation}).Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(forkspace.PidPath(secondRepo, name), secondReused, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	secondStop := runDetachedCLI(t, suite, secondRepo, secondEnv, "fork", "stop", name)
 	if secondStop.Err != nil || secondStop.ExitCode != 0 || !strings.Contains(secondStop.Stderr, "removed 1 orphaned box container") {
 		t.Fatalf("stop second repo namesake = exit %d err %v\nstdout:\n%s\nstderr:\n%s", secondStop.ExitCode, secondStop.Err, secondStop.Stdout, secondStop.Stderr)
+	}
+	if !procharness.ProcessAlive(unrelated.Process.Pid) {
+		t.Fatalf("stop signaled pid %d, which only reused the dead worker's pid", unrelated.Process.Pid)
 	}
 	awaitProcessGone(t, secondReady.PID)
 	assertRuntimeRegistryEmpty(t, suite)

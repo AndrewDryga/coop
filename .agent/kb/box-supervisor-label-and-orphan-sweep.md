@@ -28,7 +28,12 @@ this box" with the label below, by the same proof and the same exact-label remov
   narrowed to the services' own label (`reapOrphanServices(..., only)`: an ACP child's services name
   its supervisor, which may live), and `RecoverNetworkRuns(runID)` for the gateway pair. All under a
   30 s budget, then it exits. It does not touch task-channel volumes, filesystem helpers or networks:
-  the next sweep still does. Killing the lifeline too (a reboot, a kill of every coop process) leaves
+  the next sweep still does. Nor does it catch a container a leftover `docker` client creates after
+  its second pass, or services a leftover `compose` creates later: those wait for the next sweep too.
+  An editor session gets less: the outer `coop acp` supervisor runs no `box.Run`, so it has no
+  lifeline, and the session's services carry ITS label (`serviceSupervisor`). Killing the inner child
+  removes that child's box; killing the outer most likely lets the child see stdin end and finish
+  cleanly (quit), so the services wait for the next `coop acp`, loop or `coop down`. Killing the lifeline too (a reboot, a kill of every coop process) leaves
   only the sweep.
 - **The next invocation's sweep** — pull-only, the backstop, below. Until 2026-08-09 nothing in a
   container's labels said who would have removed it.
@@ -293,6 +298,8 @@ Traps:
   point at a fresh temp root.
 
 ## Changelog
+- 2026-11-21 — narrowed the lifeline's promise for editor sessions (their services keep the outer
+  supervisor's label, which has no lifeline) and named what a leftover client creates late.
 - 2026-11-21 — added the launch lifeline: a killed coop's box, broker, run services and filtered run
   go within seconds, not at the next launch (task 2026-11-21-stop-a-box-whose-loop-was-killed-from-committing);
   checked lifeline.go, run.go, sweep.go, cli.go, main.go and the scripted detached crash test.
