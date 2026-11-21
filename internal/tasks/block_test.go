@@ -201,6 +201,10 @@ func TestBlockRefusesToOverwriteAnEditedScaffold(t *testing.T) {
 	if code != 1 || !errors.Is(err, errDecisionAlreadyWritten) {
 		t.Fatalf("edited scaffold request = %d, %v; want existing-decision refusal", code, err)
 	}
+	// The task was blocked before this call; the refusal must not read as if this call blocked it.
+	if !strings.Contains(err.Error(), "picked was already blocked, and this decision request was not saved") {
+		t.Errorf("refusal = %q", err)
+	}
 	if got := readFile(t, dec); got != edited {
 		t.Errorf("edited scaffold was overwritten:\n%s", got)
 	}

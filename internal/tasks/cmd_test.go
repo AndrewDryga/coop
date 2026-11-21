@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/ui"
 )
@@ -2184,8 +2185,23 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 		t.Fatalf("done: code=%d err=%v", code, err)
 	}
 	// Same title → same id, but it now lives in 99_done/ — the re-add must fail.
-	if code, err := tasksFolderAdd(root, []string{"redo me"}, StateTodo, "tasks add"); code == 0 || err == nil {
-		t.Fatalf("re-add of a shipped id should be rejected, got (%d, %v)", code, err)
+	code, err := tasksFolderAdd(root, []string{"redo me"}, StateTodo, "tasks add")
+	var usage *ui.UsageError
+	if code != 1 || !errors.As(err, &usage) {
+		t.Fatalf("re-add of a shipped id should be a drawn refusal, got (%d, %v)", code, err)
+	}
+	// The refusal says where the task is and how to go on, like every other refusal.
+	if usage.Cause != "Its state is done." || !slices.Equal(usage.Rows, [][2]string{
+		{"See it:", "coop tasks path " + id}, {"Or use another title:", `coop tasks add "<title>"`},
+	}) {
+		t.Fatalf("collision refusal = %+v", usage)
+	}
+	if code, err := tasksFolderAdd(root, []string{"idea one"}, StateBacklog, "backlog add"); code != 0 || err != nil {
+		t.Fatalf("backlog add: code=%d err=%v", code, err)
+	}
+	if _, err := tasksFolderAdd(root, []string{"idea one"}, StateTodo, "tasks add"); !errors.As(err, &usage) ||
+		!slices.Equal(usage.Rows, [][2]string{{"Promote it:", "coop backlog promote " + time.Now().Format("2006-01-02") + "-idea-one"}}) {
+		t.Fatalf("collision with a backlog idea = %v", err)
 	}
 	items := mustReadTaskTree(t, root)
 	if len(items) != 1 || items[0].State != StateDone {

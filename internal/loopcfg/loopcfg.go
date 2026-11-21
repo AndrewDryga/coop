@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -164,6 +165,38 @@ func readLoopConfig(repo string) ([]byte, error) {
 	}
 }
 
+// workCommandAsText explains a work.command written as one line of text, the common slip, with
+// the list form of that same command; nil when work.command is not text.
+func workCommandAsText(name string, data []byte) error {
+	var doc yaml.Node
+	if yaml.Unmarshal(data, &doc) != nil || len(doc.Content) == 0 {
+		return nil
+	}
+	command := mappingValue(mappingValue(doc.Content[0], "work"), "command")
+	if command == nil || command.Kind != yaml.ScalarNode || strings.TrimSpace(command.Value) == "" {
+		return nil
+	}
+	words := strings.Fields(command.Value)
+	for i, w := range words {
+		words[i] = strconv.Quote(w)
+	}
+	return fmt.Errorf("%s line %d: work.command should be a list, one item per argument: command: [%s]",
+		name, command.Line, strings.Join(words, ", "))
+}
+
+// mappingValue is key's value in the mapping n, or nil.
+func mappingValue(n *yaml.Node, key string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			return n.Content[i+1]
+		}
+	}
+	return nil
+}
+
 // Parse reads a loop config from data as Load reads .agent/loop.yaml: unknown keys and malformed
 // ladders are errors, each naming name. coop eval checks a recipe with it, by its own path, before
 // writing it into every trial.
@@ -172,6 +205,12 @@ func Parse(name string, data []byte) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)                                             // an unknown key is a typo, not silently ignored
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) { // EOF = an all-comments/empty file
+		// Only when it is the one problem, so the list never hides another one.
+		if problems := new(yaml.TypeError); errors.As(err, &problems) && len(problems.Errors) == 1 {
+			if fix := workCommandAsText(name, data); fix != nil {
+				return nil, fix
+			}
+		}
 		return nil, yamltext.InFile(name, err)
 	}
 	var extra yaml.Node

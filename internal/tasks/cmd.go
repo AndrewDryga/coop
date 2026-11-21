@@ -510,8 +510,8 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	}
 	id, setup, err := createTaskFolder(project, root, state, slug, title, values, subtasks)
 	if err != nil {
-		if errors.As(err, &taskExistsError{}) {
-			return 1, err
+		if exists := (taskExistsError{}); errors.As(err, &exists) {
+			return 1, exists.refusal(cmdLabel)
 		}
 		return -1, err
 	}
@@ -546,9 +546,22 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 }
 
 // taskExistsError is the id-collision refusal `coop tasks add` reports as a user error (exit 1).
-type taskExistsError struct{ msg string }
+// Its message is what the in-box task channel reports; refusal is the CLI's drawn block.
+type taskExistsError struct{ msg, id, state string }
 
 func (e taskExistsError) Error() string { return e.msg }
+
+// refusal is the collision as the CLI draws it: where the task is, and how to go on.
+func (e taskExistsError) refusal(cmdLabel string) *ui.UsageError {
+	id := ui.SafeInline(e.id)
+	if e.state == StateBacklog {
+		return ui.CommandFailed("Task "+id+" already exists", "It is an idea in the backlog.",
+			[2]string{"Promote it:", "coop backlog promote " + id})
+	}
+	return ui.CommandFailed("Task "+id+" already exists", "Its state is "+stateWords(e.state)+".",
+		[2]string{"See it:", "coop tasks path " + id},
+		[2]string{"Or use another title:", "coop " + cmdLabel + ` "<title>"`})
+}
 
 // createTaskFolder writes a new task folder <date>-<slug> under root/state from the given body values
 // and returns its id, for `coop tasks add` and `coop backlog add`. A queue that does not exist yet is
@@ -627,9 +640,9 @@ func createTaskFolderIn(queue *os.Root, state, slug, title string, values map[st
 		dir.Close()
 		switch {
 		case err == nil && st == StateBacklog:
-			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/ — promote it (coop backlog promote %s) instead of re-adding", id, StateBacklog, id)}
+			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/ — promote it (coop backlog promote %s) instead of re-adding", id, StateBacklog, id), id, st}
 		case err == nil:
-			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, st)}
+			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, st), id, st}
 		case !errors.Is(err, os.ErrNotExist):
 			return "", err
 		}
@@ -652,7 +665,7 @@ func createTaskFolderIn(queue *os.Root, state, slug, title string, values map[st
 	defer stateDir.Close()
 	if err := stateDir.Mkdir(id, 0o755); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, state)}
+			return "", taskExistsError{fmt.Sprintf("task %q already exists in %s/", id, state), id, state}
 		}
 		return "", err
 	}
@@ -738,7 +751,8 @@ var stdinIsTerminal = func() bool { return ui.IsTerminal(os.Stdin) }
 // has no terminal, so an unattended run gets this instead of a way past the checklist.
 var errForceCloseNeedsTerminal = &ui.UsageError{
 	Headline: "coop tasks done --force needs a person at a terminal",
-	Cause:    "It closes a task whose checklist is unfinished.\nAn agent leaves unfinished items open, or blocks the task.",
+	Cause:    "It closes a task as it stands, whatever is still open.\nAn agent leaves unfinished items open, or blocks the task.",
+	Rows:     [][2]string{{"", "A person who checked the work runs the same command in a terminal."}},
 }
 
 var errTaskClaimedByOther = errors.New("task is claimed by another live process")
@@ -1345,7 +1359,6 @@ func noteLandedFork(landed *LandedForkTask) {
 	}
 }
 
-// noteForcedClose tells the person what a forced close left in the task's log.
 // noteEditedArchivedTasks tells the person what leftover-window recovery found on the way to their
 // forced close: archived tasks whose files changed after an interrupted command counted them done.
 func noteEditedArchivedTasks(ids []string) {
@@ -1353,14 +1366,15 @@ func noteEditedArchivedTasks(ids []string) {
 	for i, id := range ids {
 		safe[i] = ui.SafeInline(id)
 	}
-	noun, verb := "task", "was"
+	noun, verb, stays := "task", "was", "stays"
 	if len(ids) > 1 {
-		noun, verb = "tasks", "were"
+		noun, verb, stays = "tasks", "were", "stay"
 	}
-	ui.Note("  An earlier command was interrupted, and the archived %s %s %s edited since. Coop cleared that leftover record; the %s stay in done.",
-		noun, strings.Join(safe, ", "), verb, noun)
+	ui.Note("  An earlier command was interrupted, and the archived %s %s %s edited since. Coop cleared that leftover record; the %s %s in done.",
+		noun, strings.Join(safe, ", "), verb, noun, stays)
 }
 
+// noteForcedClose tells the person what a forced close left in the task's log.
 func noteForcedClose(f *forcedClose) {
 	if f == nil {
 		return
@@ -2613,6 +2627,10 @@ func tasksFolderBlock(root string, args []string) (int, error) {
 			code := -1
 			if errors.Is(err, errDecisionAlreadyWritten) {
 				code = 1
+			}
+			if t.State == StateBlocked {
+				// Nothing moved: say so, not that this command blocked it.
+				return code, fmt.Errorf("%s was already blocked, and this decision request was not saved: %w", t.ID, err)
 			}
 			return code, fmt.Errorf("%s is blocked, but its decision request was not saved: %w", t.ID, err)
 		}

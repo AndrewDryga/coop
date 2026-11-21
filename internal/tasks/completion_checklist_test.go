@@ -1054,6 +1054,9 @@ func TestDoneForceNeedsATerminal(t *testing.T) {
 	if code != 2 || !errors.Is(err, errForceCloseNeedsTerminal) {
 		t.Fatalf("done --force without a terminal = %d, %v; want the terminal refusal", code, err)
 	}
+	if !strings.Contains(err.Error(), "runs the same command in a terminal") {
+		t.Errorf("the terminal refusal does not tell a person what to do:\n%s", err)
+	}
 	if !pathExists(filepath.Join(root, StateInProgress, "unfinished")) || pathExists(filepath.Join(root, StateInProgress, "unfinished", "log.md")) {
 		t.Fatal("a refused forced close moved the task or left a note")
 	}
@@ -1184,8 +1187,10 @@ func TestDoneForceKeepsEveryOtherRefusal(t *testing.T) {
 		if code != 0 || err != nil {
 			t.Fatalf("done --force past an edited archived task = %d, %v; want the close", code, err)
 		}
-		if want := "the archived task archived was edited since"; !strings.Contains(out, want) {
-			t.Errorf("output does not report the edited task (%q):\n%s", want, out)
+		for _, want := range []string{"the archived task archived was edited since", "the task stays in done."} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output does not report the edited task (%q):\n%s", want, out)
+			}
 		}
 		if done, ok := mustCurrentTask(t, root, "unfinished"); !ok || done.State != StateDone {
 			t.Fatal("the forced close did not reach done")

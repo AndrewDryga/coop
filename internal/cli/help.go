@@ -1201,9 +1201,9 @@ OPTIONS
   --force is for a person at a terminal who has checked the work. Coop leaves
   the checklist as it is and notes what was open in the task's log.
   It also closes a task with several commits carrying its trailer while a
-  final review waits, when the commits are already published. The log names
-  them, and a later review cannot reopen the task. The close still waits for
-  a running loop to end.
+  final review waits, for example when the commits are already published.
+  The log names them, and a later review cannot reopen the task. The close
+  still waits for a running loop to end.
   Agents never use it.
 
   A fork's task completes when you merge the fork. If you brought the commit

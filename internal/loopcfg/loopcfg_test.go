@@ -139,6 +139,10 @@ func TestLoadNamesTheFileAndLineWithoutTheParser(t *testing.T) {
 			File + ` line 2: unknown setting "bogus"` + "\n" + File + ` line 4: unknown setting "round"`},
 		{"wrong type", "signoff:\n  rounds: two\n", File + ` line 2: "two" should be a number`},
 		{"broken syntax", "work: [\n", File + " line 1: did not find expected node content"},
+		// The manual pass of 2026-11-21 wrote the command as one line and got no hint of the list form.
+		{"command as text", "work:\n  command: sleep 120\n", File + ` line 2: work.command should be a list, one item per argument: command: ["sleep", "120"]`},
+		{"command as text beside a typo", "work:\n  command: sleep 120\n  bogus: 1\n",
+			File + ` line 2: "sleep 120" should be a list` + "\n" + File + ` line 3: unknown setting "bogus"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Load(write(t, tc.body))
