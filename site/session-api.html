@@ -796,7 +796,8 @@ starts accepting them again only when use drops to <code>storage.low_watermark_b
 must leave <code>storage.reserve_bytes</code> free. These checks don&#39;t limit how much data an already-running
 task writes in its workspace.</p>
 <p>Before reporting support for <code>job-setup:2</code>, <code>repository-freshness:2</code>, <code>session-evidence:1</code>,
-<code>controller-tools:1</code>, <code>project-runtime:1</code>, <code>job-preset:1</code>, <code>review-commit-message:1</code> or <code>checkpoint-upstream:1</code>, the connector checks the running daemon&#39;s
+<code>controller-tools:1</code>, <code>project-runtime:1</code>, <code>job-preset:1</code>, <code>review-commit-message:1</code>,
+<code>existing-pr-publication:1</code> or <code>checkpoint-upstream:1</code>, the connector checks the running daemon&#39;s
 <code>GET /v1/capabilities</code> response for the matching version. If it can&#39;t verify a capability,
 it leaves it out of the next hello.</p>
 <p>Worker protocol v2 reports supported features, runtime capacity and optional disk measurements.
@@ -1057,10 +1058,9 @@ under the v2 checkpoint description lists every answer.</p>
 <p>Other workspace states you can fix also refuse with <code>409 invalid_session_state</code> and say why:
 unresolved Git conflicts, changed submodules, an untracked link or special file, too many or too
 large untracked files, a missing or changed bound task, or a restore that must finish first.
-Restore answers <code>400 invalid_request</code> for a malformed descriptor or a bundle it must not apply
-(submodule changes, an unused LFS object, a file that would replace fork authority, a task offer
-other than the session&#39;s task). It also
-answers <code>400 invalid_request</code> when <code>Content-Length</code> is missing or differs from the descriptor&#39;s
+Restore answers <code>400 invalid_request</code> for a malformed descriptor or bundle, or a bundle it must
+not apply (submodule changes, an unused LFS object, a file that would replace fork authority, a
+task offer other than the session&#39;s task). It also answers <code>400 invalid_request</code> when <code>Content-Length</code> is missing or differs from the descriptor&#39;s
 size, and <code>415</code> when the content type differs from the descriptor&#39;s. A worker fault stays
 <code>500 internal_error</code>.</p>
 <p>The bundle download answers <code>404 operation_not_found</code> when the operation isn&#39;t a finished
@@ -1293,9 +1293,13 @@ become repository changes. The container sees the path <code>.coop-output/...</c
 stored in co:op&#39;s private session state on the host, never in the session&#39;s checkout. Text
 attachments are kept there under <code>.coop-output/.inputs/</code> so later turns can reread them.</p>
 <p>Cancellation first asks ACP to cancel the turn. co:op then closes the turn&#39;s ACP process and gives
-it up to five seconds to stop and remove its box, kills whatever is still running, and removes the
-box. The cancel answers with the <code>cancelled</code> turn once that cleanup is proven; a process that could
-not be stopped leaves the cancel <code>operation_uncertain</code>. This doesn&#39;t undo actions already taken in
+it up to five seconds (thirty with filtered networking) to stop and remove its box, kills whatever
+is still running, and removes the box. The cancel request waits about 15 seconds for that
+cleanup, in both network modes, and answers with the <code>cancelled</code> turn once the cleanup is proven.
+The wait is capped because a connected worker sends its write requests one at a time, so other
+sessions&#39; requests to the same worker wait behind a cancel. A cleanup still running when the wait
+ends, or a process that could not be stopped, answers <code>operation_uncertain</code>; read the turn later,
+since the operation settles once the cleanup finishes. This doesn&#39;t undo actions already taken in
 external systems.</p>
 <h3 id="events">Events</h3>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Events code example" tabindex="0"><code class="language-bash">curl --unix-socket &#34;$SOCKET&#34; \

@@ -45,6 +45,63 @@
   worker's own sign-ins at most every five minutes. Controllers decode the hello strictly, so
   upgrade the controller to one that accepts `account_usage` before the worker.
 
+- **A final review left unfinished no longer blocks closing other tasks.** `coop tasks done`
+  refused every task with follow-up commits while an old loop review waited on an earlier task,
+  even weeks later. It now goes through when a merge commit sits between that task and your
+  commits, because the review can no longer replay them.
+
+- **A final review that can no longer run hands its tasks to you.** A review whose range gained
+  a merge commit used to make every later `coop loop` exit 1 at the final review. The loop now
+  moves those tasks to blocked with the reason, reviews the rest and goes on. Close such a task
+  with `coop tasks done <id> --force` once you have checked it, or unblock it to send it back
+  to work.
+
+- **A blocked task with no answer is not closed by a plain `coop tasks done`.** The refusal names
+  `coop tasks decisions` and `coop tasks unblock`. A person's `--force` and `--from-fork` still
+  close it.
+
+- **A Claude effort that Claude Code does not have is refused before the box starts.** Claude
+  Code 2.1.330 only warns about a level such as `claude:opus/hgih` and runs at its default
+  effort. Coop now refuses anything but low, medium, high, xhigh and max. Codex and Grok levels
+  still pass through, and Codex refuses a bad one itself.
+
+- **A bad `COOP_<AGENT>_MODEL` is refused where it is used.** A run of that agent that reads the
+  setting refuses a value a target would refuse, and says whether it came from the environment or
+  from `coop.conf`. Other commands and other agents are not affected.
+
+- **`coop models` refreshes with another signed-in account.** When the default account needs a
+  new sign-in, the list is read with the next signed-in account, and the note says which.
+
+- **Session service fixes.** A store call cut short by a timeout no longer leaves later writes
+  failing at once with "database is locked" or running without foreign-key checks. A cancel waits
+  about 15 seconds for its turn's cleanup, up from 5, before it answers `operation_uncertain`. A
+  malformed checkpoint bundle answers restore with 400 instead of 500, a stale close names both
+  revisions, and the connector's untrusted-certificate refusal on macOS points to `--ca-file`.
+
+- **Security: a link in `.git` can no longer make Coop quote or use a host file.** An agent in a
+  box could replace `.git/commondir`, a worktree's `gitdir` backlink or `.git/config` with a link
+  to a file outside the repository. Coop then put that file's first line into an error, which
+  reached the task's log in the box's checkout, or took remote URLs from it. Coop now refuses such
+  a link before reading it. 15.2.1 and earlier are affected. If you keep `.git/config` as a
+  link on purpose, replace it with a copy.
+
+- **Shallow clones are refused with the reason and the way out.** A loop in a shallow clone now
+  refuses at start, before any agent runs, and names `git fetch --unshallow`; it used to fail
+  each attempt with "resolve raw audit commit". A fork made from a shallow clone warns at
+  creation. No message advises deleting `.git/shallow` any more: doing that broke the fork.
+
+- **Fork housekeeping.** Deleting a fork removes its lock file, and `coop fork rm --gone` also
+  removes record folders that hold only old fork lock files. `coop fork ls` shows the fork's
+  account and counts its last session as activity. The command suggested for starting a new
+  isolated fork keeps the saved account or preset.
+
+- **Clearer refusals.** `coop help` refuses an unknown option with exit 2. Messages now name the
+  real problem and the next step for: a target with two `/`, `--export-job` on a project preset,
+  `coop init` with nobody signed in, `coop fork ls` outside Git, a mistyped `coop tasks` verb
+  outside a project, a duplicate task title, `--force` without a terminal, a one-line
+  `work.command`, an unset `HOME`, and `coop net check --run`. `coop net watch` shows local time,
+  and the approval review for a `box.egress` change says why approval is needed.
+
 ## 15.2.1
 
 - **A restored checkpoint has its empty task queue folders again.** Restore dropped the empty

@@ -191,7 +191,12 @@ without the limit to finish that review.</p>
 commits made since the run started. You can sign those commits between runs. If any commit seen
 by a previous review has changed, including a repair commit that was on top of the branch, co:op
 reviews the task again. If it finds no matching commit or more than one, it stops before review
-and lists the task and commits.</p>
+and lists the task and commits. The review reads only a straight line of commits. If a merge
+commit has landed among them, such as upstream work merged while the loop was stopped, co:op
+cannot tell whether the merge hides work from the review. It drops that review, blocks the task
+for your decision and goes on. Check the work, including what the merge brought in, then close it
+with <code>coop tasks done &lt;id&gt; --force</code>. Unblocking it has it worked again, but its next review covers
+the same history, so it comes back to you while that merge is in it.</p>
 <h3 id="task-locks-and-claims">Task locks and claims</h3>
 <p>While an agent works on a task, co:op holds a lock on the host under
 <code>~/.local/state/coop/task-leases/</code>, so another loop skips that task and can work on an independent
@@ -221,8 +226,9 @@ to undo any completion that had no authorized owner. Tasks completed outside a s
 remain part of the ordinary task history.</p>
 <p>To check a completed task, co:op reads the Git history that the branch can reach. It stops at
 100,000 commits or 128 MB of commit data, so that a planted history can&#39;t use up the host&#39;s memory.
-In a larger repository the loop refuses every completion, and a shallow clone doesn&#39;t help because
-the loop refuses those too.</p>
+In a larger repository the loop refuses every completion. A shallow clone lacks the oldest commits,
+so the loop refuses to start in one, before any agent runs: fetch the full history first
+(<code>git fetch --unshallow</code>).</p>
 <h3 id="sweeps-and-commit-hooks">Sweeps and commit hooks</h3>
 <p>The <code>/sweep</code> skill has a <code>Stop</code> hook that keeps an active sweep running while it has tasks to work
 on, without holding other sessions open. <code>coop init</code> sets it up in new projects. A repo set up by
