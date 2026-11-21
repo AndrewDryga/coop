@@ -1037,6 +1037,14 @@ func TestDoneRefusesABlockedTaskWhoseDecisionWaits(t *testing.T) {
 			if current.State != StateBlocked {
 				t.Fatalf("the refused close moved the task to %s", current.State)
 			}
+			// The person the refusal names closes it as it stands; the decision stays unanswered.
+			forceAtTerminal(t)
+			if code, err := CmdTasksFolder("", root, []string{"done", "pick-storage", "--force"}); code != 0 || err != nil {
+				t.Fatalf("done --force = (%d, %v), want it closed", code, err)
+			}
+			if current, _ = mustCurrentTask(t, root, id); current.State != StateDone || readFileString(filepath.Join(current.Dir, "decision.md")) != tc.decision {
+				t.Fatalf("done --force left the task %s with decision.md %q", current.State, readFileString(filepath.Join(current.Dir, "decision.md")))
+			}
 		})
 	}
 }

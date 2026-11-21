@@ -468,3 +468,28 @@ func TestDoneFromForkNeedsATerminal(t *testing.T) {
 	}
 	heldByFork(t, repo, root, id, assignment)
 }
+
+// A fork's task whose commit a person brought over completes with --from-fork even when the
+// project's copy waits blocked on an unanswered decision: --from-fork is a person's command, and the
+// work it closes has already landed, so the plain close's open-decision refusal does not apply.
+func TestDoneFromForkCompletesALandedTaskWhoseCopyIsBlocked(t *testing.T) {
+	forceAtTerminal(t)
+	const id = "fix-login-retries"
+	repo, root, _ := pausedForkTask(t, id)
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "Fix login retries\n\nCoop-Task: "+id)
+	blocked := filepath.Join(root, StateBlocked, id)
+	if err := os.MkdirAll(filepath.Dir(blocked), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, StateInProgress, id), blocked); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFile(t, filepath.Join(blocked, "decision.md"), renderDecisionScaffold(id, "Fix login retries"))
+	code, err := CmdTasksFolder(repo, root, []string{"done", id, "--from-fork"})
+	if code != 0 || err != nil {
+		t.Fatalf("done --from-fork = %d, %v", code, err)
+	}
+	if done, _ := mustCurrentTask(t, root, id); done.State != StateDone {
+		t.Fatalf("task after done --from-fork = %s, want done", done.State)
+	}
+}

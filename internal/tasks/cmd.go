@@ -1074,7 +1074,8 @@ func tasksFolderMoveWith(root string, args []string, newState, verb string, opts
 		return 0, nil
 	}
 	if newState == StateDone {
-		if !opts.forceClose {
+		// --from-fork is exempt: it is a person's command too, and the work has already landed.
+		if !opts.forceClose && !opts.fromFork {
 			if err := openDecisionRefusal(t, doneRetry(t, opts)); err != nil {
 				return 1, err
 			}
