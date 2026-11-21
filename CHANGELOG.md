@@ -12,8 +12,12 @@
   are). Usage prices cover Fable 5.2, Mythos 5.2 and Haiku 5.5 (five times its rates past
   100,000 prompt tokens), and Sonnet 5.5's cache reads at $0.10. Filtered sign-ins need no new
   route: Codex's model list now names 0.170.0, and Claude's MCP directory read, refused as before,
-  moved to a new path. Codex stays at 0.170.0 because its adapter requires it; GPT-6.2 arrived in
-  0.171.0. The next launch rebuilds the box image, and filtered runs redo their network setup once.
+  moved to a new path. Codex stays at 0.170.0 because its adapter requires it. The next launch
+  rebuilds the box image, and filtered runs redo their network setup once.
+
+- **GPT-6.2 Sol and Astra, and GPT-6.1 Terra.** `coop models codex` lists them first, as Codex
+  does, and usage prices cover them. Codex's own model list offers GPT-6.2 from client 0.166.0
+  and GPT-6.1 Terra from 0.153.0, so the locked 0.170.0 can choose them.
 
 - **A task with follow-up commits closes without your override.** `coop tasks done` used to
   refuse a task that more than one commit carried the `Coop-Task` trailer of, and an agent whose

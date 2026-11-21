@@ -340,8 +340,12 @@ func (codexAgent) Usage() UsageSpec {
 		}, ParseHistory: codexUsageHistory, Price: codexUsagePrice}
 }
 
-// https://developers.openai.com/api/docs/pricing — standard rates verified 2026-10-14.
+// https://developers.openai.com/api/docs/pricing — standard rates verified 2026-10-14; GPT-6.2
+// Astra and Sol and GPT-6.1 Terra 2026-11-21 (Codex lists them from client 0.166.0 and 0.153.0).
 var codexUsageRates = map[string]usageTariff{
+	"gpt-6.2-astra": {Input: 8, Read: .4, Write: 10, Output: 40, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-6.2-sol":   {Input: 2, Read: .1, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
+	"gpt-6.1-terra": {Input: 1, Read: .05, Write: 1.25, Output: 5, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
 	"gpt-6-astra":   {Input: 10, Read: 1, Write: 12.5, Output: 50, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
 	"gpt-6.1-sol":   {Input: 2, Read: .1, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
 	"gpt-6-sol":     {Input: 2, Read: .2, Write: 2.5, Output: 10, LongAt: 272001, LongInput: 2, LongOutput: 1.5, RequireWrites: true},
@@ -883,6 +887,9 @@ fi
 // Models are common codex model ids. Illustrative — any id the CLI accepts works.
 func (codexAgent) Models() []string {
 	return []string{
+		"gpt-6.2-sol",
+		"gpt-6.2-astra",
+		"gpt-6.1-terra",
 		"gpt-6.1-sol",
 		"gpt-6-astra",
 		"gpt-6-sol",

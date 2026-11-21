@@ -15,6 +15,9 @@ func TestUsageTokenValue(t *testing.T) {
 	}{
 		{"claude", "claude-sonnet-4-6", 20, 100, 10, 20, 40, .0008475},
 		{"claude", "claude-haiku-4-5-20251001", 20, 100, 10, 20, 40, .0002825},
+		{"codex", "gpt-6.2-astra", 0, 40, 60, 0, 10, .001016},
+		{"codex", "gpt-6.2-sol", 0, 40, 60, 0, 10, .000254},
+		{"codex", "gpt-6.1-terra", 0, 40, 60, 0, 10, .000127},
 		{"codex", "gpt-6.1-sol", 0, 40, 60, 0, 10, .000254},
 		{"codex", "gpt-6-sol", 0, 40, 60, 0, 10, .000258},
 		{"codex", "gpt-5.6-terra", 0, 40, 60, 0, 10, .000278},
@@ -51,6 +54,10 @@ func TestUsageTokenValue(t *testing.T) {
 		input           int64
 		expected        float64
 	}{
+		{"codex", "gpt-6.2-astra", 272000, 2.216},
+		{"codex", "gpt-6.2-astra", 272001, 4.412016},
+		{"codex", "gpt-6.1-terra", 272000, .277},
+		{"codex", "gpt-6.1-terra", 272001, .551502},
 		{"codex", "gpt-6.1-sol", 272000, .554},
 		{"codex", "gpt-6.1-sol", 272001, 1.103004},
 		{"codex", "gpt-6-sol", 272000, .554},
