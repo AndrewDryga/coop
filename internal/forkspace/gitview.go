@@ -548,7 +548,7 @@ func configuredWorktree(gitDir string) (string, error) {
 	defer os.RemoveAll(scratch)
 	worktree := ""
 	for _, name := range []string{"config", "config.worktree"} {
-		data, _, err := readGitMetadata(filepath.Join(gitDir, name), gitConfigLimit)
+		data, err := readGitConfigNoFollow(filepath.Join(gitDir, name))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -593,8 +593,10 @@ func checkStoreLinks(gitDir, commonDir string) error {
 			return storeLinkError(path)
 		}
 	}
-	// HEAD may be the link to refs/ that old git wrote (gitCanUse accepts it).
-	if target, err := os.Readlink(filepath.Join(gitDir, "HEAD")); err == nil && !strings.HasPrefix(target, "refs/") {
+	// HEAD may be the link to refs/ that old git wrote (gitCanUse accepts it), but not one that
+	// climbs back out, as refs/../../.git-credentials would: the view copies HEAD's contents.
+	if target, err := os.Readlink(filepath.Join(gitDir, "HEAD")); err == nil &&
+		(!filepath.IsLocal(target) || !strings.HasPrefix(filepath.Clean(target), "refs/")) {
 		return storeLinkError(filepath.Join(gitDir, "HEAD"))
 	}
 	trees := []string{filepath.Join(commonDir, "objects", "pack")}

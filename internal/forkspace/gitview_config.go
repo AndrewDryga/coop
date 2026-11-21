@@ -45,9 +45,10 @@ func trustedGitConfig(ctx context.Context, localConfig, scratchDir string) ([]by
 }
 
 // readGitConfigSource reads the repository's local config as a bounded regular file, so a FIFO or
-// a device the agent put there fails fast; a missing file is an empty config.
+// a device the agent put there fails fast, and a link is refused (readGitConfigNoFollow); a missing
+// file is an empty config.
 func readGitConfigSource(localConfig string) ([]byte, error) {
-	data, _, err := readGitMetadata(localConfig, gitConfigLimit)
+	data, err := readGitConfigNoFollow(localConfig)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

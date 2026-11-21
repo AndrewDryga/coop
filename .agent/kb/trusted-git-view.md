@@ -52,10 +52,15 @@ Git/view failures instead of reporting them as branch loss or drift.
 `commondir`, a linked worktree's `gitdir` backlink, `HEAD`, the config) goes through
 `readGitMetadata` (`exclude_unix.go`; `readGitFile` is its 64 KiB form): it follows a link as git
 does, opens with `O_NONBLOCK`, requires a regular file by `fstat`, and refuses one over its limit
-before reading. `commondir` and the `gitdir` backlink are the exception: Git writes them as plain
-files, and errors quote them, so `readGitPointerNoFollow` opens them with `O_NOFOLLOW` and refuses
-a link before reading. A box could otherwise link one to a host file and have its contents quoted
-into a task's log.md in its own checkout (the loop writes a stopped attempt's error there). Limits: 64 KiB for pointers and HEAD, 4 MiB for the config (read on every refresh),
+before reading. `commondir`, the `gitdir` backlink and the config (`config`, and a submodule's
+`config.worktree`) are the exception: Git writes them as plain files, so `readGitFileNoFollow`
+opens them with `O_NOFOLLOW` and refuses a link before reading. Errors quote the pointers, and the
+loop writes a stopped attempt's error into a task's log.md in the box's own checkout; the view
+projects remote URLs and the user's identity from the config into what host git runs with, so a
+config linked to a host Git config handed host git, and `git remote get-url`, that file's values.
+Repository includes are never followed (`git config --file` reads one file; `include.*` is off the
+allowlist). `info/exclude` is still reached through a view link, and git follows a link there, but
+it only decides which paths are ignored and nothing Coop runs prints it. Limits: 64 KiB for pointers and HEAD, 4 MiB for the config (read on every refresh),
 1 GiB for the `packed-refs`, `shallow` and index that only the fsck and observation snapshots copy
 (`gitFileTooLargeError` names the file and both sizes; an oversize index also gets
 `git update-index --index-version 4`, which git documents as 30-50% smaller). A plain
@@ -99,7 +104,7 @@ worktree) whose `core.worktree` names the folder back (`checkSubmodule`; a box w
 submodule cannot point at a sibling's). `checkStoreLinks` then refuses any link where git keeps the
 store: `objects`, `objects/info`, `objects/pack`, the 256 loose-object folders, `packed-refs`,
 `shallow`, `index`, a linked worktree's `index`, `logs` and `refs/`, anything inside
-`objects/pack/`, `refs/`, `logs/` or `reftable/`, and a `HEAD` link not into `refs/`. A linked pack
+`objects/pack/`, `refs/`, `logs/` or `reftable/`, and a `HEAD` link not into `refs/` (one through `refs/..` climbs out and is refused too). A linked pack
 folder needs no object names and linked refs or logs give them away, so no single top-level check
 is enough. Still followed, since each yields an object only by its name: `objects/info/alternates`
 (refusing them broke shared-clone companion sources,
@@ -269,6 +274,10 @@ person's own git), but `includeIf "gitdir:"`/`"onbranch:"` cannot match without 
 repository config is ever read: trust still starts only at the global file.
 
 ## Changelog
+- 2026-11-21 — a repository or submodule config linked to a host file was read through the link,
+  and the view projected its remote URLs and identity into host git's config; it is now read with
+  `O_NOFOLLOW` and a link is refused. A `HEAD` link through `refs/..` is refused like any other
+  link out of `refs/` (`TestHostGitNeverTakesValuesFromAFileOutsideTheRepository`).
 - 2026-11-21 — a `commondir` or `gitdir` backlink linked to a host file had its contents quoted in
   the view's error, which a loop writes to the task's log.md in the box's checkout; both are now
   read with `O_NOFOLLOW` and a link is refused (`TestHostGitNeverQuotesAFileAPointerLinksTo`).

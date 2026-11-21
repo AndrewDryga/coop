@@ -198,10 +198,25 @@ func readGitMetadata(path string, limit int64) ([]byte, os.FileInfo, error) {
 // wherever the error goes, a task's log.md in the box's own checkout among them. A link is refused
 // before anything is read.
 func readGitPointerNoFollow(path string) ([]byte, error) {
-	data, _, err := openGitMetadata(path, gitPointerLimit, syscall.O_NOFOLLOW)
+	return readGitFileNoFollow(path, gitPointerLimit,
+		"remove the link, and if this is a linked worktree, run `git worktree repair` in it")
+}
+
+// readGitConfigNoFollow reads a repository's config (or config.worktree), which git writes as a
+// plain file, without following a link. The view projects remote URLs and the user's name and
+// email from it into the config host git runs with, so a box that linked it to a host Git config
+// file would have host git fetch, push and commit with that file's values.
+func readGitConfigNoFollow(path string) ([]byte, error) {
+	return readGitFileNoFollow(path, gitConfigLimit,
+		"if it names this repository's own config, replace the link with a copy of that file")
+}
+
+// readGitFileNoFollow reads a file git writes as a plain file, refusing a link before reading
+// anything; fix tells the user how to put the plain file back.
+func readGitFileNoFollow(path string, limit int64, fix string) ([]byte, error) {
+	data, _, err := openGitMetadata(path, limit, syscall.O_NOFOLLOW)
 	if errors.Is(err, syscall.ELOOP) {
-		return nil, fmt.Errorf("%s is a link, but Git writes it as a plain file, so Coop does not follow it; "+
-			"remove the link, and if this is a linked worktree, run `git worktree repair` in it", path)
+		return nil, fmt.Errorf("%s is a link, but Git writes it as a plain file, so Coop does not follow it; %s", path, fix)
 	}
 	return data, err
 }

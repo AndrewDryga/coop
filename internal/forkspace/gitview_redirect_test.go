@@ -246,3 +246,92 @@ func TestHostGitNeverQuotesAFileAPointerLinksTo(t *testing.T) {
 		})
 	}
 }
+
+// The view projects remote URLs and the user's identity from the repository's config into the
+// config host git runs with, and copies HEAD. A box that links the config to a host Git config, an
+// include at one, or a HEAD that climbs out of refs/ to a host file, gets none of that file's values
+// into host git's config, its output or an error.
+func TestHostGitNeverTakesValuesFromAFileOutsideTheRepository(t *testing.T) {
+	const secret = "FAKE-SECRET-91c4"
+	host := filepath.Join(t.TempDir(), "gitconfig")
+	hostConfig := "[remote \"origin\"]\n\turl = https://user:" + secret + "@example.com/r.git\n" +
+		"[user]\n\tname = " + secret + "\n[core]\n\tworktree = /" + secret + "\n"
+	if err := os.WriteFile(host, []byte(hostConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const linkRefused = "is a link, but Git writes it as a plain file"
+	noSecret := func(t *testing.T, what, out string, err error) {
+		t.Helper()
+		if strings.Contains(out, secret) || (err != nil && strings.Contains(err.Error(), secret)) {
+			t.Errorf("%s carried a value from %s: %q, %v", what, host, out, err)
+		}
+	}
+	hostRun := func(dir string, args ...string) (string, error) {
+		cmd, err := GitCommand(t.Context(), dir, args...)
+		if err != nil {
+			return "", err
+		}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	relink := func(t *testing.T, target, path string) {
+		t.Helper()
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("config linked to a host file", func(t *testing.T) {
+		repo, _ := viewTestRepo(t)
+		relink(t, host, filepath.Join(repo, ".git", "config"))
+		out, err := hostRun(repo, "remote", "get-url", "origin")
+		noSecret(t, "a view", out, err)
+		if err == nil || !strings.Contains(err.Error(), linkRefused) || !strings.Contains(err.Error(), "config") {
+			t.Errorf("a view with a linked config = %q, %v; want the link refused by name", out, err)
+		}
+		observed, err := ObserveGit(t.Context(), repo, "remote", "get-url", "origin")
+		noSecret(t, "an observation", string(observed), err)
+		err = RunGitFsck(t.Context(), repo, os.Environ(), nil, nil)
+		noSecret(t, "fsck", "", err)
+	})
+
+	t.Run("submodule config linked to a host file", func(t *testing.T) {
+		gitDir := t.TempDir()
+		relink(t, host, filepath.Join(gitDir, "config"))
+		worktree, err := configuredWorktree(gitDir)
+		noSecret(t, "a submodule's backlink", worktree, err)
+		if err == nil || !strings.Contains(err.Error(), linkRefused) {
+			t.Errorf("a linked submodule config = %q, %v; want the link refused", worktree, err)
+		}
+	})
+
+	t.Run("include of a host file", func(t *testing.T) {
+		repo, run := viewTestRepo(t)
+		run("config", "include.path", host)
+		run("config", "includeIf.gitdir:/.path", host)
+		out, err := hostRun(repo, "config", "--list", "--show-origin")
+		noSecret(t, "a view", out, err)
+		if err != nil {
+			t.Fatalf("a view of a repository with includes = %v", err)
+		}
+	})
+
+	t.Run("HEAD linked out of refs", func(t *testing.T) {
+		repo, _ := viewTestRepo(t)
+		gitDir := filepath.Join(repo, ".git")
+		rel, err := filepath.Rel(filepath.Join(gitDir, "refs"), host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		relink(t, "refs/"+rel, filepath.Join(gitDir, "HEAD"))
+		out, err := hostRun(repo, "status")
+		noSecret(t, "a view", out, err)
+		if err == nil {
+			t.Errorf("a view followed HEAD out of refs/ to %s", host)
+		}
+		noSecret(t, "a ref command", "", GitRefCommand(t.Context(), repo, "update-ref", "refs/heads/x", "HEAD").Run())
+	})
+}
