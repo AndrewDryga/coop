@@ -213,14 +213,13 @@ func loadProjectNetworkReviewInputs(cfg *config.Config, repo string) (projectNet
 		input.HostPreference = nil
 	}
 	modeChanged := before != nil && approvalMode(input, before) != before.Posture
-	var pending *networkstate.PendingApproval
-	if !modeChanged {
-		preview, previewErr := networkstate.PreviewAdmission(root, canonical, exposed, input)
-		if previewErr != nil {
-			return projectNetworkReviewInputs{}, previewErr
-		}
-		pending = preview.Pending
+	// A mode change needs review whatever the preview finds, so there the preview only names the
+	// cause the review shows: a preview error leaves that line out rather than stopping the review.
+	preview, previewErr := networkstate.PreviewAdmission(root, canonical, exposed, input)
+	if previewErr != nil && !modeChanged {
+		return projectNetworkReviewInputs{}, previewErr
 	}
+	pending := preview.Pending
 	return projectNetworkReviewInputs{canonical: canonical, project: p, root: root, exposed: exposed,
 		admission: input, pending: pending, needs: modeChanged || pending != nil}, nil
 }

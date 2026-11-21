@@ -1338,8 +1338,10 @@ func netWatchEmit(d netWatchDeps, previous *networkstate.Inspection, current net
 	return netWriteAll(d.out, b.Bytes())
 }
 
+// netWatchAppend stamps lines in the reader's zone, like the other coop net
+// views, so a watched event and the run listing agree on the clock.
 func netWatchAppend(b *bytes.Buffer, p ui.Palette, at time.Time, lines []string) {
-	stamp := p.Dim(at.UTC().Format("15:04:05"))
+	stamp := p.Dim(at.Local().Format("15:04:05"))
 	for _, line := range lines {
 		fmt.Fprintf(b, "%s  %s\n", stamp, line)
 	}

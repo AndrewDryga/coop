@@ -1498,6 +1498,18 @@ func TestWatchStopsWhenTheReaderCancels(t *testing.T) {
 	}
 }
 
+// The watch stamps use the reader's zone, as coop net runs and blocked do.
+func TestWatchStampsUseLocalTime(t *testing.T) {
+	saved := time.Local
+	time.Local = time.FixedZone("away", -6*3600)
+	t.Cleanup(func() { time.Local = saved })
+	var b bytes.Buffer
+	netWatchAppend(&b, ui.Palette{}, time.Date(2026, 11, 21, 15, 3, 27, 0, time.UTC), []string{"Allowed example.com:443 · TLS"})
+	if got, want := b.String(), "09:03:27  Allowed example.com:443 · TLS\n"; got != want {
+		t.Errorf("watch line = %q, want %q", got, want)
+	}
+}
+
 func TestWatchDeltaCoalescesRepeatsAndBoundsItself(t *testing.T) {
 	repeat := func(n int) networkstate.Inspection {
 		var denials []networkview.Denial

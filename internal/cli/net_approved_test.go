@@ -424,6 +424,10 @@ func TestEveryRetainedReasonHasItsOwnSentence(t *testing.T) {
 // TestApprovedNetWatchStream pins the whole stream: the opening two lines, one
 // appended line per new event, and the shared final report exactly once.
 func TestApprovedNetWatchStream(t *testing.T) {
+	// Watch stamps read in the local zone; pin it so the fixture holds on any host.
+	saved := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = saved })
 	at := func(second int) time.Time { return time.Date(2026, 9, 10, 14, 49, 30+second, 0, time.UTC) }
 	live := netTestClean()
 	live.Receipt, live.Freshness, live.Cleanup = nil, networkstate.FreshnessFresh, "pending"

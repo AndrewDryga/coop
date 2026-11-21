@@ -575,10 +575,11 @@ What the report shows depends on what co:op could record:
 ## Runs, checks and exports
 
 Use any unique prefix of a run's ID to select it. The eight characters shown by `coop net runs` work
-with every run command. If a prefix matches more than one run, co:op refuses it and shows the longer
-prefixes you can use.
+with every run command. A run ID is looked up among the runs of every project on this machine, so
+a short prefix can match runs from other projects too. If a prefix matches more than one run, co:op
+refuses it and shows the longer prefixes you can use.
 
-These commands use the same project as `coop run`: the Git repository you're in, or the current
+The listings use the same project as `coop run`: the Git repository you're in, or the current
 folder outside Git. `coop net runs` shows this project's 25 newest runs. When there are more, it
 shows a count and the `--all` option. A run that is still going is marked `live`. Use
 `--all-projects` to see runs from every project, labeled by name and path. With `--json`, the

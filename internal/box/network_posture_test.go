@@ -439,6 +439,11 @@ func TestReviewCanReplaceRememberedOfflineWithFiltered(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	pending, err := ProjectNetworkAccess(t.Context(), cfg, repo)
+	if err != nil || pending.Pending == nil {
+		t.Fatalf("changed access = %+v, err %v", pending, err)
+	}
+
 	review, err := ReviewProjectNetwork(cfg, repo)
 	if err != nil {
 		t.Fatalf("offline-to-filtered review: %v", err)
@@ -446,6 +451,10 @@ func TestReviewCanReplaceRememberedOfflineWithFiltered(t *testing.T) {
 	defer review.Close()
 	if review.Unchanged() || review.Before().Posture != egress.None || review.After().Posture != egress.Filtered {
 		t.Fatalf("review = before %+v, after %+v, unchanged %v", review.Before(), review.After(), review.Unchanged())
+	}
+	// The review says why, in the words coop net and a launch use.
+	if got, want := review.Pending().Sentence(), pending.Pending.Sentence(); got == "" || got != want {
+		t.Fatalf("review cause = %q, want %q", got, want)
 	}
 	if err := review.Commit(t.Context()); err != nil {
 		t.Fatal(err)
