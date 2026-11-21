@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/ui"
 )
 
@@ -21,9 +22,30 @@ func noHeadCause(repo string) string {
 // the container runtime, the base image and network access all come after it. Run reads HEAD
 // again before its first box; this only moves the refusal ahead of that slow preparation.
 func RequireHead(repo string) error {
-	if _, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD"); err != nil {
+	head, err := forkspace.GitOutErr(repo, "rev-parse", "HEAD")
+	if err != nil {
 		ui.Failure("Could not start the loop", noHeadCause(repo))
 		return ui.Reported(fmt.Errorf("read HEAD of %s: %w", repo, err))
 	}
-	return nil
+	return RefuseShallowHistory(repo, head, "")
+}
+
+// RefuseShallowHistory refuses a loop in a shallow clone whose history the audit cannot read, before
+// any agent runs: every completion reads head's whole history from raw commits, so none could pass.
+// fork names the fork the loop works, "" for a local loop. It changes only when the refusal comes.
+func RefuseShallowHistory(repo, head, fork string) error {
+	if !tasks.ShallowCheckout(repo) || tasks.HistoryReadable(repo, head) {
+		return nil
+	}
+	if fork == "" {
+		ui.Failure("Could not start the loop",
+			"This checkout is a shallow clone, and Coop reads the whole history to check an attempt, so no task could be completed here. No agent ran.",
+			[2]string{"Fetch the full history, then start the loop again:", "git fetch --unshallow"})
+	} else {
+		ui.Failure("Could not start the loop",
+			"Fork "+fork+" was made from a shallow clone, and Coop reads the whole history to check an attempt, so no task could be completed in it. No agent ran.",
+			[2]string{"Fetch the full history into your checkout:", "git fetch --unshallow"},
+			[2]string{"Then remove this fork and start a new one:", "coop fork rm " + fork + " --force"})
+	}
+	return ui.Reported(fmt.Errorf("%s is a shallow clone whose history the audit cannot read", repo))
 }

@@ -10,11 +10,18 @@ import (
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/tasks"
+	"github.com/AndrewDryga/coop/internal/ui"
 )
 
 func setupForkBoundary(cfg *config.Config, repo, name string, isolated bool) error {
 	if err := cloneForkBoundary(repo, name, isolated); err != nil {
 		return err
+	}
+	// Creating one is allowed, as it always was; its loop and merge are what refuse it, so say it
+	// now rather than after an agent has worked in it.
+	if tasks.ShallowCheckout(repo) {
+		ui.Warn("this checkout is a shallow clone, so fork %s cannot be looped or merged until it has the full history: run git fetch --unshallow here, then start a new fork", name)
 	}
 	ws := forkspace.Workspace(repo, name)
 	if err := box.SnapshotForkApprovals(context.Background(), cfg, repo, ws); err != nil {

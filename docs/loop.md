@@ -110,8 +110,9 @@ remain part of the ordinary task history.
 
 To check a completed task, co:op reads the Git history that the branch can reach. It stops at
 100,000 commits or 128 MB of commit data, so that a planted history can't use up the host's memory.
-In a larger repository the loop refuses every completion, and a shallow clone doesn't help because
-the loop refuses those too.
+In a larger repository the loop refuses every completion. A shallow clone lacks the oldest commits,
+so the loop refuses to start in one, before any agent runs: fetch the full history first
+(`git fetch --unshallow`).
 
 ### Sweeps and commit hooks
 

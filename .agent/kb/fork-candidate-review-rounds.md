@@ -3,7 +3,7 @@ name: fork-candidate-review-rounds
 description: immutable reviewed fork snapshots, the replayable current manifest, fresh candidate-wide signoff, and zero-ahead merge bookkeeping
 subsystem: fork
 sources: [internal/forkctl/candidate_drift.go, internal/tasks/candidate.go, internal/tasks/candidate_rounds.go, internal/tasks/candidate_rework.go, internal/tasks/projection.go, internal/cli/fork_cmd.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/loop/prompts.go, internal/loop/rebase.go, internal/tasks/candidate_rebase.go, internal/tasks/candidate_merges.go, internal/forkctl/candidate_merges.go, internal/forkctl/land_check.go, internal/forkctl/status.go, internal/forkctl/isolated_candidate.go, internal/forkctl/isolated_commands.go, internal/cli/fork_loop_report.go, internal/forkspace/gitcommand.go]
-updated: 2026-11-20
+updated: 2026-11-21
 ---
 
 A task fork's land authority is one exact candidate ID, HEAD, tree, assignment set and projection
@@ -177,7 +177,16 @@ cannot hide a commit from its merge or review: the scan, private rebase and land
 run in the host's private clone, which never becomes shallow (git rejects the shallow root with only
 a warning, exit 0, and leaves the cut-off commits out, so the scan fails on a missing object).
 `refuseIsolatedShallowCut` names the file up front when it names a commit that is not the published
-boundary or its ancestor; a cut at or below it is a shallow parent's and is allowed. Write such a
+boundary or its ancestor; a cut at or below it is a shallow parent's and is allowed. That only
+passes the up-front check: the raw walks still refuse any commit the clone lacks, so an isolated
+fork of a real shallow clone is never merged, reviewed or looped. Those failures now say so
+(`isolatedShallowRefusal`, `tasks.ShallowCheckoutCause`, `loop.RefuseShallowHistory` at the loop's
+start) instead of "resolve raw audit commit <sha>", and fork creation warns. No refusal advises
+deleting `.git/shallow` or a line of it: a fork of a shallow clone keeps that clone's lines, which
+stand in for commits it lacks. `RefuseShallowFork` sends the person to `git fetch --unshallow` in
+the checkout and then in the fork (no fork fetch when the fork has no origin), and to a new fork
+from a full clone if the fork is still shallow after that. Which shallow lines a walk may trust is
+an open decision (task 2026-11-21-let-a-loop-finish-a-task-in-a-shallow-clone-and). Write such a
 file in a test to `<ws>/.git/shallow`: `rev-parse --absolute-git-dir` answers Coop's view, and a
 file written there tests nothing.
 
@@ -204,6 +213,11 @@ rebase is in progress (mid-rebase HEAD is detached, so a reset would leave the b
 reflog keeps.
 
 ## Changelog
+- 2026-11-21 — shallow forks: the ordinary refusal claimed a fork's clone is never shallow and told
+  the person to delete `.git/shallow`, which breaks a fork of a shallow clone; an isolated fork of a
+  shallow clone failed with "resolve raw audit commit". Same refusals, true reasons and safe ways on,
+  a loop refused at its start and a warning at creation; what Coop accepts is unchanged (task
+  2026-11-21-tell-the-truth-about-a-shallow-fork-and-never-ad).
 - 2026-11-20 — the skipped-commit refusal's ways out fit about 100 columns: the long way is a
   sentence row and the go-back command its own row (task 2026-11-20-tidy-three-notes-from-the-15-2-live-pass-wide-re).
 - 2026-11-20 — ls called an isolated fork with no shallow file ready when merge could not read its

@@ -428,7 +428,7 @@ func TestIsolatedShallowCutHidesNothingAndIsRefused(t *testing.T) {
 			for _, review := range []bool{false, true} {
 				candidate, err := captureIsolatedCandidate(repo, identity.Name, identity, false, review)
 				candidate.cleanup()
-				if err == nil || !strings.Contains(err.Error(), "repository is shallow") || !strings.Contains(err.Error(), "rm "+shallow) {
+				if err == nil || !strings.Contains(err.Error(), "repository is shallow") || !strings.Contains(err.Error(), "git fetch --unshallow") || strings.Contains(err.Error(), "rm "+shallow) {
 					t.Fatalf("capture (review=%v) of a cut history = %v; want the shallow refusal naming the file", review, err)
 				}
 			}

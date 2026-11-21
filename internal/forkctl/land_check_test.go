@@ -32,7 +32,7 @@ func TestLandRefusesAShallowFork(t *testing.T) {
 		t.Fatal(err)
 	}
 	landed, err := mergeOneForTest(t, c, repo, "", identity.Name, false)
-	if landed || err == nil || !strings.Contains(err.Error(), "repository is shallow") || !strings.Contains(err.Error(), "rm ") {
+	if landed || err == nil || !strings.Contains(err.Error(), "repository is shallow") || !strings.Contains(err.Error(), "fetch --unshallow") || strings.Contains(err.Error(), "rm /") || strings.Contains(err.Error(), "never shallow") {
 		t.Fatalf("merge of a shallow fork = (%v, %v)", landed, err)
 	}
 	if forkspace.GitOut(repo, "rev-parse", "HEAD") != parent {

@@ -2827,7 +2827,26 @@ func auditShallowRefusal(repo, id string) error {
 		return nil
 	}
 	return fmt.Errorf("this repository is shallow, so Git can miss a commit that binds task %s; "+
-		"fetch the full history (git fetch --unshallow), or remove a .git/shallow file nobody made", bindingLabel(id))
+		"fetch the full history (git fetch --unshallow)", bindingLabel(id))
+}
+
+// ShallowCheckoutCause says why Coop cannot check an attempt in a shallow clone, and the way on.
+// It names no commit and nothing of the shallow file, which a box can write.
+const ShallowCheckoutCause = "this checkout is a shallow clone, and Coop reads the whole history to check an attempt: " +
+	"fetch the full history (git fetch --unshallow); for a fork, fetch it in your checkout, then start a new fork"
+
+// ShallowCheckout reports that Git calls repo's repository shallow. It only chooses what a refusal
+// says: what Coop accepts never depends on it.
+func ShallowCheckout(repo string) bool {
+	shallow, err := forkspace.GitOutErr(repo, "rev-parse", "--is-shallow-repository")
+	return err == nil && shallow == "true"
+}
+
+// HistoryReadable reports that the audit's raw walk reads all of head's history, as every check
+// of an attempt does.
+func HistoryReadable(repo, head string) bool {
+	_, err := rawReachableAuditCommits(repo, head)
+	return err == nil
 }
 
 // auditReopenMovedChain is what a moved record replays from its reviewed subject to head: reviewed,
@@ -3807,6 +3826,9 @@ func bindingLabels(values []string) string {
 // why, one sentence per offending commit, so the scan walks on to name each of them.
 func scanTaskBindings(repo, base, head, runBase string, allowed, replayed map[string]bool, touched map[string]string) (scan taskBindingScan, ok bool) {
 	unreadable := func(err error) (taskBindingScan, bool) {
+		if ShallowCheckout(repo) {
+			return taskBindingScan{refused: []string{ShallowCheckoutCause}}, false
+		}
 		return taskBindingScan{refused: []string{fmt.Sprintf("Coop could not read this attempt's commits: %v", err)}}, false
 	}
 	if base == "" || head == "" {

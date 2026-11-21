@@ -709,6 +709,9 @@ func (c *Control) Run(spec RunSpec) (int, error) {
 		ui.Failure("Could not start the loop", noHeadCause(repo))
 		return 1, ui.Reported(fmt.Errorf("read HEAD of %s: %w", repo, headErr))
 	}
+	if err := RefuseShallowHistory(repo, prevHead, spec.ForkName); err != nil {
+		return 1, err
+	}
 	loopStartHead := prevHead // for the end-of-run signing sweep (catches any straggler cycle)
 	var reviewPlan tasks.PendingReviewPlan
 	if len(pendingReview.Subjects) > 0 {

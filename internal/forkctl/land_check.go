@@ -1,9 +1,9 @@
 package forkctl
 
 import (
-	"context"
+	"errors"
 	"fmt"
-	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/forkspace"
@@ -14,6 +14,11 @@ import (
 // RefuseShallowFork refuses a fork whose repository is shallow. A shallow file, which the box can
 // write, makes git treat the commit it names as a root: a rebase replays that commit as if it were
 // new, and every ancestry answer git gives reads a cut history. The audits refuse one the same way.
+//
+// A fork of a shallow clone is shallow from the start, and its shallow file stands in for commits
+// it does not have: deleting the file, or a line of it, leaves a history git cannot read. So the
+// way on fetches the full history, into the checkout, which the fork's clone names as its origin,
+// then into the fork.
 func RefuseShallowFork(ws, name string) error {
 	shallow, err := forkspace.GitOutErr(ws, "rev-parse", "--is-shallow-repository")
 	if err != nil {
@@ -22,15 +27,33 @@ func RefuseShallowFork(ws, name string) error {
 	if shallow == "false" {
 		return nil
 	}
-	path := filepath.Join(ws, ".git", "shallow")
-	// The fork's own git dir, not Coop's trusted view of it, which only links to the file.
-	if out, err := forkspace.GitRefCommand(context.Background(), ws, "rev-parse", "--path-format=absolute", "--git-path", "shallow").Output(); err == nil {
-		path = strings.TrimSpace(string(out))
+	why := "It was made from a shallow clone, or something wrote a shallow file into it. Git treats a commit its shallow file names as having no parents, so Coop cannot tell what the fork's commits change, and neither merges nor reviews it."
+	discard := [2]string{"Or discard its work:", "coop fork rm " + name + " --force"}
+	if !slices.Contains(strings.Fields(forkspace.GitOut(ws, "remote")), "origin") {
+		// No origin, as in an isolated fork: nothing can fetch the rest into it.
+		return ui.CommandFailed("Fork "+name+"'s repository is shallow", why,
+			[2]string{"", "Fetch the full history into your checkout (git fetch --unshallow), then start a new fork from it."},
+			discard)
 	}
-	return ui.CommandFailed("Fork "+name+"'s repository is shallow",
-		"Git treats a commit its shallow file names as having no parents, so Coop cannot tell what its commits change, and neither merges nor reviews it. A fork's own clone is never shallow, so the file was written in the fork.",
-		[2]string{"Remove the file, then run the command again:", shellLine([]string{"rm", path})},
-		[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})
+	return ui.CommandFailed("Fork "+name+"'s repository is shallow", why,
+		[2]string{"Fetch the full history into your checkout, if it is shallow too:", "git fetch --unshallow"},
+		[2]string{"Then into the fork, and run the command again:", shellLine([]string{"git", "-C", ws, "fetch", "--unshallow"})},
+		[2]string{"", "If the fork is still shallow then, your checkout's origin lacks the full history too: start a new fork from a full clone."},
+		discard)
+}
+
+// isolatedShallowRefusal is err, or, when the parent checkout or the fork is shallow, the refusal
+// that says so: Coop reads every commit it merges or reviews from an isolated fork, and a shallow
+// clone lacks the oldest. It changes only what the refusal says.
+func isolatedShallowRefusal(repo, ws, name string, err error) error {
+	var refusal *ui.UsageError
+	if err == nil || errors.As(err, &refusal) || (!tasks.ShallowCheckout(repo) && !tasks.ShallowCheckout(ws)) {
+		return err
+	}
+	return ui.CommandFailed("Coop cannot read fork "+name+"'s whole history",
+		"Your checkout is a shallow clone, or the fork made from one is, and Coop reads every commit it merges or reviews from an isolated fork. Nothing was merged. An isolated fork has no origin to fetch the rest from.",
+		[2]string{"Fetch the full history into your checkout:", "git fetch --unshallow"},
+		[2]string{"Then discard this fork and start a new isolated fork from it:", "coop fork rm " + name + " --force"})
 }
 
 // landRefusal is a land the checks stopped after the rebase: err says why, and again says the

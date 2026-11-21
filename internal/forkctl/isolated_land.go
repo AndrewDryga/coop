@@ -460,7 +460,7 @@ func (c *Control) mergeIsolatedLocked(repo, img, name string, identity forkspace
 		// history with the parent, so no rebase pass can straighten it.
 		merges, err := tasks.MergeCommitsOutside(forkspace.Workspace(repo, name), candidate.upstream, candidate.sourceHead)
 		if err != nil {
-			return mergeOutcome{}, fmt.Errorf("%s: check its reviewed commits for merge commits: %w", name, err)
+			return mergeOutcome{}, isolatedShallowRefusal(repo, forkspace.Workspace(repo, name), name, fmt.Errorf("%s: check its reviewed commits for merge commits: %w", name, err))
 		}
 		if len(merges) > 0 {
 			return mergeOutcome{}, ui.CommandFailed("Fork "+name+"'s reviewed commits include a merge commit",

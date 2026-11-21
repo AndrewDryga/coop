@@ -136,7 +136,7 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 		return isolatedCandidate{}, err
 	}
 	if err = validateIsolatedHistory(dir, repo, upstream, sourceHead); err != nil {
-		return isolatedCandidate{}, err
+		return isolatedCandidate{}, isolatedShallowRefusal(repo, ws, name, err)
 	}
 	// Rebase skips a source commit the parent already has, such as one a person cherry-picked, only
 	// when it compares that commit with the parent's own commits since the last publication, as an
@@ -187,7 +187,7 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 		return isolatedCandidate{}, err
 	}
 	if err = validateIsolatedHistory(dir, repo, parent.Head, candidate.head); err != nil {
-		return isolatedCandidate{}, err
+		return isolatedCandidate{}, isolatedShallowRefusal(repo, ws, name, err)
 	}
 	if err = forkspace.MaterializeIndependentTree(ctx, repo, dir, parent.Head, candidate.head, ws); err != nil {
 		return isolatedCandidate{}, err
@@ -203,8 +203,8 @@ func captureIsolatedCandidate(repo, name string, identity forkspace.Identity, si
 // written to cut the incoming history. Git treats a commit the file names as having no parents.
 //
 // The cut cannot hide a commit or its content from the merge or its review: the history scan, the
-// private rebase and the landed-as-reviewed check run in the host's private clone, which is never
-// shallow and walks every commit's real parents. Fetching from a shallow workspace leaves the
+// private rebase and the landed-as-reviewed check run in the host's private clone, which never takes
+// the workspace's shallow lines and walks every commit's real parents. Fetching from a shallow workspace leaves the
 // parents behind the cut out of that clone (git only warns and exits 0), so the scan fails on a
 // missing object; a linear cut fails the ancestry check below first. Both fail closed, but with
 // git's bare exit status, so this names the file instead. A cut at or below the boundary hides only
@@ -224,7 +224,7 @@ func refuseIsolatedShallowCut(ws, name, upstream string) error {
 		}
 		return ui.CommandFailed("Fork "+name+"'s repository is shallow",
 			"Its shallow file names "+ui.SafeInline(commit)+", one of the fork's unmerged commits or one Git cannot place, and Git treats a commit that file names as having no parents. Coop reads every commit it merges from an isolated fork, so it neither merges nor reviews a cut history. Nothing was merged.",
-			[2]string{"Remove the file, then run the command again:", shellLine([]string{"rm", filepath.Join(ws, ".git", "shallow")})},
+			[2]string{"", "Fetch the full history into your checkout (git fetch --unshallow), then start a new isolated fork from it."},
 			[2]string{"Or discard its work:", "coop fork rm " + name + " --force"})
 	}
 	return nil
@@ -353,7 +353,8 @@ func (e *isolatedConflictError) refusal() error {
 func isolatedLandedAsReviewed(name, branch string, candidate isolatedCandidate) error {
 	dir := candidate.dir
 	unverifiable := func(err error) error {
-		return fmt.Errorf("%s: could not check that the merge lands exactly the reviewed change: %w; nothing merged", name, err)
+		return isolatedShallowRefusal(dir, dir, name,
+			fmt.Errorf("%s: could not check that the merge lands exactly the reviewed change: %w; nothing merged", name, err))
 	}
 	words := parentBranchWords(branch)
 	// When the parent's tree is still the boundary's, the reviewed commits replay onto the very tree

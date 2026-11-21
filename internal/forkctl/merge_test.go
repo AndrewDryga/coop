@@ -371,10 +371,15 @@ func prepareForkTaskCandidateMode(t *testing.T, name string, isolated, makeCommi
 // commit, once, for the first task, before the round is reviewed; nil makes none.
 func prepareForkTaskCandidateHistory(t *testing.T, name string, isolated bool, commit func(t *testing.T, ws, id string), fill func(t *testing.T, dir string), ids ...string) (string, string, string, forkspace.Identity, *Control) {
 	t.Helper()
+	return prepareForkTaskCandidateIn(t, initRepo(t), name, isolated, commit, fill, ids...)
+}
+
+// prepareForkTaskCandidateIn is prepareForkTaskCandidateHistory in the project repo.
+func prepareForkTaskCandidateIn(t *testing.T, repo, name string, isolated bool, commit func(t *testing.T, ws, id string), fill func(t *testing.T, dir string), ids ...string) (string, string, string, forkspace.Identity, *Control) {
+	t.Helper()
 	if len(ids) == 0 {
 		ids = []string{"canonical-task"}
 	}
-	repo := initRepo(t)
 	root := filepath.Join(repo, tasks.TasksRoot)
 	if err := tasks.ScaffoldStateDirs(root); err != nil {
 		t.Fatal(err)

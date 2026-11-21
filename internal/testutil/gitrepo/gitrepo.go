@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -38,6 +39,34 @@ func New(t *testing.T) (string, func(...string)) {
 	// a laptop configured for main. symbolic-ref works on older supported Git versions too; unlike
 	// `git init -b`, it does not raise the fixture's Git-version floor.
 	run("symbolic-ref", "HEAD", "refs/heads/main")
+	run("config", "user.email", "t@t")
+	run("config", "user.name", "T")
+	return repo, run
+}
+
+// ShallowClone returns a clone of src holding only its last depth commits, as `git clone --depth`
+// makes one, with its own shallow file, and a runner bound to it like New's.
+func ShallowClone(t *testing.T, src string, depth int) (string, func(...string)) {
+	t.Helper()
+	repo := filepath.Join(t.TempDir(), "shallow")
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(t.TempDir(), "noglobal"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(t.TempDir(), "nosystem"))
+	env = append(env, noMaintenance...)
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = repo, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// file:// makes git transfer objects as it would from a server; a plain path ignores --depth.
+	clone := exec.Command("git", "clone", "-q", "--depth", strconv.Itoa(depth), "file://"+src, repo)
+	clone.Env = env
+	if out, err := clone.CombinedOutput(); err != nil {
+		t.Fatalf("git clone --depth %d: %v\n%s", depth, err, out)
+	}
 	run("config", "user.email", "t@t")
 	run("config", "user.name", "T")
 	return repo, run

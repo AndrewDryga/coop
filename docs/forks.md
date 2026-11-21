@@ -451,10 +451,16 @@ again. Reverting it is not enough: a rebase skips a commit whose change appears 
 branch's history since the fork started, even if a later commit undid it. Once a merge gets past
 this check, the refusal is gone, even if your merge gate then fails.
 
-A fork whose repository is shallow is refused until its `.git/shallow` file is removed, since git
-would then misread its history; until then `coop fork ls` shows a reviewed one as "changed after
-review". An `--isolated` fork made from a shallow clone keeps that clone's shallow file, which is
-fine; its merge and review refuse only a shallow file that cuts into the fork's own commits.
+A shallow checkout must get its full history before its forks can be looped or merged: co:op reads
+a fork's whole history to check its work, and a shallow clone lacks the oldest commits. A fork made
+from a shallow checkout is still created, with a warning. Its loop refuses to start, and its merge
+is refused; `coop fork ls` shows a reviewed ordinary fork as "changed after review". Fetch the full
+history into your checkout (`git fetch --unshallow`). For an ordinary fork, then fetch it into the
+fork (`git -C <fork folder> fetch --unshallow`); if the fork is still shallow after that, your
+checkout's origin lacks the full history too, so start a new fork from a full clone. An `--isolated`
+fork has no origin to fetch from, so start a new isolated fork once your checkout has the full
+history. Never delete `.git/shallow` or a line of it: it stands in for commits the repository does
+not have, and git cannot read the history without it.
 
 This path is for ordinary forks. An `--isolated` fork holds your repository's branches only as they
 were when it was created, and co:op copies none of your branch's later commits into it, so it cannot
