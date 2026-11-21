@@ -363,7 +363,7 @@ func TestDoneRefusesSeveralBindingsAfterAPendingReviewSubject(t *testing.T) {
 	got := usage.Render(ui.Palette{})
 	for _, want := range []string{
 		"A loop's final review is still waiting on task " + subject.ID + ", and reopening that task replays these later commits.",
-		"Run coop loop to finish that review, then retry: coop tasks done " + id,
+		"Run coop loop, which works the ready tasks and then finishes that review, then retry: coop tasks done " + id,
 		"Or a person who checked the work closes it as it stands: coop tasks done " + id + " --force",
 	} {
 		if !strings.Contains(got, want) {
@@ -411,6 +411,65 @@ func TestDoneRefusesSeveralBindingsAfterAPendingReviewSubject(t *testing.T) {
 	}
 	if n := strings.Count(readFileString(filepath.Join(done.Dir, "log.md")), "Closed with coop tasks done --force"); n != 1 {
 		t.Fatalf("log.md has %d forced-close notes, want 1", n)
+	}
+}
+
+// A final review a stopped loop left weeks ago, with a merge since its subject's commit (2026-11-21:
+// merge 0c6400a3 sat between the review's subject and hundreds of later commits), cannot replay the
+// commits after that merge: its reopen pins the subject's commit alone and sets them aside. So a host
+// close of a task bound by several of them goes through, and the reopen still works after it. A box's
+// close keeps the stricter rule, since the box chose that history.
+func TestDoneAcceptsSeveralBindingsPastAMergeAfterAPendingReviewSubject(t *testing.T) {
+	repo, root, base, assignment, subject, plan := pendingReviewTestCompletion(t)
+	if err := assignment.Lease.MarkCompletedForReview(repo, subject, plan, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := assignment.Lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+	me := selfActor(t, "claude")
+	for _, id := range []string{"follow-up", "box-follow-up"} {
+		taskWithCompletedChecklist(t, root, StateTodo, id)
+	}
+	if _, err := ClaimSessionTask(root, mustTask(t, root, "box-follow-up"), me); err != nil {
+		t.Fatal(err)
+	}
+	side := forkspace.GitOut(repo, "commit-tree", "-p", base, "-m", "side work", base+"^{tree}")
+	git(t, repo, "merge", "-q", "--no-ff", "--no-edit", side)
+	shas := threeBoundCommits(t, repo, "follow-up")
+	threeBoundCommits(t, repo, "box-follow-up")
+
+	err := CompleteBoxTask(repo, root, mustTask(t, root, "box-follow-up"), me)
+	if want := "reopening that task replays these later commits"; !strings.Contains(fmt.Sprint(err), want) {
+		t.Fatalf("box close past the merge = %v; want %q", err, want)
+	}
+	if code, err := tasksFolderMoveWith(root, []string{"follow-up"}, StateDone, "done", claimOptions{project: repo}); code != 0 || err != nil {
+		t.Fatalf("done past the merge = %d, %v; want the close", code, err)
+	}
+	done, _ := mustCurrentTask(t, root, "follow-up")
+	log := readFileString(filepath.Join(done.Dir, "log.md"))
+	for _, want := range append([]string{"Closed with 3 commits carrying its Coop-Task trailer ("}, shas...) {
+		if !strings.Contains(log, want) {
+			t.Errorf("log.md omitted %q:\n%s", want, log)
+		}
+	}
+	snapshot, err := QueueSnapshot([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ExtraBindings(repo, snapshot, []string{subject.ID}) {
+		if e.TaskID == "follow-up" {
+			t.Errorf("startup report lists the closed task past the merge: %+v", e)
+		}
+	}
+	// The review still reopens its subject, at HEAD, with every later commit set aside.
+	audit, _, err := PrepareReviewReopen(repo, root, subject.ID, "fix it")
+	if err != nil {
+		t.Fatalf("review reopen after the close = %v", err)
+	}
+	if head := forkspace.GitOut(repo, "rev-parse", "HEAD"); audit.BaselineHead != head || audit.ReviewedHead == "" || len(audit.History) != 0 {
+		t.Fatalf("review reopen = baseline %s, reviewed %s, %d replayed; want rework from HEAD %s replaying nothing",
+			audit.BaselineHead, audit.ReviewedHead, len(audit.History), head)
 	}
 }
 
@@ -1286,5 +1345,32 @@ func TestForcedCompletionNote(t *testing.T) {
 	}
 	if got, want := forcedCompletionNote(&forcedClose{checklist: &IncompleteChecklistError{ID: "t"}}), "Closed with coop tasks done --force without a checklist."; got != want {
 		t.Errorf("note = %q\nwant %q", got, want)
+	}
+}
+
+// A reopen replays the straight line from HEAD back to its subject's commit; only a merge on that
+// line, not one below the subject or beside the line, sets the later commits aside.
+func TestReplaysAfterLooksOnlyBetweenTheSubjectAndHead(t *testing.T) {
+	// root <- below(merge of root, side) <- subject <- later <- merge(later, other) <- head
+	h := rawTaskHistory{head: "head", parents: map[string][]string{
+		"root": nil, "side": {"root"}, "below": {"root", "side"}, "subject": {"below"},
+		"later": {"subject"}, "other": {"subject"}, "merge": {"later", "other"}, "head": {"merge"},
+	}}
+	for subject, want := range map[string]bool{"head": true, "merge": true, "later": false, "subject": false} {
+		if got := h.replaysAfter(subject); got != want {
+			t.Errorf("replaysAfter(%s) = %t, want %t", subject, got, want)
+		}
+	}
+	h.head = "later" // a straight line to the subject, with a merge below it
+	if !h.replaysAfter("subject") {
+		t.Error("a merge below the subject set the later commits aside")
+	}
+	h.head = "side" // a straight line to the root that never meets the subject
+	if !h.replaysAfter("missing") {
+		t.Error("a subject off a straight line set the later commits aside")
+	}
+	h.head = "unread"
+	if !h.replaysAfter("subject") {
+		t.Error("an unread commit did not count as a straight line")
 	}
 }

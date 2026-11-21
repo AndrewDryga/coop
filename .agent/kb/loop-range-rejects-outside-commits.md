@@ -3,7 +3,7 @@ name: loop-range-rejects-outside-commits
 description: any commit landing while an iteration runs joins its range; it only rejects that iteration's completion when its Coop-Task trailer names a task this iteration's authority could touch — an untouched one is tolerated and journaled instead. The per-worktree ref-authority lock closes the narrower race where HEAD moves between a validated headAfter and much-later authority consumption
 subsystem: loop
 sources: [internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/refauthority.go, internal/tasks/queue.go, internal/tasks/pending_review.go, internal/tasks/session_claim.go, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/loop/loop.go, internal/loop/completion.go, internal/loop/lock.go, internal/cli/sign.go, internal/forkctl/merge.go, internal/forkctl/land.go, internal/forkctl/isolated_land.go, internal/tasks/lease.go, internal/tasks/completion.go, internal/config/private.go]
-updated: 2026-11-20
+updated: 2026-11-21
 ---
 `coop loop` validates a completion over the commits between the iteration's starting HEAD and the
 proposed HEAD. That range is a *time* window on one branch, not a set of commits the agent authored
@@ -132,8 +132,13 @@ leave gaps between iterations), a live final-review window exists (a loop from a
 lock), a stopped loop left a final review's window (the next start's
 `ReconcileCompletionWindowsWithActivity` would enroll the close), the task is a pending
 final-review subject (matched by id, so a same-id task in another queue counts), or one of its
-commits descends from a pending subject's commit (the reach `tasks.ExtraBindings` gives the
-startup report). The run lock is keyed on a folder's device and inode, so a symlink or a
+commits descends from a pending subject's commit with no merge between that commit and HEAD (the
+reach `tasks.ExtraBindings` gives the startup report). Past a merge the reopen cannot replay them:
+`CaptureAuditReopen` refuses the merge, and `captureReviewReopen` pins the subject's commit alone and
+sets every later commit aside, however many times other tasks are bound to them
+(`rawTaskHistory.replaysAfter`, read from hash-checked commit objects; 2026-11-21: a review left on
+2026-11-05 refused every multi-commit close across 867 published commits and merge `0c6400a3`). A
+box's close keeps the stricter descendant rule, since the box picks HEAD. The run lock is keyed on a folder's device and inode, so a symlink or a
 letter-case spelling on a case-insensitive volume meets the same lock. The close takes it shared
 on the queue folder and on every folder above it (`lockLoopRunsAbove`), so it meets the loop of
 whichever checkout holds the queue (a fork's queue closed from its parent meets the fork loop) and
@@ -248,6 +253,10 @@ loop holds its iteration lease before entering the short ref window; host comple
 authority before attempting task-completion authority.
 
 ## Changelog
+- 2026-11-21 — a host close past a merge after a pending subject's commit goes through: that
+  subject's reopen can only set the later commits aside, never replay them; a box's close stays
+  strict, and the loop remedy says it works the ready tasks first (task
+  2026-11-21-stop-a-final-review-abandoned-weeks-ago-refusing).
 - 2026-11-20 — a host close accepts several bindings when no review can lose by them; refuses
   while a loop runs (new run-long `HoldLoopRun` lock: the old window check missed the gaps between
   iterations, also for --force; keyed on the checkout folder's identity, met by the close on the

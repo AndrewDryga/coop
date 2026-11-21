@@ -745,10 +745,10 @@ func HoldLoopRun(repo string) (release func() error, err error) {
 // whether a final review could lose its verdict by closing the task now. That is so while a loop runs
 // (its final review takes the close as a subject), while a final review's window was left by a
 // stopped loop (the next start enrolls what it saw), while id is a pending final-review subject, or
-// while one of its commits follows a pending subject's commit (that subject's reopen replays it); the
-// same reach tasks.ExtraBindings gives the loop's startup report. Anything Coop cannot read counts
-// as a risk, and a run lock it cannot probe is an error even --force does not pass. With no risk the
-// close accepts the commits and log.md names them. release holds the run lock shared until the close
+// while one of its commits follows a pending subject's commit on a line that subject's reopen could
+// replay (replaysAfter; for a box's close, on any line); the same reach tasks.ExtraBindings gives the
+// loop's startup report. Anything Coop cannot read counts as a risk, and a run lock it cannot probe
+// is an error even --force does not pass. With no risk the close accepts the commits and log.md names them. release holds the run lock shared until the close
 // is done, so a loop cannot start between this check and the move. No repository, or no commit yet,
 // has nothing to count; a history Coop cannot walk is left to the checks that need it, which fail
 // closed.
@@ -850,14 +850,19 @@ func extraBindingsRisk(project, root, id string, own *CompletionWindowSet, opts 
 	if err != nil {
 		return unreadable("the pending final reviews", err)
 	}
+	// Only a loop finishes a pending review, and it works the ready tasks before its final review.
+	const runLoop = "Run coop loop, which works the ready tasks and then finishes that review"
 	for _, subject := range slices.Compact(slices.Sorted(slices.Values(subjects))) {
+		subjectCommits := history.bindings[subject]
 		switch {
 		case subject == id:
 			return refuse("a loop's final review is still waiting on it, and that review can reopen it only while one commit carries its trailer",
-				"Run coop loop to finish that review")
-		case history.descendsFromAny(shas, history.bindings[subject]):
+				runLoop)
+		// A reopen that cannot replay these commits loses nothing by them (replaysAfter). A box's close
+		// keeps the stricter rule: the box chose the HEAD that decides it.
+		case history.descendsFromAny(shas, subjectCommits) && (opts.claimed || slices.ContainsFunc(subjectCommits, history.replaysAfter)):
 			return refuse(fmt.Sprintf("a loop's final review is still waiting on task %s, and reopening that task replays these later commits", bindingLabel(subject)),
-				"Run coop loop to finish that review")
+				runLoop)
 		}
 	}
 	return extra, release, nil
@@ -921,9 +926,9 @@ func extraBindings(repo, id string, shas []string) *ExtraBindingsError {
 // ExtraBindings lists, sorted, the tasks with more than one commit reachable from HEAD carrying
 // their Coop-Task trailer whose second binding can still cost a final review: a task that will still
 // complete (any state but done), and a done task that a review may reopen (one of reviewSubjects) or
-// whose binding a subject's reopen would replay (one descending from a subject's commit, which
-// CaptureAuditReopen refuses on a second binding). An archived task with two old bindings is left
-// out: nothing reopens it, and published history cannot drop the trailer. The loop names them before
+// whose binding a subject's reopen would replay (one descending from a subject's commit with no merge
+// between, which CaptureAuditReopen refuses on a second binding). An archived task with two old
+// bindings is left out: nothing reopens it, and published history cannot drop the trailer. The loop names them before
 // a final review spends a run on a verdict the host could not apply. A history Coop cannot walk lists
 // nothing here; the checks that need it fail closed on their own.
 func ExtraBindings(repo string, snapshot map[string]string, reviewSubjects []string) []*ExtraBindingsError {
@@ -938,7 +943,11 @@ func ExtraBindings(repo string, snapshot map[string]string, reviewSubjects []str
 	bindings := history.bindings
 	var subjectCommits []string
 	for _, id := range reviewSubjects {
-		subjectCommits = append(subjectCommits, bindings[id]...)
+		for _, sha := range bindings[id] {
+			if history.replaysAfter(sha) {
+				subjectCommits = append(subjectCommits, sha)
+			}
+		}
 	}
 	var extra []*ExtraBindingsError
 	for _, id := range slices.Sorted(maps.Keys(snapshot)) {
@@ -957,6 +966,7 @@ func ExtraBindings(repo string, snapshot map[string]string, reviewSubjects []str
 // and each commit's parents. Ancestry is answered from those links, never from Git's ancestry
 // commands, which a planted shallow or graft file in a box's view of .git can cut.
 type rawTaskHistory struct {
+	head     string
 	bindings map[string][]string
 	parents  map[string][]string
 }
@@ -966,11 +976,35 @@ func readRawTaskHistory(repo, head string) (rawTaskHistory, error) {
 	if err != nil {
 		return rawTaskHistory{}, err
 	}
-	history := rawTaskHistory{bindings: taskBindingsOf(commits), parents: make(map[string][]string, len(commits))}
+	history := rawTaskHistory{head: commits[0].sha, bindings: taskBindingsOf(commits), parents: make(map[string][]string, len(commits))}
 	for _, commit := range commits {
 		history.parents[commit.sha] = commit.parentIDs
 	}
 	return history, nil
+}
+
+// replaysAfter reports whether a final review reopening the task bound to subject could replay the
+// commits after it. CaptureAuditReopen replays only a straight line of commits from HEAD back to
+// subject. With a merge on that line it refuses, and captureReviewReopen pins subject alone and sets
+// every later commit aside (movedAuditReopen): the rework starts at HEAD and may rewrite or replay
+// none of them, and other tasks may be bound to them any number of times. Each parent link comes from
+// a commit object whose hash Coop checked, so nothing written in .git can hide or invent a merge
+// behind a commit. HEAD, which a box can move, picks the commits; even on a straight line a reopen
+// falls back the same way when a later task is bound twice, so the most a forged answer costs is the
+// rewrite of the subject's commit an exact replay allows. A commit the walk did not read counts as a
+// straight line.
+func (h rawTaskHistory) replaysAfter(subject string) bool {
+	for commit := h.head; commit != subject; {
+		parents, ok := h.parents[commit]
+		switch {
+		case !ok || len(parents) == 0:
+			return true // unread, or subject is not on the line (descendsFromAny then finds nothing)
+		case len(parents) > 1:
+			return false
+		}
+		commit = parents[0]
+	}
+	return true
 }
 
 // descendsFromAny reports whether one of shas has one of ancestors as a proper ancestor. A commit
