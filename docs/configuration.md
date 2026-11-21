@@ -64,7 +64,7 @@ On Docker, co:op also removes all Linux capabilities (`--cap-drop ALL`). Even if
 | `COOP_CONF` | `~/.config/coop/coop.conf` | Environment only. Reads `coop.conf` from this absolute path, which must name a readable regular file. |
 | `NO_COLOR` | unset | Environment only. Any value, even an empty one, turns off ANSI color everywhere ([no-color.org](https://no-color.org)). |
 | `COOP_<AGENT>_CMD`, like `COOP_CLAUDE_CMD` | the agent's autonomous command | Overrides an agent's base command. |
-| `COOP_<AGENT>_MODEL`, like `COOP_CLAUDE_MODEL` | the CLI's default | The agent-wide default model, written `model[/effort]`, everywhere that agent runs. Coop refuses a value it would refuse in a target. See [picking models](agents.md#picking-models). |
+| `COOP_<AGENT>_MODEL`, like `COOP_CLAUDE_MODEL` | the CLI's default | The agent-wide default model, written `model[/effort]`, everywhere that agent runs. A box that would use a value a target would refuse does not start. See [picking models](agents.md#picking-models). |
 | `COOP_CONSULT_TIMEOUT` | `0` (unlimited) | How long `coop-consult` waits for each peer, in seconds. See below. |
 | `COOP_CONSULT_STREAM_LIMIT` | `0` (unlimited) | The most output, in bytes, `coop-consult` accepts from a peer's reply or diagnostics. It discards a larger reply. Set it in `agents/env`. See [limits](agents.md#limits). |
 | `COOP_DELEGATE_TIMEOUT` | `1800` (30 minutes) | How long one `coop-delegate` attempt may run, in whole seconds from `1` to `86400`. Set it in `agents/env`. See [delegates](agents.md#delegates). |

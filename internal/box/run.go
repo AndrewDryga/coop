@@ -3525,6 +3525,9 @@ func scopedTarget(cfg *config.Config, peers []agents.Target, agent string) agent
 // it, so this is where a bad one is caught.
 func checkEfforts(cfg *config.Config, spec RunSpec) error {
 	scope := credentialScope(cfg, spec)
+	if err := checkModelSettings(cfg, spec, scope); err != nil {
+		return err
+	}
 	targets := make([]agents.Target, 0, len(scope))
 	if primary := runPrimary(spec); slices.Contains(scope, primary) {
 		targets = append(targets, scopedTarget(cfg, nil, primary))
@@ -3545,6 +3548,53 @@ func checkEfforts(cfg *config.Config, spec RunSpec) error {
 		if ag, ok := agents.Get(target.Provider); ok {
 			if err := agents.ValidateEffort(ag, target.Model, target.Effort); err != nil {
 				return fmt.Errorf("%s: %w", target, err)
+			}
+		}
+	}
+	return nil
+}
+
+// checkModelSettings refuses a COOP_<AGENT>_MODEL value this box would read: an agent in scope whose
+// lead, peer or role target leaves its model or effort to the setting. An agent the box does not
+// run, or one whose targets name both, never reads it, so its bad value stops nothing here.
+func checkModelSettings(cfg *config.Config, spec RunSpec, scope []string) error {
+	uses := map[string]bool{}
+	read := func(agent, model, effort string) {
+		fallsModel, fallsEffort := cfg.ModelSettingFallback(agent)
+		if (model == "" && fallsModel) || (effort == "" && fallsEffort) {
+			uses[agent] = true
+		}
+	}
+	if primary := runPrimary(spec); slices.Contains(scope, primary) {
+		read(primary, "", "")
+	}
+	for _, agent := range scope {
+		model, effort := "", ""
+		for _, p := range spec.Peers { // as scopedTarget merges them
+			if p.Provider == agent {
+				if p.Model != "" {
+					model = p.Model
+				}
+				if p.Effort != "" {
+					effort = p.Effort
+				}
+			}
+		}
+		read(agent, model, effort)
+	}
+	if spec.Preset != nil {
+		for _, role := range spec.Preset.Roles {
+			for _, target := range role.Targets {
+				if slices.Contains(scope, target.Provider) {
+					read(target.Provider, target.Model, target.Effort)
+				}
+			}
+		}
+	}
+	for _, agent := range scope { // scope order, so the same setting is named first every time
+		if uses[agent] {
+			if err := cfg.CheckModelSetting(agent); err != nil {
+				return err
 			}
 		}
 	}

@@ -2871,6 +2871,44 @@ func TestModelEnvArgs(t *testing.T) {
 
 // An effort an agent cannot express stops the box before anything is projected — the scoped
 // agent's own, an explicit peer's, and a preset role rung's alike, each as the box would resolve it.
+func TestCheckEffortsChecksOnlyTheModelSettingsTheBoxReads(t *testing.T) {
+	t.Setenv("COOP_CLAUDE_MODEL", "opus")
+	t.Setenv("COOP_GEMINI_MODEL", "gemini-2.5-pro/xhigh") // stale: Gemini takes low or high
+	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
+	claude := RunSpec{Homes: true, Agent: "claude"}
+	if err := checkEfforts(cfg, claude); err != nil {
+		t.Fatalf("a bad COOP_GEMINI_MODEL stopped a claude box: %v", err)
+	}
+	geminiPeer := func(model, effort string) RunSpec {
+		return RunSpec{Homes: true, Agent: "claude", ConsultLead: "claude",
+			Peers: []agents.Target{{Provider: "gemini", Model: model, Effort: effort}}}
+	}
+	if err := checkEfforts(cfg, geminiPeer("gemini-2.5-pro", "high")); err != nil {
+		t.Fatalf("a gemini peer naming its model and effort read the setting: %v", err)
+	}
+	var failure *config.Failure
+	if err := checkEfforts(cfg, geminiPeer("gemini-2.5-pro", "")); !errors.As(err, &failure) || !strings.Contains(err.Error(), "COOP_GEMINI_MODEL") {
+		t.Fatalf("a gemini peer falling back to the bad setting = %v, want refused naming it", err)
+	}
+
+	t.Setenv("COOP_CLAUDE_MODEL", "opus/bogus")
+	err := checkEfforts(cfg, claude)
+	if !errors.As(err, &failure) || failure.Headline != "Invalid value for COOP_CLAUDE_MODEL" ||
+		failure.Where != "Set in the environment." || !strings.Contains(failure.Problem, `not "bogus"`) ||
+		!strings.Contains(failure.Action, "unset COOP_CLAUDE_MODEL") {
+		t.Fatalf("claude box with COOP_CLAUDE_MODEL=opus/bogus = %#v, want refused naming the variable and the fix", err)
+	}
+	cfg.SetActiveModel("claude", "opus") // a target naming both never reads the setting
+	cfg.SetActiveEffort("claude", "high")
+	if err := checkEfforts(cfg, claude); err != nil {
+		t.Fatalf("claude:opus/high read the bad setting: %v", err)
+	}
+	cfg.SetActiveEffort("claude", "") // naming only the model still takes the effort from it
+	if err := checkEfforts(cfg, claude); !errors.As(err, &failure) {
+		t.Fatalf("claude:opus with COOP_CLAUDE_MODEL=opus/bogus = %v, want refused", err)
+	}
+}
+
 func TestCheckEffortsRefusesWhatTheBoxCannotCarry(t *testing.T) {
 	cfg := &config.Config{ConfigDir: t.TempDir(), HomeInBox: "/home/node"}
 	lead := RunSpec{Homes: true, Agent: "gemini"}

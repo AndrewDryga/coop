@@ -9,7 +9,7 @@ updated: 2026-11-21
 `Config.ModelFor(agent)` resolves ONE model per PROVIDER through three tiers, most specific
 first (config.go): active (`SetActiveModel` — an explicit one-off target) → target
 (`SetTargetModel` — the rotation's active rung, re-set every `applyTarget`) →
-`COOP_<AGENT>_MODEL` env or conf (checked at `config.Load` by the target grammar via `agent.CheckModelSetting`, registered through `RegisterAdapterConfig`). `EffortFor` mirrors it. Ordered target ladders, including
+`COOP_<AGENT>_MODEL` env or conf (checked by the target grammar only when a box falls back to it: `box.checkModelSettings` → `Config.CheckModelSetting`, whose checker `agent.CheckModelSetting` comes through `RegisterAdapterConfig`; never in `config.Load`, so one stale value cannot stop unrelated commands). `EffortFor` mirrors it. Ordered target ladders, including
 controller-owned remote jobs, provide model/provider/account failover; these defaults do not.
 The key consequence: **anything written to a provider's active tier shadows that provider's
 rotation target.** So during a `coop loop`, only the lead's rotation may own a provider's
@@ -53,6 +53,7 @@ adds levels such as `ultra` per model) and Grok (free-form `--reasoning-effort`)
 
 ## Changelog
 - 2026-11-21 — Claude refuses an effort its pinned CLI does not list (task 2026-11-21-refuse-a-reasoning-effort-the-agent-does-not-hav); checked `claude --help`, `codex debug models`, `grok --help`.
+- 2026-11-21 — moved the check from `config.Load` to box launch (review: a stale value bricked every command); the refusal names the environment or the coop.conf path.
 - 2026-11-21 — `COOP_<AGENT>_MODEL` is now refused at load when a target would refuse its model[/effort] (task 2026-11-21-check-coop-agent-model-like-a-target).
 - 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go).
 - 2026-10-10 — real Claude same-provider peer launch omitted the consult wrapper and authorization;

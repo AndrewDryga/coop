@@ -87,6 +87,7 @@ type Config struct {
 	LocalDir string
 
 	conf     map[string]string // the parsed conf file, kept for late per-agent lookups (Cmd)
+	confPath string            // where conf was read from, for a late refusal to name
 	explicit map[string]bool   // keys the user explicitly set (env or conf) — vs built-in defaults
 
 	activeProfiles  map[string]string // per-run selected credential profile; AgentDir resolves to it
@@ -166,9 +167,6 @@ func Load() (*Config, error) {
 	}
 	conf, err := loadMainConf(confPath, explicitConf)
 	if err != nil {
-		return nil, err
-	}
-	if err := checkAdapterEnvironment(); err != nil {
 		return nil, err
 	}
 
@@ -323,6 +321,7 @@ func Load() (*Config, error) {
 		BoxHome:  boxHome,
 		LocalDir: localDir(),
 		conf:     conf,
+		confPath: confPath,
 		explicit: explicit,
 	}
 
@@ -1098,24 +1097,35 @@ func RegisterAdapterConfig(name string, checkModel func(string) error) {
 	adapterConfigKeys[prefix+"_MODEL"] = checkModel
 }
 
-// checkAdapterEnvironment checks the adapters' settings given in the environment; coop.conf values
-// are checked as the file is read (validateMainConfigValue).
-func checkAdapterEnvironment() error {
-	keys := make([]string, 0, len(adapterConfigKeys))
-	for key, check := range adapterConfigKeys {
-		if check != nil {
-			keys = append(keys, key)
-		}
+// CheckModelSetting checks the COOP_<AGENT>_MODEL value a run of agent reads — the environment's,
+// else coop.conf's — by the target grammar, and says where the value came from. It is asked only
+// by a launch that falls back to the setting (see ModelSettingFallback), never by Load: a bad or
+// stale value for one agent must not stop help, other agents' runs, or commands that run none.
+func (c *Config) CheckModelSetting(agent string) error {
+	key := "COOP_" + strings.ToUpper(agent) + "_MODEL"
+	check := adapterConfigKeys[key]
+	if check == nil {
+		return nil
 	}
-	sort.Strings(keys) // the same setting is named first on every run
-	for _, key := range keys {
-		if v, ok := os.LookupEnv(key); ok {
-			if err := adapterConfigKeys[key](v); err != nil {
-				return configValueError(key, err)
-			}
-		}
+	value, where, action := "", "", ""
+	if v, ok := os.LookupEnv(key); ok {
+		value, where, action = v, "Set in the environment.", "Fix or unset "+key+", or name the model in the target."
+	} else if v, ok := c.conf[key]; ok {
+		value, where, action = v, "Set in "+c.confPath+".", "Fix or delete the "+key+" line in that file, or name the model in the target."
+	} else {
+		return nil
+	}
+	if err := check(value); err != nil {
+		return &Failure{Headline: "Invalid value for " + key, Where: where, Problem: err.Error(), Action: action}
 	}
 	return nil
+}
+
+// ModelSettingFallback reports whether ModelFor and EffortFor fall through to COOP_<AGENT>_MODEL,
+// because no run choice or rotation target names a model or an effort.
+func (c *Config) ModelSettingFallback(agent string) (model, effort bool) {
+	return c.activeModels[agent] == "" && c.targetModels[agent] == "",
+		c.activeEfforts[agent] == "" && c.targetEfforts[agent] == ""
 }
 
 // loadMainConf reads the operator-owned coop.conf. Only the implicit default may be absent;
@@ -1282,9 +1292,6 @@ func validateMainConfigValue(key, value string) error {
 	case "COOP_WORKDIR", "COOP_HOME_IN_BOX":
 		return boxPath(value)
 	default:
-		if check := adapterConfigKeys[key]; check != nil {
-			return check(value)
-		}
 		return nil
 	}
 }
