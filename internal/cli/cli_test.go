@@ -459,8 +459,9 @@ func TestVersionRejectsExtraArgs(t *testing.T) {
 	}
 }
 
-// `coop help` has one option, --all; any other option is refused with exit 2 like every other
-// command's, never answered with the menu or the manual.
+// `coop help` has one option, --all; any other option before the topic is refused with exit 2 like
+// every other command's, never answered with the menu or the manual. After the topic, options are
+// the command's own (`coop help tasks ls --all`) and the page is printed.
 func TestHelpRejectsUnknownOptions(t *testing.T) {
 	useEmptyMainConfig(t)
 	for _, tc := range []struct {
@@ -470,9 +471,10 @@ func TestHelpRejectsUnknownOptions(t *testing.T) {
 		{[]string{"help", "--bogus"}, 2},
 		{[]string{"help", "--all", "--bogus"}, 2},
 		{[]string{"help", "--all", "tasks"}, 2},
-		{[]string{"help", "tasks", "--bogus"}, 2},
-		{[]string{"help", "tasks", "ls", "-x"}, 2},
-		{[]string{"help", "tasks", "--all"}, 2},
+		{[]string{"help", "-x", "tasks"}, 2},
+		{[]string{"help", "tasks", "ls", "--all"}, 0},
+		{[]string{"help", "tasks", "ls", "--done", "--all"}, 0},
+		{[]string{"help", "loop", "--max-tasks", "3"}, 0},
 		{[]string{"help", "--all"}, 0},
 		{[]string{"help", "--all", "--help"}, 0},
 		{[]string{"help", "--all", "-h"}, 0},
@@ -493,6 +495,9 @@ func TestHelpRejectsUnknownOptions(t *testing.T) {
 		}
 		if tc.want == 0 && tc.argv[1] == "--all" && !strings.Contains(stdout, "Usage:\n  coop build") {
 			t.Errorf("Main(%v) should print the manual; got:\n%.300s", tc.argv, stdout)
+		}
+		if tc.want == 0 && len(tc.argv) > 2 && tc.argv[2] == "ls" && !strings.Contains(stdout, "Usage: coop tasks ls") {
+			t.Errorf("Main(%v) should print the tasks ls page; got:\n%.300s", tc.argv, stdout)
 		}
 		if tc.want == 2 && !strings.Contains(stderr, `for "coop help"`) {
 			t.Errorf("Main(%v) should name coop help in its refusal; stderr:\n%s", tc.argv, stderr)

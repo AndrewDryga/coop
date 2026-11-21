@@ -185,8 +185,9 @@ func Main(argv []string) int {
 
 // checkHelpArgs refuses what `coop help` cannot take, like every other command refuses an unknown
 // option: its one option, --all, comes first; -h and --help are accepted anywhere; any other option
-// is a typo, never read as an empty topic and answered with a page. Words after "--" are not
-// looked at, as before.
+// before the topic is a typo, never read as an empty topic and answered with a page. Once a topic
+// word is named, the rest is that command's own line (`coop help tasks ls --all`), which help does
+// not run, so it is not checked; nor are words after "--".
 func checkHelpArgs(args []string) error {
 	for i, arg := range args {
 		switch {
@@ -201,6 +202,8 @@ func checkHelpArgs(args []string) error {
 			return unknownOptionErr(arg, "coop help", valid)
 		case args[0] == "--all": // the manual has no topic
 			return extraArgErr(arg, "coop help", "coop help --all", nil)
+		default: // the topic: what follows belongs to its command
+			return nil
 		}
 	}
 	return nil
