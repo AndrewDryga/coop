@@ -18,7 +18,7 @@ func init() {
 	// Config is a leaf package, so its unit tests register representative adapters just as the
 	// production agent registry does during process initialization.
 	for _, name := range []string{"claude", "codex", "foo", "bar"} {
-		RegisterAdapterConfig(name)
+		RegisterAdapterConfig(name, nil)
 	}
 }
 

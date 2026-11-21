@@ -2,14 +2,14 @@
 name: model-tiers-and-role-vs-lead
 description: ModelFor picks active>target>env per PROVIDER, so nothing but the lead's rotation may write a provider's active/target tier; a role's model rides its wrapper target
 subsystem: config
-sources: [internal/config/config.go, internal/cli/presetflag.go, internal/cli/target.go, internal/cli/acp_network.go, internal/cli/acp_cmd.go, internal/loop/rotation.go, internal/box/run.go, internal/preset/preset.go, internal/agent/claude.go, internal/agent/agent.go]
-updated: 2026-11-17
+sources: [internal/config/config.go, internal/cli/presetflag.go, internal/cli/target.go, internal/cli/acp_network.go, internal/cli/acp_cmd.go, internal/loop/rotation.go, internal/box/run.go, internal/preset/preset.go, internal/agent/claude.go, internal/agent/agent.go, internal/agent/target.go]
+updated: 2026-11-21
 ---
 
 `Config.ModelFor(agent)` resolves ONE model per PROVIDER through three tiers, most specific
 first (config.go): active (`SetActiveModel` — an explicit one-off target) → target
 (`SetTargetModel` — the rotation's active rung, re-set every `applyTarget`) →
-`COOP_<AGENT>_MODEL` env or conf. `EffortFor` mirrors it. Ordered target ladders, including
+`COOP_<AGENT>_MODEL` env or conf (checked at `config.Load` by the target grammar via `agent.CheckModelSetting`, registered through `RegisterAdapterConfig`). `EffortFor` mirrors it. Ordered target ladders, including
 controller-owned remote jobs, provide model/provider/account failover; these defaults do not.
 The key consequence: **anything written to a provider's active tier shadows that provider's
 rotation target.** So during a `coop loop`, only the lead's rotation may own a provider's
@@ -49,6 +49,7 @@ configuration validation, before a client starts. Haiku without effort remains v
 to the client. Do not ignore an ACP setting failure to hide an impossible target.
 
 ## Changelog
+- 2026-11-21 — `COOP_<AGENT>_MODEL` is now refused at load when a target would refuse its model[/effort] (task 2026-11-21-check-coop-agent-model-like-a-target).
 - 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go).
 - 2026-10-10 — real Claude same-provider peer launch omitted the consult wrapper and authorization;
   repaired that projection and kept flagless ACP lead model/effort independent of peer targets.

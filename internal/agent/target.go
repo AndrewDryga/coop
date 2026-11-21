@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -253,6 +254,37 @@ func ParseTarget(s string) (Target, error) {
 	}
 	return t, nil
 }
+
+// CheckModelSetting checks a COOP_<AGENT>_MODEL value, model[/effort], by the same rules as a
+// target's model and effort slots, so a value a target would refuse never reaches the agent. It
+// returns the target's own reason as whole sentences; config names the setting around it.
+func CheckModelSetting(provider, spec string) error {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil
+	}
+	if strings.Contains(spec, "@") {
+		return settingAdvice(`Write only model[/effort] here; choose an account in the target, after "@".`)
+	}
+	token := provider + ":" + spec
+	if strings.HasPrefix(spec, "/") { // effort only: the agent's default model
+		token = provider + spec
+	}
+	_, err := ParseTarget(token)
+	var te *TargetError
+	if !errors.As(err, &te) {
+		return err
+	}
+	if strings.HasPrefix(te.Headline, "Invalid agent target") {
+		return settingAdvice(te.Cause) // the headline would name a target nobody typed
+	}
+	return settingAdvice(te.Headline + ".\n" + te.Cause)
+}
+
+// settingAdvice is a refused setting's reason in whole sentences, as config prints it.
+type settingAdvice string
+
+func (a settingAdvice) Error() string { return string(a) }
 
 // list punctuates a set the way a sentence does ("claude, codex, gemini, or grok"). ui.List says
 // the same thing for the surfaces that own the terminal; this package cannot import it.

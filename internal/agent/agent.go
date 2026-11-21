@@ -944,7 +944,7 @@ var registry = map[string]Agent{}
 // register adds an agent to the registry; called from each adapter's init().
 func register(a Agent) {
 	registry[a.Name()] = a
-	config.RegisterAdapterConfig(a.Name())
+	config.RegisterAdapterConfig(a.Name(), func(spec string) error { return CheckModelSetting(a.Name(), spec) })
 }
 
 // Get returns the agent registered under name.

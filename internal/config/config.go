@@ -168,6 +168,9 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkAdapterEnvironment(); err != nil {
+		return nil, err
+	}
 
 	// explicit records every key the user actually SET (env or conf file), as opposed to one that
 	// fell to its built-in default — so a committed .agent/project.yaml box: policy can fill the
@@ -1080,16 +1083,38 @@ var booleanMainConfigKeys = map[string]struct{}{
 
 // adapterConfigKeys is populated by the agent registry during package initialization. That
 // keeps the provider set in internal/agent while still making a misspelled coop.conf key fail
-// closed. Registration is complete before Load can run.
-var adapterConfigKeys = map[string]struct{}{}
+// closed. Registration is complete before Load can run. A key's value, when not nil, checks the
+// setting's value.
+var adapterConfigKeys = map[string]func(string) error{}
 
 // RegisterAdapterConfig registers the two coop.conf keys owned by an agent adapter. The agent
 // registry calls it from its existing single registration point, so adding an adapter does not
-// require a second provider list in config.
-func RegisterAdapterConfig(name string) {
+// require a second provider list in config. checkModel, when not nil, checks a COOP_<AGENT>_MODEL
+// value by the target grammar this package cannot import.
+func RegisterAdapterConfig(name string, checkModel func(string) error) {
 	prefix := "COOP_" + strings.ToUpper(name)
-	adapterConfigKeys[prefix+"_CMD"] = struct{}{}
-	adapterConfigKeys[prefix+"_MODEL"] = struct{}{}
+	adapterConfigKeys[prefix+"_CMD"] = nil
+	adapterConfigKeys[prefix+"_MODEL"] = checkModel
+}
+
+// checkAdapterEnvironment checks the adapters' settings given in the environment; coop.conf values
+// are checked as the file is read (validateMainConfigValue).
+func checkAdapterEnvironment() error {
+	keys := make([]string, 0, len(adapterConfigKeys))
+	for key, check := range adapterConfigKeys {
+		if check != nil {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys) // the same setting is named first on every run
+	for _, key := range keys {
+		if v, ok := os.LookupEnv(key); ok {
+			if err := adapterConfigKeys[key](v); err != nil {
+				return configValueError(key, err)
+			}
+		}
+	}
+	return nil
 }
 
 // loadMainConf reads the operator-owned coop.conf. Only the implicit default may be absent;
@@ -1251,6 +1276,9 @@ func validateMainConfigValue(key, value string) error {
 	case "COOP_WORKDIR", "COOP_HOME_IN_BOX":
 		return boxPath(value)
 	default:
+		if check := adapterConfigKeys[key]; check != nil {
+			return check(value)
+		}
 		return nil
 	}
 }

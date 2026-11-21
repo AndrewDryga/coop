@@ -2878,7 +2878,7 @@ func TestCheckEffortsRefusesWhatTheBoxCannotCarry(t *testing.T) {
 	if err := checkEfforts(cfg, lead); err != nil {
 		t.Fatalf("gemini at low was refused: %v", err)
 	}
-	cfg.SetActiveEffort("gemini", "medium") // e.g. COOP_GEMINI_MODEL=…/medium, which no parser saw
+	cfg.SetActiveEffort("gemini", "medium") // an effort that reached the config without a parser
 	if err := checkEfforts(cfg, lead); err == nil || !strings.Contains(err.Error(), "low or high") {
 		t.Fatalf("gemini at medium = %v, want refused naming low or high", err)
 	}

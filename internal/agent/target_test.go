@@ -1,8 +1,13 @@
 package agent
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AndrewDryga/coop/internal/config"
 )
 
 func TestParseTarget(t *testing.T) {
@@ -103,6 +108,55 @@ func TestClaudeHaikuEffortIsRefused(t *testing.T) {
 		if _, err := ParseTarget("claude:" + model + "/low@personal"); err != nil {
 			t.Errorf("supporting or unknown model %s was refused: %v", model, err)
 		}
+	}
+}
+
+// COOP_<AGENT>_MODEL holds a target's model[/effort] slots, so config refuses what a target would,
+// with the target's own reason and the setting's name, from the environment and from coop.conf.
+func TestModelSettingIsCheckedLikeATarget(t *testing.T) {
+	cleanCmdEnv(t)
+	empty := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", empty)
+	for _, ok := range []string{"opus", "opus/high", " fable/max ", "/high", "claude-haiku-4-5"} {
+		t.Setenv("COOP_CLAUDE_MODEL", ok)
+		if _, err := config.Load(); err != nil {
+			t.Errorf("COOP_CLAUDE_MODEL=%q was refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"bad/effort/x", "opus/", "op us", "opus/HIGH", "claude-haiku-4-5/low"} {
+		t.Setenv("COOP_CLAUDE_MODEL", bad)
+		_, err := config.Load()
+		var te *TargetError
+		_, terr := ParseTarget("claude:" + bad)
+		if !errors.As(terr, &te) {
+			t.Fatalf("claude:%s as a target = %v, want refused", bad, terr)
+		}
+		if err == nil || !strings.Contains(err.Error(), "COOP_CLAUDE_MODEL") || !strings.Contains(err.Error(), te.Cause) {
+			t.Errorf("COOP_CLAUDE_MODEL=%q = %v, want refused naming the setting and %q", bad, err, te.Cause)
+		}
+	}
+	t.Setenv("COOP_CLAUDE_MODEL", "opus@work")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "account") {
+		t.Errorf("COOP_CLAUDE_MODEL with an account = %v, want refused", err)
+	}
+	t.Setenv("COOP_CLAUDE_MODEL", "opus")
+	t.Setenv("COOP_GEMINI_MODEL", "gemini-2.5-pro/xhigh")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "COOP_GEMINI_MODEL") {
+		t.Errorf("COOP_GEMINI_MODEL with xhigh = %v, want refused", err)
+	}
+	t.Setenv("COOP_GEMINI_MODEL", "")
+	t.Setenv("COOP_CLAUDE_MODEL", "")
+	conf := filepath.Join(t.TempDir(), "coop.conf")
+	if err := os.WriteFile(conf, []byte("COOP_CLAUDE_MODEL=bad/effort/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COOP_CONF", conf)
+	os.Unsetenv("COOP_CLAUDE_MODEL") // restored by t.Setenv's cleanup
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "COOP_CLAUDE_MODEL") {
+		t.Errorf("coop.conf COOP_CLAUDE_MODEL=bad/effort/x = %v, want refused", err)
 	}
 }
 
