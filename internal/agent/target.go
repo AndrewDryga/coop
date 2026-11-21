@@ -183,9 +183,6 @@ func ParseTarget(s string) (Target, error) {
 	// account slot is left to the account path-safety check below, which rejects it as an invalid
 	// account — so `@work/high` and a traversal like `@../x` both get the account error.
 	modelSpec, effort, hasSlash := strings.Cut(head, "/")
-	if strings.Contains(effort, "/") {
-		return invalid(`Use one "/" before the reasoning effort.`)
-	}
 	provider, model, hasColon := strings.Cut(modelSpec, ":")
 	provider = strings.TrimSpace(provider)
 	if !Valid(provider) {
@@ -197,6 +194,10 @@ func ParseTarget(s string) (Target, error) {
 			Cause:    "Choose " + list(Names(), "or") + ".",
 			Help:     "models",
 		}
+	}
+	// After the provider check, so a mistyped agent still gets its did-you-mean.
+	if strings.Contains(effort, "/") {
+		return invalid(`Use one "/" before the reasoning effort.`)
 	}
 	if hasColon {
 		model = strings.TrimSpace(model)

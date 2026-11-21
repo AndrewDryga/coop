@@ -605,6 +605,17 @@ func TestPresetJobExportReadsOnlyTheConfiguredGlobalRecipe(t *testing.T) {
 		!strings.Contains(err.Error(), `No global preset named "frontier"`) || !strings.Contains(err.Error(), "Only global presets can be exported") {
 		t.Fatalf("export of a checkout-only recipe = (%d, %v), want the global-only refusal", code, err)
 	}
+	// An invalid name is refused with the name rule, not as a missing global preset.
+	if code, err := a.cmdPresets([]string{"Bad_Name", "--export-job"}); code != 2 || err == nil ||
+		!strings.Contains(err.Error(), preset.NameRule) || strings.Contains(err.Error(), "No global preset") {
+		t.Fatalf("export of an invalid name = (%d, %v), want the name rule", code, err)
+	}
+	// A failure to read the global folder is a command that could not do its job: exit 1.
+	t.Setenv("COOP_PRESETS_DIR", "relative")
+	if code, err := a.cmdPresets([]string{"frontier", "--export-job"}); code != 1 || err == nil {
+		t.Fatalf("export from a relative global folder = (%d, %v), want exit 1", code, err)
+	}
+	t.Setenv("COOP_PRESETS_DIR", global)
 	dir := filepath.Join(global, "frontier")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)

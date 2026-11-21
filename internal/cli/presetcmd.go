@@ -56,6 +56,13 @@ func (a *app) cmdPresets(args []string) (int, error) {
 // concrete accounts. A receiving controller can inspect and pin the document.
 func (a *app) exportJobPreset(name string) (int, error) {
 	globalDir := a.cfg.GlobalPresetsDir()
+	if !preset.ValidName(name) {
+		return 2, &ui.UsageError{
+			Headline: fmt.Sprintf("Invalid preset name %q", name),
+			Cause:    preset.NameRule,
+			Rows:     [][2]string{{"Presets:", "coop presets"}, {"Help:", "coop help presets"}},
+		}
+	}
 	p, err := preset.LoadGlobal(globalDir, name)
 	if errors.Is(err, preset.ErrNotFound) {
 		// A project preset by this name may exist; export never reads the checkout, so say that
@@ -70,8 +77,8 @@ func (a *app) exportJobPreset(name string) (int, error) {
 		}
 	}
 	if err != nil {
-		err = presetLoadErr("", name, err)
-		return refusalExit(err), err
+		// A preset that will not load is the shared block; any other read failure stays exit 1.
+		return 1, presetLoadErr("", name, err)
 	}
 	targets := func(ladder []agents.Target) []string {
 		var result []string
