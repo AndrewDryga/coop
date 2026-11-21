@@ -73,7 +73,7 @@ signoff:
   #rounds: 5
 
   # Model ladder for the final signoff pass; a rate limit rotates to the next rung.
-  agent: [codex:gpt-6.1-sol/xhigh, claude:claude-fable-5-1/xhigh]
+  agent: [codex:gpt-6.1-sol/xhigh, claude:claude-fable-5-2/xhigh]
 
   # Extra signoff instructions/checks, APPENDED to coop's built-in senior review (which always
   # runs — it checks goal, standards, failure-path tests, polish, and the gate). The reviewer

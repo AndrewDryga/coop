@@ -33,7 +33,7 @@ roles:
     mode: consult
     # agent — a target or fallback list: provider[:model][/effort].
     # Route reasoning-heavy work here before the lead makes the final decision.
-    agent: claude:claude-fable-5-1/xhigh
+    agent: claude:claude-fable-5-2/xhigh
     # when — OPTIONAL routing hints; the lead's cue for what to route here.
     when: [architecture, debugging, security, code-review, before-commit]
     # prompt — Markdown appended to the role's generated contract.

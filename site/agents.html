@@ -349,7 +349,7 @@ run <code>coop presets init my-ladder</code>, then edit that preset&#39;s lead:<
 <div class="reference-code-frame code-file" data-copy-kind="configuration"><p class="code-file-name">YAML</p><pre class="code" role="region" aria-label="Failover code example" tabindex="0" data-copy-source=""><code class="language-yaml"># .agent/presets/my-ladder/preset.yaml (lead excerpt)
 lead:
   # Opus on all accounts, then Fable on work.
-  agent: [claude:claude-opus-5-5, claude:claude-fable-5-1@work]
+  agent: [claude:claude-opus-5-5, claude:claude-fable-5-2@work]
 </code></pre></div>
 <div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Failover code example" tabindex="0"><code class="language-bash">coop loop my-ladder            # rotates that ladder; coop presets shows every recipe
 coop loop claude:opus@work     # or a one-off single target, no preset
@@ -562,7 +562,7 @@ recorded; the reply is unaffected.</p>
 <p>Use your strongest model to plan the work, break it into tasks and combine the results. Subagents
 use the models you assign to them, so routine implementation can run on cheaper models. Peers
 from other providers give independent opinions. This uses co:op&#39;s built-in tools:</p>
-<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="The orchestrator pattern code example" tabindex="0"><code class="language-bash">coop claude:claude-fable-5-1 --peer codex --peer gemini # run it; --peer mounts the named peers
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="The orchestrator pattern code example" tabindex="0"><code class="language-bash">coop claude:claude-fable-5-2 --peer codex --peer gemini # run it; --peer mounts the named peers
 </code></pre></div>
 <p>Save the lead model and roles in a <a href="#presets">preset</a> to reuse this setup. Start it with
 <code>coop &lt;name&gt;</code> or <code>coop loop &lt;name&gt;</code>.</p>
@@ -576,7 +576,7 @@ inside the box.</p>
 provider access to the accounts selected for the run.</p>
 <p>For high-stakes decisions, ask a native subagent and a peer to examine the same problem in
 parallel. Keep their answers separate until both finish, then compare them and decide.</p>
-<p>Use <code>coop loop claude:claude-fable-5-1 --peer codex --peer gemini</code> for the same setup in an
+<p>Use <code>coop loop claude:claude-fable-5-2 --peer codex --peer gemini</code> for the same setup in an
 unattended loop. Each iteration gets the subagents defined in the repo and the peers named by
 <code>--peer</code>. This also works in a fork loop:
 <code>coop fork &lt;name&gt; claude --loop --peer codex --peer gemini</code>.</p>

@@ -185,7 +185,7 @@ run `coop presets init my-ladder`, then edit that preset's lead:
 # .agent/presets/my-ladder/preset.yaml (lead excerpt)
 lead:
   # Opus on all accounts, then Fable on work.
-  agent: [claude:claude-opus-5-5, claude:claude-fable-5-1@work]
+  agent: [claude:claude-opus-5-5, claude:claude-fable-5-2@work]
 ```
 
 ```bash
@@ -399,7 +399,7 @@ use the models you assign to them, so routine implementation can run on cheaper 
 from other providers give independent opinions. This uses co:op's built-in tools:
 
 ```bash
-coop claude:claude-fable-5-1 --peer codex --peer gemini # run it; --peer mounts the named peers
+coop claude:claude-fable-5-2 --peer codex --peer gemini # run it; --peer mounts the named peers
 ```
 
 Save the lead model and roles in a [preset](#presets) to reuse this setup. Start it with
@@ -418,7 +418,7 @@ provider access to the accounts selected for the run.
 For high-stakes decisions, ask a native subagent and a peer to examine the same problem in
 parallel. Keep their answers separate until both finish, then compare them and decide.
 
-Use `coop loop claude:claude-fable-5-1 --peer codex --peer gemini` for the same setup in an
+Use `coop loop claude:claude-fable-5-2 --peer codex --peer gemini` for the same setup in an
 unattended loop. Each iteration gets the subagents defined in the repo and the peers named by
 `--peer`. This also works in a fork loop:
 `coop fork <name> claude --loop --peer codex --peer gemini`.
