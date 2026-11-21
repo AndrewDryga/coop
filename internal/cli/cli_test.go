@@ -459,6 +459,32 @@ func TestVersionRejectsExtraArgs(t *testing.T) {
 	}
 }
 
+// `coop help` has one option, --all; any other option is refused with exit 2 like every other
+// command's, never answered with the menu or the manual.
+func TestHelpRejectsUnknownOptions(t *testing.T) {
+	useEmptyMainConfig(t)
+	for _, tc := range []struct {
+		argv []string
+		want int
+	}{
+		{[]string{"help", "--bogus"}, 2},
+		{[]string{"help", "--all", "--bogus"}, 2},
+		{[]string{"help", "--all", "tasks"}, 2},
+		{[]string{"help", "--all"}, 0},
+		{[]string{"help", "--help"}, 0},
+		{[]string{"help", "tasks"}, 0},
+	} {
+		var code int
+		stderr := captureStderr(t, func() { captureStdout(t, func() { code = Main(tc.argv) }) })
+		if code != tc.want {
+			t.Errorf("Main(%v) = %d, want %d; stderr:\n%s", tc.argv, code, tc.want, stderr)
+		}
+		if tc.want == 2 && !strings.Contains(stderr, `for "coop help"`) {
+			t.Errorf("Main(%v) should name coop help in its refusal; stderr:\n%s", tc.argv, stderr)
+		}
+	}
+}
+
 // `coop help help` / `coop help version` must not print a broken "forwards --help — run 'coop help
 // --help'" pointer (neither has an underlying CLI, and `coop help --help` errors). help prints the
 // top-level reference; version a synopsis.
