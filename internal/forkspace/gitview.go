@@ -364,6 +364,8 @@ func nearestGitDir(dir string) (root, gitDir string, err error) {
 		case statErr == nil && info.IsDir():
 			return dir, dotGit, nil
 		case statErr == nil && info.Mode().IsRegular():
+			// Followed as git follows it, so a box can aim it at any host file; errors then quote
+			// only what follows a leading "gitdir:", which no file but another git pointer holds.
 			data, err := readGitFile(dotGit)
 			if err != nil {
 				return "", "", err
@@ -438,7 +440,7 @@ func resolveGitDirs(workTree string, checkStores bool) (gitDir, commonDir string
 		gitDir = real
 	}
 	commonDir = gitDir
-	data, err := readGitFile(filepath.Join(gitDir, "commondir"))
+	data, err := readGitPointerNoFollow(filepath.Join(gitDir, "commondir"))
 	if errors.Is(err, os.ErrNotExist) {
 		// No commondir: the folder's own .git, or a submodule's git dir in its superproject.
 		if gitDir != filepath.Join(root, ".git") {
@@ -471,7 +473,7 @@ func resolveGitDirs(workTree string, checkStores bool) (gitDir, commonDir string
 	// A git dir with its own common dir is a linked worktree's, reached through a `gitdir:` file or
 	// a link, which a box can aim at any repository's worktree.
 	if commonDir != gitDir {
-		if err := checkLinkedWorktree(root, gitDir, commonDir, readGitFile); err != nil {
+		if err := checkLinkedWorktree(root, gitDir, commonDir, readGitPointerNoFollow); err != nil {
 			return "", "", err
 		}
 	}

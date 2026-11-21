@@ -189,7 +189,25 @@ func readGitFile(path string) ([]byte, error) {
 // the config) with the limit its purpose allows. It also returns the open file's status, so a
 // caller comparing modification times compares the very bytes it read.
 func readGitMetadata(path string, limit int64) ([]byte, os.FileInfo, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	return openGitMetadata(path, limit, 0)
+}
+
+// readGitPointerNoFollow reads a pointer git writes as a plain file and never as a link: a
+// worktree's commondir and its gitdir backlink. Errors quote these pointers' contents, and a box
+// that made one a link to a host file, ~/.git-credentials say, would have Coop quote that file to
+// wherever the error goes, a task's log.md in the box's own checkout among them. A link is refused
+// before anything is read.
+func readGitPointerNoFollow(path string) ([]byte, error) {
+	data, _, err := openGitMetadata(path, gitPointerLimit, syscall.O_NOFOLLOW)
+	if errors.Is(err, syscall.ELOOP) {
+		return nil, fmt.Errorf("%s is a link, but Git writes it as a plain file, so Coop does not follow it; "+
+			"remove the link, and if this is a linked worktree, run `git worktree repair` in it", path)
+	}
+	return data, err
+}
+
+func openGitMetadata(path string, limit int64, flag int) ([]byte, os.FileInfo, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|flag, 0)
 	if err != nil {
 		return nil, nil, err
 	}

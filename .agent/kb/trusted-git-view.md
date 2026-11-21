@@ -3,7 +3,7 @@ name: trusted-git-view
 description: host git runs under a coop-owned GIT_DIR view with an allowlisted config, so a repository's filter/textconv/merge drivers never execute on the host; what the view carries, what must run on the real git dir, and the recovery consequences
 subsystem: forkspace
 sources: [internal/forkspace/gitcommand.go, internal/forkspace/gitview_redirect_test.go, internal/forkspace/gitcommand_source_test.go, internal/forkspace/gitcommand_alias_test.go, tools/releasenotes/main.go, internal/forkctl/landed_cleanup_test.go, internal/sessionsvc/tracked_snapshot.go, internal/sessionsvc/storage.go, internal/forkspace/gitview.go, internal/forkspace/gitview_sweep.go, internal/box/authority_mounts.go, internal/cli/tempreap.go, internal/forkspace/gitview_config.go, internal/forkspace/gitfsck.go, internal/forkspace/git.go, internal/cli/util.go, internal/forkctl/git.go, internal/forkctl/merge.go, internal/forkctl/worktree_clean.go, internal/forkctl/rm.go, internal/cli/fork_cmd.go, internal/forkctl/land.go, internal/cli/sign.go, internal/sessionsvc/workspace.go, internal/sessionsvc/companion.go, internal/tasks/git.go, internal/tasks/audit.go, internal/tasks/pending_review_test.go, internal/loop/changes.go, internal/loop/review_packet.go, internal/loop/git_test.go, internal/loop/changes_submodule_test.go, internal/box/repo.go, internal/cli/net_cmd.go, internal/forkspace/exclude_unix.go, internal/forkspace/gitobserve.go, internal/forkspace/gitview_metadata_test.go, internal/shadowpath/shadowpath.go, internal/testutil/teststate/teststate.go]
-updated: 2026-11-17
+updated: 2026-11-21
 ---
 
 Every repository coop touches on the host is agent-writable (the box binds `.git` read-write), and
@@ -52,7 +52,10 @@ Git/view failures instead of reporting them as branch loss or drift.
 `commondir`, a linked worktree's `gitdir` backlink, `HEAD`, the config) goes through
 `readGitMetadata` (`exclude_unix.go`; `readGitFile` is its 64 KiB form): it follows a link as git
 does, opens with `O_NONBLOCK`, requires a regular file by `fstat`, and refuses one over its limit
-before reading. Limits: 64 KiB for pointers and HEAD, 4 MiB for the config (read on every refresh),
+before reading. `commondir` and the `gitdir` backlink are the exception: Git writes them as plain
+files, and errors quote them, so `readGitPointerNoFollow` opens them with `O_NOFOLLOW` and refuses
+a link before reading. A box could otherwise link one to a host file and have its contents quoted
+into a task's log.md in its own checkout (the loop writes a stopped attempt's error there). Limits: 64 KiB for pointers and HEAD, 4 MiB for the config (read on every refresh),
 1 GiB for the `packed-refs`, `shallow` and index that only the fsck and observation snapshots copy
 (`gitFileTooLargeError` names the file and both sizes; an oversize index also gets
 `git update-index --index-version 4`, which git documents as 30-50% smaller). A plain
@@ -83,7 +86,7 @@ backlink must name this folder's `.git`. `checkLinkedWorktree` makes that check 
 worktree folder by identity (`os.SameFile`), so case-insensitive disks and `/var` →
 `/private/var` spellings agree; it never compares the `.git` files, because a box can replace its
 `.git` with a symbolic or hard link to another worktree's, which is that very file. Views read the
-backlink following links as git does, approve refuses links. It suggests `git worktree repair`
+backlink without following a link, as approve does. It suggests `git worktree repair`
 only when the backlink is missing, empty or names a worktree that is gone. When the named worktree
 still exists the pointer is a hijack, and repair run from the pointing folder would hand it the
 other worktree's git dir. A planted `commondir` in a real `.git` folder is refused.
@@ -266,6 +269,9 @@ person's own git), but `includeIf "gitdir:"`/`"onbranch:"` cannot match without 
 repository config is ever read: trust still starts only at the global file.
 
 ## Changelog
+- 2026-11-21 — a `commondir` or `gitdir` backlink linked to a host file had its contents quoted in
+  the view's error, which a loop writes to the task's log.md in the box's checkout; both are now
+  read with `O_NOFOLLOW` and a link is refused (`TestHostGitNeverQuotesAFileAPointerLinksTo`).
 - 2026-11-17 — `GlobalGitConfig` follows the global config's includes (owner decision on audit find
   FS-3), and a launch whose global config names no author says so (`launchSections.gitIdentity`).
 - 2026-11-17 — the climb paragraph still said redirects are accepted and pointed at a section of

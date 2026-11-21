@@ -187,3 +187,62 @@ func TestHostGitFollowsTheLayoutsGitMakes(t *testing.T) {
 		t.Fatalf("a submodule pointing at its sibling's git dir = %v; want it refused", err)
 	}
 }
+
+// A box can make any pointer in its repository a link to a host file, which resolves on the host
+// when host Coop reads it. Coop's errors quote pointers, and a loop writes the first line of a
+// stopped attempt's error to the task's log.md in the box's own checkout, so no error may carry a
+// byte of that file: commondir and the gitdir backlink are refused as links before they are read,
+// and a .git file is quoted only past a leading "gitdir:", which a secret does not hold.
+func TestHostGitNeverQuotesAFileAPointerLinksTo(t *testing.T) {
+	const secret = "FAKE-SECRET-7f3a"
+	host := filepath.Join(t.TempDir(), "git-credentials")
+	if err := os.WriteFile(host, []byte("https://user:"+secret+"@example.com\n"+secret+"/second/line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const linkRefused = "is a link, but Git writes it as a plain file"
+	for _, tc := range []struct {
+		name, plant string // plant is relative to the main repository, or to the linked worktree
+		inMain      bool   // run in the main repository rather than the linked worktree
+		want        string
+	}{
+		{"commondir in a real .git", ".git/commondir", true, linkRefused},
+		{"commondir of a linked worktree", ".git/worktrees/linked/commondir", false, linkRefused},
+		{"backlink of a linked worktree", ".git/worktrees/linked/gitdir", false, linkRefused},
+		{"a linked worktree's .git", "linked/.git", false, "is not a git directory pointer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, run := viewTestRepo(t)
+			parent := t.TempDir()
+			linked := filepath.Join(parent, "linked")
+			run("worktree", "add", "-q", linked, "-b", "linked")
+			dir, path := linked, filepath.Join(repo, tc.plant)
+			if tc.inMain {
+				dir = repo
+			}
+			if strings.HasPrefix(tc.plant, "linked/") {
+				path = filepath.Join(parent, tc.plant)
+			}
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(host, path); err != nil {
+				t.Fatal(err)
+			}
+			_, viewErr := GitCommand(t.Context(), dir, "status")
+			refErr := GitRefCommand(t.Context(), dir, "update-ref", "refs/heads/x", "HEAD").Run()
+			approveErr := ExcludeIfRepository(dir, "/.coop-secret-probe")
+			for what, err := range map[string]error{"a view": viewErr, "a ref command": refErr, "coop approve": approveErr} {
+				if err == nil {
+					t.Errorf("%s followed %s linked to a host file", what, tc.plant)
+					continue
+				}
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("%s quoted the host file a pointer links to: %v", what, err)
+				}
+			}
+			if viewErr != nil && (!strings.Contains(viewErr.Error(), tc.want) || !strings.Contains(viewErr.Error(), filepath.Base(path))) {
+				t.Errorf("a view = %v; want it to name %s and say %q", viewErr, path, tc.want)
+			}
+		})
+	}
+}
