@@ -61,6 +61,7 @@ func TestParseTarget(t *testing.T) {
 		"claude@":                     "Add an account after",
 		"claude@work,":                "Add an account after",
 		"claude@a@b":                  `Use one "@" before the account name`,
+		"claude:opus/high/low":        `Use one "/" before the reasoning effort`,
 		"claude:a:b":                  "A model name cannot contain", // model can't contain ':'
 		"claude:opus@a:b":             "Invalid account name",        // account can't contain ':'
 		"claude:op us":                "A model name cannot contain",

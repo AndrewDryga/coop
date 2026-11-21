@@ -1635,8 +1635,8 @@ func TestNetCheckRunNamesTheAddressOrPortThatMissed(t *testing.T) {
 	for _, tc := range []struct {
 		address, port, verdict, reason string
 	}{
-		{"1.1.1.2", "80", "✗ 1.1.1.2:80 over TCP was blocked as an unapproved address in run " + short + ".\n", "address_not_allowed"},
-		{"1.1.1.1", "81", "✗ 1.1.1.1:81 over TCP was blocked as an unapproved port in run " + short + ".\n", "port_not_allowed"},
+		{"1.1.1.2", "80", "✗ 1.1.1.2:80 over TCP would be blocked as an unapproved address in run " + short + ".\n", "address_not_allowed"},
+		{"1.1.1.1", "81", "✗ 1.1.1.1:81 over TCP would be blocked as an unapproved port in run " + short + ".\n", "port_not_allowed"},
 	} {
 		args := []string{tc.address, "--run", short, "--protocol", "tcp", "--port", tc.port}
 		var code int

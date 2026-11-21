@@ -806,7 +806,8 @@ func xdgConfigHome() (string, error) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("find your home folder: %w", err)
+		return "", &Failure{Headline: "Could not find your home folder", Problem: "HOME is not set.",
+			Action: "Set HOME to your home folder, or set XDG_CONFIG_HOME."}
 	}
 	if !filepath.IsAbs(home) {
 		return "", relativePathError("HOME", home)
@@ -1197,8 +1198,13 @@ func settingsError(path string, line int, problem, action string) error {
 
 func mainConfFileError(path string, explicit bool, err error) error {
 	action := "Fix or remove that file."
-	if explicit {
+	switch {
+	case explicit:
 		action = "Fix that file, or point COOP_CONF somewhere else."
+	case errors.Is(err, syscall.ENOTDIR):
+		// The settings file is not the problem: a folder on its path is a file, most often an
+		// XDG_CONFIG_HOME that names one.
+		action = "A folder on this path is a file. Move that file, or set XDG_CONFIG_HOME to a folder."
 	}
 	return settingsError(path, 0, fileReason(err), action)
 }

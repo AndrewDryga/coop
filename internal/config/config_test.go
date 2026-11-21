@@ -1118,12 +1118,31 @@ func TestLoadRefusesRelativeHostPaths(t *testing.T) {
 	}
 }
 
+// An XDG_CONFIG_HOME that names a file makes coop.conf unreachable; the refusal names the folder
+// on the path, not the settings file, as the thing to fix.
+func TestSettingsUnderAFileBlameTheFolder(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var failure *Failure
+	if _, err := loadMainConf(filepath.Join(file, "coop", "coop.conf"), false); !errors.As(err, &failure) ||
+		failure.Action != "A folder on this path is a file. Move that file, or set XDG_CONFIG_HOME to a folder." {
+		t.Errorf("settings under a file = %v, want the folder named as the problem", err)
+	}
+	if _, err := loadMainConf(filepath.Join(t.TempDir(), "coop.conf"), true); !errors.As(err, &failure) ||
+		failure.Action != "Fix that file, or point COOP_CONF somewhere else." {
+		t.Errorf("missing explicit settings = %v, want the COOP_CONF advice", err)
+	}
+}
+
 // Without a home folder there is no ~/.config, and the working folder must not stand in for it.
 func TestConfigHomeNeedsAnAbsoluteHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", "")
-	if _, err := xdgConfigHome(); err == nil || !strings.Contains(err.Error(), "find your home folder") {
-		t.Errorf("xdgConfigHome with no HOME = %v, want a refusal", err)
+	var failure *Failure
+	if _, err := xdgConfigHome(); !errors.As(err, &failure) || failure.Headline != "Could not find your home folder" || failure.Problem != "HOME is not set." {
+		t.Errorf("xdgConfigHome with no HOME = %v, want the settings refusal block", err)
 	}
 	t.Setenv("HOME", "relative")
 	if _, err := xdgConfigHome(); err == nil || err.Error() != `HOME must be an absolute path, not "relative"` {

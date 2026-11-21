@@ -183,6 +183,9 @@ func ParseTarget(s string) (Target, error) {
 	// account slot is left to the account path-safety check below, which rejects it as an invalid
 	// account — so `@work/high` and a traversal like `@../x` both get the account error.
 	modelSpec, effort, hasSlash := strings.Cut(head, "/")
+	if strings.Contains(effort, "/") {
+		return invalid(`Use one "/" before the reasoning effort.`)
+	}
 	provider, model, hasColon := strings.Cut(modelSpec, ":")
 	provider = strings.TrimSpace(provider)
 	if !Valid(provider) {

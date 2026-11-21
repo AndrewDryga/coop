@@ -154,7 +154,7 @@ func TestNetCheckExitStatusIsTheAnswer(t *testing.T) {
 		}
 	}
 	run := netSealRun(t, store, netRecordRun(t, store, project))
-	if code, out := check("example.com", "--run", run.ID[:8]); code != 3 || !strings.Contains(out, "was blocked") {
+	if code, out := check("example.com", "--run", run.ID[:8]); code != 3 || !strings.Contains(out, "would be blocked") {
 		t.Errorf("a check against a run that blocked it exited %d:\n%s", code, out)
 	}
 	if err := os.MkdirAll(filepath.Join(project, ".agent"), 0o755); err != nil {
@@ -182,25 +182,25 @@ func TestHistoricalCheckNamesTheRunAndStops(t *testing.T) {
 		Origins: []networkstate.PolicyOrigin{{Kind: "operator", Name: "allow-domain"}}}
 	var b bytes.Buffer
 	writeNetHistoricalCheck(&b, ui.Palette{}, allowed)
-	if want := "✓ example.com:443 was allowed by your allow-domain flag in run e644f07a.\n"; b.String() != want {
+	if want := "✓ example.com:443 would be allowed by your allow-domain flag in run e644f07a.\n"; b.String() != want {
 		t.Errorf("allowed:\n%s\nwant:\n%s", b.String(), want)
 	}
 	denied := networkstate.PolicyExplanation{RunID: netTestRun, Domain: "registry.npmjs.org", Protocol: "tls", Port: 443, Reason: "unapproved_name",
 		Message: "no rule in this run allows this name — a rule you approve now applies to the next run"}
 	b.Reset()
 	writeNetHistoricalCheck(&b, ui.Palette{}, denied)
-	if want := "✗ registry.npmjs.org:443 was blocked as an unapproved remote address in run e644f07a.\n"; b.String() != want {
+	if want := "✗ registry.npmjs.org:443 would be blocked as an unapproved remote address in run e644f07a.\n"; b.String() != want {
 		t.Errorf("denied:\n%s\nwant:\n%s", b.String(), want)
 	}
 	b.Reset()
 	writeNetHistoricalCheck(&b, ui.Palette{}, networkstate.PolicyExplanation{RunID: netTestRun, Protocol: "tls", Port: 443, Withheld: true, Reason: "unapproved_name", Message: "x"})
-	if !strings.Contains(b.String(), "the withheld remote address:443 was blocked") {
+	if !strings.Contains(b.String(), "the withheld remote address:443 would be blocked") {
 		t.Errorf("withheld remote address view:\n%s", b.String())
 	}
 	// An IPv6 address and its port read in brackets, so the port is never taken for part of it.
 	b.Reset()
 	writeNetHistoricalCheck(&b, ui.Palette{}, networkstate.PolicyExplanation{RunID: netTestRun, Peer: "2606:4700::1", Protocol: "tcp", Port: 22, Reason: "unapproved_name", Message: "x"})
-	if !strings.Contains(b.String(), "[2606:4700::1]:22 over TCP was blocked") {
+	if !strings.Contains(b.String(), "[2606:4700::1]:22 over TCP would be blocked") {
 		t.Errorf("IPv6 view:\n%s", b.String())
 	}
 	if got := netCurrentCheck(box.NetworkAccess{Mode: egress.None}, "2606:4700::1", 22, nil).Verdict; !strings.HasPrefix(got, "[2606:4700::1]:22 is blocked") {

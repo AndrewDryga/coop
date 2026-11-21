@@ -226,6 +226,32 @@ func TestInitWithoutTerminalAsksNothingAndNamesTheMissingStep(t *testing.T) {
 	}
 }
 
+// With nobody signed in, init sets up no agent: the network line does not say "other" traffic
+// after naming nothing, and the sign-in step says init must run again to add the agent.
+func TestInitWithNobodySignedInSaysToRunInitAgain(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	hermeticGit(t)
+	dir := t.TempDir()
+	gitInit(t, dir)
+	a := initAppOnDocker(dir, t.TempDir())
+	out := captureStderr(t, func() {
+		if code, err := a.cmdInit([]string{"--services", "none"}); code != 0 || err != nil {
+			t.Fatalf("cmdInit = (%d, %v)", code, err)
+		}
+	})
+	for _, want := range []string{
+		"Network access is filtered.\nNetwork traffic is blocked until you approve rules allowing it.",
+		"Sign in to an agent\n  Sign in, then run init again to set up the agent:\n  → coop login claude\n  → coop init",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init result is missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Other network traffic") {
+		t.Errorf("init said \"other\" traffic without naming any allowed first:\n%s", out)
+	}
+}
+
 // A first init in a repository that already has its own AGENTS.md keeps it and says so, with the
 // way to add Coop's contract; with no --agents it sets up every agent that has any signed-in
 // account, not only those whose default account is.

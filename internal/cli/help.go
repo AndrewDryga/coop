@@ -679,7 +679,8 @@ Usage: coop usage [<agent>[@<account>]]
   Shows your accounts' limits, then a 30-day estimate (≈$.../30d) of what your
   recorded activity would cost at standard API prices, subscription use
   included. The estimate reads Coop and native CLI history on this computer
-  and is not a bill. Name an account to see the history and prices it uses.
+  and is not a bill. Name an account to see all its limits and the history
+  its estimate reads.
 
 EXAMPLES
   coop usage

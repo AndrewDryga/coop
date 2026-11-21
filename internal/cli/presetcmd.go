@@ -55,9 +55,23 @@ func (a *app) cmdPresets(args []string) (int, error) {
 // An operator exports the recipe they approved, with its prompt contents and
 // concrete accounts. A receiving controller can inspect and pin the document.
 func (a *app) exportJobPreset(name string) (int, error) {
-	p, err := preset.LoadGlobal(a.cfg.GlobalPresetsDir(), name)
+	globalDir := a.cfg.GlobalPresetsDir()
+	p, err := preset.LoadGlobal(globalDir, name)
+	if errors.Is(err, preset.ErrNotFound) {
+		// A project preset by this name may exist; export never reads the checkout, so say that
+		// rather than "no such preset".
+		return 2, &ui.UsageError{
+			Headline: fmt.Sprintf("No global preset named %q", name),
+			Cause:    "Only global presets can be exported, from " + ui.SafeInline(tildeify(globalDir)) + ".",
+			Rows: [][2]string{
+				{"Presets:", "coop presets"},
+				{"Help:", "coop help presets"},
+			},
+		}
+	}
 	if err != nil {
-		return 1, err
+		err = presetLoadErr("", name, err)
+		return refusalExit(err), err
 	}
 	targets := func(ladder []agents.Target) []string {
 		var result []string

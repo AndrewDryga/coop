@@ -55,6 +55,13 @@ func (c *Control) ForkLs(args []string) (int, error) {
 	if len(names) == 0 {
 		listing("No forks yet.")
 		listing("")
+		// A fork is a copy of a Git repository, so outside one the way forward is Git, not a fork.
+		if c.cfg.RepoOverride == "" {
+			if _, found, err := box.FindRepo(); err == nil && !found {
+				listing("  Forks need a Git repository: run git init, then coop init.")
+				return 0, nil
+			}
+		}
 		listing("  Create one: coop fork myfork claude")
 		return 0, nil
 	}

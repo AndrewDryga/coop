@@ -43,6 +43,13 @@ func TestTasksOutsideAProjectRefuseToStartAQueue(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(dir, ".agent")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a refused add left a queue behind: %v", err)
 	}
+	// A mistyped verb is still an unknown command there, not a missing project.
+	if code, err := CmdTasks(Host{}, cfg, []string{"lss"}); code != 2 || err == nil || !strings.Contains(err.Error(), `Unknown command "coop tasks lss"`) {
+		t.Errorf("coop tasks lss outside a project = (%d, %v), want the unknown-command refusal", code, err)
+	}
+	if code, err := CmdBacklog(cfg, []string{"lss"}); code != 2 || err == nil || !strings.Contains(err.Error(), `Unknown command "coop backlog lss"`) {
+		t.Errorf("coop backlog lss outside a project = (%d, %v), want the unknown-command refusal", code, err)
+	}
 
 	queue := filepath.Join(dir, "q2")
 	writeTaskFile(t, filepath.Join(queue, StateTodo, "2026-11-06-q", "task.md"), "# Q\n")

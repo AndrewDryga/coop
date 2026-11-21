@@ -119,6 +119,13 @@ func TestEvalInspectionEmptyMissingAndUnreadable(t *testing.T) {
 			t.Errorf("eval %v = %d, %v; want actionable read failure", args, code, err)
 		}
 	}
+	// Both refusals use the shared block, with the next command on its own row.
+	if _, err := a.cmdEval([]string{"inspect"}); asUsage(err) == nil || !strings.Contains(err.Error(), "No eval runs recorded yet — Preview one: coop eval run core codex") {
+		t.Errorf("no runs = %v, want the shared refusal block", err)
+	}
+	if _, err := a.cmdEval([]string{"inspect", "missing"}); asUsage(err) == nil || err.Error() != `No eval run "missing" — Recorded runs: coop eval runs` {
+		t.Errorf("missing run = %v, want the shared refusal block", err)
+	}
 	if code, err := a.cmdEval([]string{"inspect", "one", "extra"}); code != 2 || err == nil {
 		t.Errorf("extra args = %d, %v", code, err)
 	}

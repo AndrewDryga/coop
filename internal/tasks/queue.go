@@ -274,6 +274,10 @@ func CmdTasks(host Host, cfg *config.Config, args []string) (int, error) {
 	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
 		rest = append([]string{"ls"}, rest...)
 	}
+	// A mistyped verb is the answer wherever it is typed, before the project check below.
+	if len(rest) > 0 && !isTasksSubcommand(rest[0]) {
+		return 2, unknownSubcommandErr("tasks", rest[0], TasksVerbs)
+	}
 	if len(rest) > 0 && rest[0] == "rm" {
 		if _, err := parseTaskRemoveArgs(rest[1:]); err != nil {
 			return 2, err

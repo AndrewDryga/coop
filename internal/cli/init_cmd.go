@@ -350,8 +350,10 @@ func (a *app) cmdInit(args []string) (int, error) {
 		ui.Note("Network access is filtered.")
 		if reach := initProviderLine(agentDirs); reach != "" {
 			ui.Note("%s", reach)
+			ui.Note("Other network traffic is blocked until you approve rules allowing it.")
+		} else {
+			ui.Note("Network traffic is blocked until you approve rules allowing it.")
 		}
-		ui.Note("Other network traffic is blocked until you approve rules allowing it.")
 	}
 	if len(unregistered) > 0 {
 		ui.Note("")
@@ -677,7 +679,13 @@ func initActions(cfg *config.Config, repo string, langs, services, agentDirs []s
 		loopTarget = agentDirs[0]
 	}
 	if len(box.AuthedAgents(cfg)) == 0 {
-		out = append(out, initAction{title: "Sign in to an agent", actions: []string{"coop login " + loopTarget}})
+		signIn := initAction{title: "Sign in to an agent", actions: []string{"coop login " + loopTarget}}
+		if len(agentDirs) == 0 {
+			// No agent was set up, so its folders and instructions wait for a second init.
+			signIn.note = "Sign in, then run init again to set up the agent:"
+			signIn.actions = append(signIn.actions, "coop init")
+		}
+		out = append(out, signIn)
 	}
 	// box.dockerfile comes from project.yaml, which a box can write.
 	if dfRel := project.DockerfilePath(repo); fileExists(filepath.Join(repo, dfRel)) {

@@ -511,3 +511,12 @@ func TestUsageFooterSaysOnlyWhatTheViewCouldNotShow(t *testing.T) {
 		t.Errorf("footer for one turn = %q", got)
 	}
 }
+
+// The account view shows every limit and the history its estimate reads, but no price list, so
+// the help page promises only what that view shows.
+func TestUsageHelpPromisesWhatTheAccountViewShows(t *testing.T) {
+	page := strings.Join(strings.Fields(commandHelp["usage"]), " ")
+	if !strings.Contains(page, "Name an account to see all its limits and the history its estimate reads.") || strings.Contains(page, "prices it uses") {
+		t.Errorf("coop help usage promises what an account view does not show:\n%s", commandHelp["usage"])
+	}
+}

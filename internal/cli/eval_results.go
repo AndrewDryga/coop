@@ -32,13 +32,14 @@ func (a *app) evalInspect(args []string) (int, error) {
 			return 1, err
 		}
 		if len(ids) == 0 {
-			return 1, fmt.Errorf("no eval runs recorded yet — preview one with 'coop eval run core codex --timeout 35m --dry-run'")
+			return 1, ui.CommandFailed("No eval runs recorded yet", "",
+				[2]string{"Preview one:", "coop eval run core codex --timeout 35m --dry-run"})
 		}
 		id = ids[0]
 	}
 	run, err := eval.LoadRun(root, id)
 	if errors.Is(err, os.ErrNotExist) {
-		return 1, fmt.Errorf("eval run %q was not found — use 'coop eval runs' to find recorded runs", id)
+		return 1, ui.CommandFailed(fmt.Sprintf("No eval run %q", id), "", [2]string{"Recorded runs:", "coop eval runs"})
 	}
 	if err != nil {
 		return 1, fmt.Errorf("read eval run %q: %w", id, err)

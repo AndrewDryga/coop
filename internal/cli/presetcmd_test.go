@@ -600,8 +600,10 @@ func TestPresetJobExportReadsOnlyTheConfiguredGlobalRecipe(t *testing.T) {
 	repo := presetsRepo(t)
 	a := &app{cfg: &config.Config{RepoOverride: repo, ConfigDir: t.TempDir()}}
 	// The checkout contains frontier. Export cannot discover a recipe there.
-	if code, err := a.cmdPresets([]string{"frontier", "--export-job"}); err == nil || code == 0 {
-		t.Fatal("exported a checkout-only recipe")
+	// The refusal says why: export reads only global presets, not that no preset exists.
+	if code, err := a.cmdPresets([]string{"frontier", "--export-job"}); code != 2 || err == nil ||
+		!strings.Contains(err.Error(), `No global preset named "frontier"`) || !strings.Contains(err.Error(), "Only global presets can be exported") {
+		t.Fatalf("export of a checkout-only recipe = (%d, %v), want the global-only refusal", code, err)
 	}
 	dir := filepath.Join(global, "frontier")
 	if err := os.Mkdir(dir, 0700); err != nil {

@@ -474,16 +474,16 @@ func writeNetHistoricalCheck(w io.Writer, p ui.Palette, result networkstate.Poli
 	run := " in run " + networkreport.ShortID(result.RunID) + "."
 	subject := destination + transport
 	if result.Allowed {
-		writeNetCheck(w, p, netCheckAnswer{Allowed: true, Verdict: subject + " was allowed by " + netCheckOrigin(result) + run})
+		writeNetCheck(w, p, netCheckAnswer{Allowed: true, Verdict: subject + " would be allowed by " + netCheckOrigin(result) + run})
 		return
 	}
 	// A refusal with a compact name for its boundary says it in the verdict; any
 	// other reason keeps its own retained sentence on the line beneath.
 	if clause := netBlockedClause(result.Reason); clause != "" {
-		writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked as " + clause + run})
+		writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " would be blocked as " + clause + run})
 		return
 	}
-	writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " was blocked" + run, Cause: sentence(result.Message)})
+	writeNetCheck(w, p, netCheckAnswer{Verdict: subject + " would be blocked" + run, Cause: sentence(result.Message)})
 }
 
 // netBlockedClause names the boundary that refused a recorded attempt as a noun

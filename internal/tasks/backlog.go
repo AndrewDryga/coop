@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AndrewDryga/coop/internal/box"
@@ -43,6 +44,10 @@ func CmdBacklog(cfg *config.Config, args []string) (int, error) {
 	// See rule bare-flag-routes-to-default-view.
 	if len(rest) > 0 && strings.HasPrefix(rest[0], "-") && rest[0] != "-" {
 		rest = append([]string{"ls"}, rest...)
+	}
+	// A mistyped verb is the answer wherever it is typed, before the project check below.
+	if len(rest) > 0 && !slices.Contains(BacklogVerbs, rest[0]) {
+		return 2, unknownSubcommandErr("backlog", rest[0], BacklogVerbs)
 	}
 	repo, err := box.ResolveRepo(cfg.RepoOverride)
 	if err != nil {

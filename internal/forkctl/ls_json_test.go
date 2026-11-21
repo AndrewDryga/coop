@@ -61,6 +61,32 @@ func TestForkLsJSON(t *testing.T) {
 	}
 }
 
+// Outside Git the empty fork list points at Git, not at a fork that cannot be made there; in a
+// project it offers the fork.
+func TestForkLsEmptyOutsideGitPointsAtGit(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	out := captureStdout(t, func() {
+		if code, err := (&Control{cfg: &config.Config{}}).ForkLs(nil); code != 0 || err != nil {
+			t.Fatalf("fork ls outside Git: (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "Forks need a Git repository: run git init, then coop init.") || strings.Contains(out, "Create one") {
+		t.Errorf("fork ls outside Git = %q, want the Git step and no fork suggestion", out)
+	}
+	out = captureStdout(t, func() {
+		if code, err := (&Control{cfg: &config.Config{RepoOverride: dir}}).ForkLs(nil); code != 0 || err != nil {
+			t.Fatalf("fork ls in a project: (%d, %v)", code, err)
+		}
+	})
+	if !strings.Contains(out, "Create one: coop fork myfork claude") {
+		t.Errorf("fork ls in a project = %q, want the fork suggestion", out)
+	}
+}
+
 func TestForkLsJSONRejectsInvalidProjectWithoutOutputOrRuntime(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".agent"), 0o755); err != nil {
