@@ -4,6 +4,15 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **`coop help <command>` accepts that command's options again.** 15.3.0 refused
+  `coop help tasks ls --all` with exit 2. Options after the topic are ignored as before; an
+  unknown option before it, as in `coop help --bogus`, still exits 2.
+
+- **A launch that needs `coop build` says so.** When the project's `.agent/Dockerfile` is not
+  built or has changed, the refusal now names the agent, the reason and the build command on
+  their own lines, and the loop's status shows "project box needs a build" with that command
+  instead of "loop failed".
+
 ## 15.3.0
 
 - **Fast mode.** A target ending in `+fast` (`coop codex:gpt-6.2-sol+fast`,
