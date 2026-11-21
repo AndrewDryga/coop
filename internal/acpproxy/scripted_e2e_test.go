@@ -807,9 +807,10 @@ func buildTestBinary(t *testing.T, root, output, pkg string) {
 	}
 }
 
-// awaitLifelines waits until no box lifeline started from coopBin is running. A helper exits at
-// once after a clean finish and within its own bound after a killed coop.
-func awaitLifelines(t *testing.T, coopBin string) {
+// awaitLifelines waits until no box lifeline started from coopBin, and naming every marker (a
+// subtest's repository, say), is running. A helper exits at once after a clean finish and within
+// its own bound after a killed coop.
+func awaitLifelines(t *testing.T, coopBin string, markers ...string) {
 	t.Helper()
 	for deadline := time.Now().Add(wait.Deadline); ; time.Sleep(50 * time.Millisecond) {
 		out, err := exec.Command("ps", "-A", "-o", "args=").Output()
@@ -818,7 +819,7 @@ func awaitLifelines(t *testing.T, coopBin string) {
 		}
 		running := ""
 		for _, line := range strings.Split(string(out), "\n") {
-			if strings.Contains(line, coopBin) && strings.Contains(line, box.LifelineCommand) {
+			if strings.Contains(line, coopBin) && strings.Contains(line, box.LifelineCommand) && containsAll(line, markers) {
 				running = line
 			}
 		}
@@ -829,6 +830,15 @@ func awaitLifelines(t *testing.T, coopBin string) {
 			t.Fatalf("a box lifeline is still running after the test: %s", running)
 		}
 	}
+}
+
+func containsAll(s string, parts []string) bool {
+	for _, part := range parts {
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }
 
 // scriptedTempDir is t.TempDir by its real path. Coop follows a linked COOP_REPO to the folder it
@@ -862,6 +872,9 @@ func startScriptedACPEnv(t *testing.T, coopBin, fixtureBin, repo, tmp, plan, tar
 // startScriptedACPArgs starts Coop with an editor entry's exact arguments, such as a fork's.
 func startScriptedACPArgs(t *testing.T, coopBin, fixtureBin, repo, tmp, plan string, args []string, env map[string]string, providers ...string) *scriptedACP {
 	t.Helper()
+	// Registered before the process's own stop, so it runs after that stop and before tmp is
+	// removed: this run's box lifeline may still call the scripted runtime, which writes into tmp.
+	t.Cleanup(func() { awaitLifelines(t, coopBin, repo) })
 	for _, provider := range providers {
 		signInScriptedProfile(t, tmp, provider, "default")
 	}
