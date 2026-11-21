@@ -141,6 +141,9 @@ func TestLoadNamesTheFileAndLineWithoutTheParser(t *testing.T) {
 		{"broken syntax", "work: [\n", File + " line 1: did not find expected node content"},
 		// The manual pass of 2026-11-21 wrote the command as one line and got no hint of the list form.
 		{"command as text", "work:\n  command: sleep 120\n", File + ` line 2: work.command should be a list, one item per argument: command: ["sleep", "120"]`},
+		// Shell text split on spaces would be a wrong list someone pastes, so it gets the sh -c form.
+		{"shell command as text", "work:\n  command: sh -c 'make test && echo ok'\n",
+			File + ` line 2: work.command should be a list, one item per argument. For shell syntax, run it through a shell: command: ["sh", "-c", "make test && echo ok"]`},
 		{"command as text beside a typo", "work:\n  command: sleep 120\n  bogus: 1\n",
 			File + ` line 2: "sleep 120" should be a list` + "\n" + File + ` line 3: unknown setting "bogus"`},
 	} {

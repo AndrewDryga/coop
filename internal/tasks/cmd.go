@@ -511,7 +511,7 @@ func tasksFolderAddWithProject(root string, args []string, state, cmdLabel, proj
 	id, setup, err := createTaskFolder(project, root, state, slug, title, values, subtasks)
 	if err != nil {
 		if exists := (taskExistsError{}); errors.As(err, &exists) {
-			return 1, exists.refusal(cmdLabel)
+			return 1, exists.refusal(root, cmdLabel)
 		}
 		return -1, err
 	}
@@ -552,15 +552,21 @@ type taskExistsError struct{ msg, id, state string }
 func (e taskExistsError) Error() string { return e.msg }
 
 // refusal is the collision as the CLI draws it: where the task is, and how to go on.
-func (e taskExistsError) refusal(cmdLabel string) *ui.UsageError {
+func (e taskExistsError) refusal(root, cmdLabel string) *ui.UsageError {
 	id := ui.SafeInline(e.id)
+	another := [2]string{"Or use another title:", "coop " + cmdLabel + ` "<title>"`}
+	if e.state == StateBacklog && cmdLabel == "backlog add" {
+		// Saving the idea again is no reason to make it a task; coop tasks path cannot find an idea,
+		// so the folder itself is the way to see it.
+		return ui.CommandFailed("Idea "+id+" already exists", "It is in the backlog.",
+			[2]string{"See it:", ui.SafeInline(displayPath(filepath.Join(root, StateBacklog, e.id)))}, another)
+	}
 	if e.state == StateBacklog {
 		return ui.CommandFailed("Task "+id+" already exists", "It is an idea in the backlog.",
 			[2]string{"Promote it:", "coop backlog promote " + id})
 	}
 	return ui.CommandFailed("Task "+id+" already exists", "Its state is "+stateWords(e.state)+".",
-		[2]string{"See it:", "coop tasks path " + id},
-		[2]string{"Or use another title:", "coop " + cmdLabel + ` "<title>"`})
+		[2]string{"See it:", "coop tasks path " + id}, another)
 }
 
 // createTaskFolder writes a new task folder <date>-<slug> under root/state from the given body values

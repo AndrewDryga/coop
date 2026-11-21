@@ -2203,6 +2203,13 @@ func TestTasksFolderAddRejectsCrossStateCollision(t *testing.T) {
 		!slices.Equal(usage.Rows, [][2]string{{"Promote it:", "coop backlog promote " + time.Now().Format("2006-01-02") + "-idea-one"}}) {
 		t.Fatalf("collision with a backlog idea = %v", err)
 	}
+	// Saving the same idea again says it is already saved, not to make it a task.
+	if _, err := tasksFolderAdd(root, []string{"idea one"}, StateBacklog, "backlog add"); !errors.As(err, &usage) ||
+		usage.Cause != "It is in the backlog." || strings.Contains(err.Error(), "promote") ||
+		!strings.Contains(err.Error(), filepath.Join(StateBacklog, time.Now().Format("2006-01-02")+"-idea-one")) ||
+		!strings.Contains(err.Error(), `coop backlog add "<title>"`) {
+		t.Fatalf("idea saved twice = %v", err)
+	}
 	items := mustReadTaskTree(t, root)
 	if len(items) != 1 || items[0].State != StateDone {
 		t.Fatalf("collision must not create a duplicate id: %+v", items)

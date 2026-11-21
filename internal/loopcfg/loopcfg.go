@@ -176,6 +176,12 @@ func workCommandAsText(name string, data []byte) error {
 	if command == nil || command.Kind != yaml.ScalarNode || strings.TrimSpace(command.Value) == "" {
 		return nil
 	}
+	// Splitting on spaces is right only for plain words: quotes, escapes and shell syntax would give
+	// a list that runs something else, so that text gets the shell form to adapt instead.
+	if strings.ContainsAny(command.Value, "'\"\\`$&|;<>()*?~#{}[]!\n") {
+		return fmt.Errorf(`%s line %d: work.command should be a list, one item per argument. For shell syntax, run it through a shell: command: ["sh", "-c", "make test && echo ok"]`,
+			name, command.Line)
+	}
 	words := strings.Fields(command.Value)
 	for i, w := range words {
 		words[i] = strconv.Quote(w)
