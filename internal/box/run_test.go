@@ -1267,6 +1267,7 @@ func TestAssembleArgsFullLaunchGolden(t *testing.T) {
 	home := filepath.Join(dir, "claude", "native-homes", "default", "repo", "home")
 	cfg = cfg.WithNativeHomes(map[string]string{"claude": home})
 	t.Setenv("TZ", "America/Merida")
+	t.Setenv("COLORTERM", "")
 	spec := RunSpec{Image: "coop-box", Repo: "/repo", Cmd: []string{"claude"}, Agent: "claude", Homes: true, Cache: true, Network: true, Serve: true, RunID: "run-1", SuperviseDescendants: true, ExtraArgs: []string{"-e", "X=1"}, claudeMCPFile: cfg.MCPFile, cacheVolume: "coop-cache-repo-12345678"}
 	mounts := []Mount{{Kind: Bind, Source: "/repo", Target: "/workspace"}, {Kind: Decoy, Target: "/workspace/.env"}}
 	got := assembleArgs(cfg, true, spec, mounts, "/d", "/dd", "/workspace", ttyInteractive, true,
@@ -1393,6 +1394,7 @@ func TestControllerJobEnvironmentOverridesHostTimezone(t *testing.T) {
 }
 
 func TestAssembleArgsInteractiveTTY(t *testing.T) {
+	t.Setenv("COLORTERM", "truecolor")
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r"}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
 		"/d", "/dd", "/workspace", ttyInteractive, false, nil, nil, nil, nil, nil, "", "")
@@ -1402,14 +1404,18 @@ func TestAssembleArgsInteractiveTTY(t *testing.T) {
 	if !containsSeq(got, []string{"-e", "TERM"}) {
 		t.Errorf("interactive run should propagate TERM for color: %v", got)
 	}
+	if !containsSeq(got, []string{"-e", "COLORTERM=truecolor"}) {
+		t.Errorf("interactive run should propagate COLORTERM for true color: %v", got)
+	}
 }
 
 // Piped input attaches stdin without a tty: a tty would mangle the bytes and refuse a non-terminal.
 func TestAssembleArgsStdinOnly(t *testing.T) {
+	t.Setenv("COLORTERM", "truecolor")
 	cfg := &config.Config{HomeInBox: "/home/node", ConfigDir: t.TempDir()}
 	got := assembleArgs(cfg, true, RunSpec{Image: "i", Repo: "/r", Cmd: []string{"wc", "-l"}}, []Mount{{Kind: Bind, Source: "/r", Target: "/workspace"}},
 		"/d", "/dd", "/workspace", ttyStdinOnly, false, nil, nil, nil, nil, nil, "", "")
-	if !slices.Contains(got, "-i") || slices.Contains(got, "-it") || slices.Contains(got, "-t") || slices.Contains(got, "TERM") {
+	if !slices.Contains(got, "-i") || slices.Contains(got, "-it") || slices.Contains(got, "-t") || slices.Contains(got, "TERM") || slices.Contains(got, "COLORTERM=truecolor") {
 		t.Errorf("stdin-only run should pass -i alone: %v", got)
 	}
 }

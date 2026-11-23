@@ -3606,10 +3606,8 @@ func checkModelSettings(cfg *config.Config, spec RunSpec, scope []string) error 
 	return nil
 }
 
-// assembleArgs builds the full container-runtime argument list. It is pure given
-// its inputs and the on-disk presence of the env/instruction files, so the whole
-// run plan can be unit-tested without a container daemon. limits is the runtime's
-// resource/privilege caps (see boxLimits).
+// assembleArgs builds the full container-runtime argument list without calling a
+// container daemon. limits is the runtime's resource/privilege caps (see boxLimits).
 func assembleArgs(cfg *config.Config, initProcess bool, spec RunSpec, mounts []Mount, decoy, decoyDir, workdir string, mode ttyMode, rawMCP bool, mcpMounts, consultMounts, gitMounts, instructionMounts, synthMounts []extraMount, networkName, envFile string, limits ...string) []string {
 	// Egress fails CLOSED at the box boundary: full/services networking only when COOP_EGRESS is
 	// explicitly "open" — any other value (the normalized "none", or a value that somehow skipped
@@ -3640,17 +3638,18 @@ func assembleOptions(cfg *config.Config, initProcess bool, spec RunSpec, mounts 
 	}
 	switch mode {
 	case ttyInteractive:
-		// -e TERM propagates the host terminal type so the agents' TUIs render in
-		// full color (without it the box reports a basic terminal — e.g. Gemini
-		// warns about missing 256-color support).
 		args = append(args, "-it", "-e", "TERM")
+		// TERM can describe a 256-color terminal even when it supports true color.
+		if colorTerm := os.Getenv("COLORTERM"); colorTerm != "" {
+			args = append(args, "-e", "COLORTERM="+colorTerm)
+		}
 	case ttyStdinOnly:
 		args = append(args, "-i")
 	}
 	// The image's clock is UTC; hand every box the HOST's timezone so agents render
 	// clock times on the user's wall clock. Coop parses that prose back host-local when
 	// scheduling a rate-limit wait ("try again at 4:28 PM"), so a UTC render would land
-	// the wait hours off. TERM above is per-mode; the zone applies to every box.
+	// the wait hours off.
 	if tz := hostTimezone(); tz != "" {
 		jobTimezone := false
 		if spec.ControllerJob {
