@@ -33,11 +33,20 @@ co:op sets its own defaults in a new provider folder once. Later changes stay wi
 repository, and changing the defaults doesn't overwrite an existing folder. A fork co:op created
 shares its parent's history storage, and unrelated repositories keep separate history.
 
-When Claude exits, it prints `claude --resume <id>`. That command runs Claude on your computer,
-which doesn't have the session. After the box stops, co:op prints the command that does: the one you
-typed, plus `--resume <id>`, such as `coop claude@work --resume <id>`. It prints nothing when the
-run saved no session, or when it can't tell which one to name: you used `/clear`, or another box
-for the same project and account saved a session too.
+After an interactive agent exits, look for **Resume this session with Coop** at the end of the
+output. Run that command from the same checkout. The command opens the provider in the box with the
+same history and account. The provider may also show its own resume instructions for its native CLI.
+
+```sh
+coop claude@work --resume <id>
+coop codex@work resume <id>
+coop gemini@work --resume <id>
+coop grok@work --resume <id>
+```
+
+co:op prints an exact resume command when it sees one saved session created or updated during the
+run. If no session changed or several changed, the command is omitted. Switching conversations in
+the agent or running another box against the same project and account can make the result ambiguous.
 
 ## What each run can see
 

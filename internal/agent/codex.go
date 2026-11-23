@@ -818,7 +818,7 @@ func (a codexAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, b
 	// `codex resume --last` is global, so accept only a persisted exact native ID.
 	if id = findCodexSession(home, ws, id); id != "" {
 		b := a.base(cfg)
-		return append([]string{b[0], "resume", id}, b[1:]...), true
+		return append(append([]string{b[0]}, a.ResumeArgs(id)...), b[1:]...), true
 	}
 	return a.Interactive(cfg), false
 }
@@ -836,6 +836,16 @@ func (codexAgent) InteractiveInvocation(cmd []string) bool {
 
 func (codexAgent) SessionIDs(home, cwd string) []string {
 	return codexSessionIDs(home, cwd)
+}
+
+func (codexAgent) ResumeArgs(id string) []string { return []string{"resume", id} }
+
+func (codexAgent) WatchSessions(home, cwd string) func() []string {
+	return watchSessionFiles(func(visit sessionFileVisitor) bool {
+		return visitCodexSessionFiles(home, []string{"sessions"}, visit)
+	}, func(root *os.Root, path string) string {
+		return codexSessionID(root, path, cwd, "cli")
+	})
 }
 
 func (codexAgent) LoginConfig(cfg *config.Config) (MCPConfig, error) {
@@ -1315,11 +1325,9 @@ func ensureCodexTrust(configTOML, workdir string) (string, bool) {
 // findCodexSession returns the exact requested native session for cwd. Codex stores JSONL by date
 // with first-line {type,payload:{id,cwd,source}} metadata.
 func findCodexSession(codexDir, cwd, id string) string {
-	if ValidSessionID(id) {
-		ids := codexSessionIDsIn(codexDir, cwd, []string{"sessions", "archived_sessions"}, "")
-		if slices.Contains(ids, id) {
-			return id
-		}
+	if ValidSessionID(id) && visitCodexSessionFiles(codexDir, []string{"sessions", "archived_sessions"},
+		func(root *os.Root, path string, _ os.FileInfo) bool { return codexSessionID(root, path, cwd, "") == id }) {
+		return id
 	}
 	return ""
 }
@@ -1329,54 +1337,67 @@ const codexSessionMetadataLimit = 64 << 10
 // codexSessionIDs returns the complete unique CLI-session ID set for cwd. Rollout metadata is
 // provider-writable, so only bounded regular JSONL files are inspected.
 func codexSessionIDs(codexDir, cwd string) []string {
-	return codexSessionIDsIn(codexDir, cwd, []string{"sessions"}, "cli")
-}
-
-func codexSessionIDsIn(codexDir, cwd string, directories []string, source string) []string {
 	ids := map[string]bool{}
-	for _, directory := range directories {
-		root, err := openSessionRoot(filepath.Join(codexDir, directory))
-		if err != nil {
-			continue
+	visitCodexSessionFiles(codexDir, []string{"sessions"}, func(root *os.Root, path string, _ os.FileInfo) bool {
+		if id := codexSessionID(root, path, cwd, "cli"); id != "" {
+			ids[id] = true
 		}
-		_ = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
-			if walkErr != nil || d.IsDir() || !strings.HasSuffix(path, ".jsonl") || d.Type()&os.ModeSymlink != 0 {
-				return nil
-			}
-			info, err := d.Info()
-			if err != nil || !info.Mode().IsRegular() {
-				return nil
-			}
-			f, err := root.Open(path)
-			if err != nil {
-				return nil
-			}
-			line, readErr := bufio.NewReader(io.LimitReader(f, codexSessionMetadataLimit+1)).ReadString('\n')
-			_ = f.Close()
-			if len(line) > codexSessionMetadataLimit || (readErr != nil && readErr != io.EOF) {
-				return nil
-			}
-			var meta struct {
-				Type    string `json:"type"`
-				Payload struct {
-					ID, Cwd, Source string
-				} `json:"payload"`
-			}
-			if json.Unmarshal([]byte(line), &meta) != nil || meta.Type != "session_meta" ||
-				meta.Payload.Cwd != cwd || source != "" && meta.Payload.Source != source || !ValidSessionID(meta.Payload.ID) {
-				return nil
-			}
-			ids[meta.Payload.ID] = true
-			return nil
-		})
-		_ = root.Close()
-	}
+		return false
+	})
 	out := make([]string, 0, len(ids))
 	for id := range ids {
 		out = append(out, id)
 	}
 	slices.Sort(out)
 	return out
+}
+
+func visitCodexSessionFiles(home string, directories []string, visit sessionFileVisitor) bool {
+	for _, directory := range directories {
+		root, err := openSessionRoot(filepath.Join(home, directory))
+		if err != nil {
+			continue
+		}
+		found := false
+		_ = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil || !d.Type().IsRegular() || !strings.HasSuffix(path, ".jsonl") {
+				return nil
+			}
+			if info, err := d.Info(); err == nil && info.Mode().IsRegular() && visit(root, path, info) {
+				found = true
+				return fs.SkipAll
+			}
+			return nil
+		})
+		_ = root.Close()
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+func codexSessionID(root *os.Root, path, cwd, source string) string {
+	f, err := openSessionMetadata(root, path)
+	if err != nil {
+		return ""
+	}
+	line, readErr := bufio.NewReader(io.LimitReader(f, codexSessionMetadataLimit+1)).ReadString('\n')
+	_ = f.Close()
+	if len(line) > codexSessionMetadataLimit || (readErr != nil && readErr != io.EOF) {
+		return ""
+	}
+	var meta struct {
+		Type    string `json:"type"`
+		Payload struct {
+			ID, Cwd, Source string
+		} `json:"payload"`
+	}
+	if json.Unmarshal([]byte(line), &meta) != nil || meta.Type != "session_meta" ||
+		meta.Payload.Cwd != cwd || source != "" && meta.Payload.Source != source || !ValidSessionID(meta.Payload.ID) {
+		return ""
+	}
+	return meta.Payload.ID
 }
 
 // ACPRateLimitSignals: codex-acp surfaces a limit as codexErrorInfo=usageLimitExceeded

@@ -2,8 +2,8 @@
 name: provider-session-history
 description: Native session layouts, lookup bounds, and the large-history regression contract; the pre-v11 import is gone
 subsystem: testing
-sources: [internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/session_history_large_test.go, internal/agent/history_json.go, internal/box/native_home.go, internal/box/history.go, internal/cli/resume_note.go, internal/agent/agent.go, internal/box/usage.go]
-updated: 2026-11-17
+sources: [internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/agent/session_history_large_test.go, internal/agent/history_json.go, internal/agent/session_watch.go, internal/box/native_home.go, internal/box/history.go, internal/cli/resume_note.go, internal/agent/agent.go, internal/box/usage.go]
+updated: 2026-11-23
 ---
 
 Resume is exact by provider, account, cwd, and canonical UUID. Claude checks one
@@ -17,17 +17,15 @@ oversized ownership metadata fail closed. The cross-bucket scan remains because 
 has used both slug and hash bucket names.
 Grok scans cwd buckets and accepts only a regular `summary.json` under the exact session directory.
 
-Claude prints its own `claude --resume <id>` as it exits, only when that session's `.jsonl` exists
-and stdout is a terminal. It runs the host's Claude, which cannot see the native home, and Coop
-never sees the line because the terminal goes straight to Docker. So `coop claude` reads the
-project's `projects/<cwd-key>` folder before the run and again after the box stops
-(`WatchSessions`: valid-ID regular files, size and modification time only), and prints
-`coop <the typed target> --resume <id>` when exactly one session changed. Several changed means
-another box shares the home (a `coop loop` writes headless sessions into the same folder), and
-nothing is printed. A transcript's `entrypoint` (`cli` for the terminal, `sdk-cli` for `-p`) would
-tell them apart. `history.jsonl` holds only terminal prompts but is pruned and rewritten, so it is
-not a safe mark. A `/clear`, or plan mode's "clear context", starts a new session mid-run, which
-also leaves two changed files and so no line.
+Direct interactive launches compare session file metadata before starting and after shutdown.
+When one native ID changed, the CLI prints a final Coop resume command. It keeps the target or
+preset and pins the selected default account when it is addressable. Codex uses `resume <id>`; the other
+providers use `--resume <id>`. Codex accepts changed `source:cli` rollouts for the exact cwd.
+Gemini checks the bucket owner, project hash and native filename, and skips subagent sessions.
+Grok uses the summary's modification and accepts unmarked legacy and interactive kinds.
+Claude checks the exact project directory. Native instructions still flow from the terminal
+and can name the host CLI. The footer is best-effort for providers whose saved metadata does
+not distinguish headless writes from interactive ones. Several changed IDs are ambiguous.
 
 `TestSessionLookupLargeHistory` generates every native layout under disposable account roots. It
 locks exact hit, full miss, wrong cwd and ID, malformed input, alternate-account isolation, and
@@ -36,6 +34,8 @@ time and allocations diagnostically; it has no machine-sensitive threshold. Do n
 index or cache unless this evidence first demonstrates a real bound the adapters cannot meet.
 
 ## Changelog
+- 2026-11-23 — extended direct-launch resume guidance to Codex, Gemini, and Grok and tested
+  replay of the printed command for all four providers.
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K4-7; checked with grep).
 - 2026-11-06 — added the post-run resume line for `coop claude` (task
   2026-11-06-hide-claude-s-own-resume-hint-behind-a-coop-term), read against the installed Claude

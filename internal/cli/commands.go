@@ -271,7 +271,11 @@ func (a *app) runInBoxMode(cmd []string, agent string, peers []agents.Target, se
 	if !spec.Login {
 		a.signOnBoxExit(repo, pre, forkIdentity != nil)
 	}
-	resumeNote() // last, so the way back in is the final thing on the screen
+	// A runtime refusal can return 125–127 without an error. In those cases a
+	// shared history write cannot establish that the agent actually ran.
+	if err == nil && (code < 125 || code > 127) {
+		resumeNote() // last, so the way back in is the final thing on the screen
+	}
 	return code, err
 }
 

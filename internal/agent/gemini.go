@@ -637,7 +637,7 @@ func (a geminiAgent) Interactive(cfg *config.Config) []string { return a.base(cf
 func (geminiAgent) LaunchArgs(typed, native []string) []string { return slices.Concat(typed, native) }
 
 func (geminiAgent) InteractiveInvocation(cmd []string) bool {
-	return nativeInteractiveCommand(cmd, []string{"-p", "--prompt", "-o", "--output-format", "--acp", "--help", "-h", "--version", "-v", "mcp", "skills", "extensions"}, []string{"--model", "-m", "--prompt-interactive", "-i"})
+	return nativeInteractiveCommand(cmd, []string{"-p", "--prompt", "-o", "--output-format", "--acp", "--help", "-h", "--version", "-v", "--list-sessions", "--delete-session", "--list-extensions", "mcp", "skills", "extensions"}, []string{"--model", "-m", "--prompt-interactive", "-i"})
 }
 
 func (a geminiAgent) Headless(cfg *config.Config, prompt string) []string {
@@ -678,9 +678,26 @@ func (a geminiAgent) StartSession(cfg *config.Config, id string) []string {
 // every project bucket because Gemini's bucket naming has changed between releases.
 func (a geminiAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, bool) {
 	if ValidSessionID(id) && geminiHasSession(home, ws, id) {
-		return append(a.base(cfg), "--resume", id), true
+		return append(a.base(cfg), a.ResumeArgs(id)...), true
 	}
 	return a.Interactive(cfg), false
+}
+
+func (geminiAgent) ResumeArgs(id string) []string { return []string{"--resume", id} }
+
+func (geminiAgent) WatchSessions(home, cwd string) func() []string {
+	projectHash := fmt.Sprintf("%x", sha256.Sum256([]byte(cwd)))
+	return watchSessionFiles(func(visit sessionFileVisitor) bool {
+		return visitGeminiSessionFiles(home, cwd, visit)
+	}, func(root *os.Root, path string) string {
+		id := geminiFileSessionID(root, path, projectHash)
+		// Gemini's native selector locates sessions by the filename's short UUID.
+		if ValidSessionID(id) && strings.HasPrefix(filepath.Base(path), "session-") &&
+			strings.HasSuffix(strings.TrimSuffix(path, filepath.Ext(path)), "-"+id[:8]) {
+			return id
+		}
+		return ""
+	})
 }
 
 const geminiProjectRootLimit = 4 << 10
@@ -689,6 +706,25 @@ const geminiProjectRootLimit = 4 << 10
 // Bucket names vary between Gemini releases, so scan every bucket whose .project_root owns ws.
 func geminiHasSession(home, ws, id string) bool {
 	wantProject := fmt.Sprintf("%x", sha256.Sum256([]byte(ws)))
+	return visitGeminiSessionFiles(home, ws, func(root *os.Root, path string, _ os.FileInfo) bool {
+		return geminiFileSessionID(root, path, wantProject) == id
+	})
+}
+
+func geminiFileSessionID(root *os.Root, path, wantProject string) string {
+	f, err := openSessionMetadata(root, path)
+	if err != nil {
+		return ""
+	}
+	id, projectHash, kind := geminiSessionMetadata(f, strings.HasSuffix(path, ".json"))
+	_ = f.Close()
+	if projectHash != wantProject || kind == "subagent" {
+		return ""
+	}
+	return id
+}
+
+func visitGeminiSessionFiles(home, ws string, visit sessionFileVisitor) bool {
 	root, err := openSessionRoot(filepath.Join(home, "tmp"))
 	if err != nil {
 		return false
@@ -720,16 +756,7 @@ func geminiHasSession(home, ws, id string) bool {
 			}
 			path := filepath.Join(chats, entry.Name())
 			info, err := root.Lstat(path)
-			if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-				return false
-			}
-			f, err := root.Open(path)
-			if err != nil {
-				return false
-			}
-			sessionID, projectHash := geminiSessionMetadata(f, strings.HasSuffix(entry.Name(), ".json"))
-			_ = f.Close()
-			return sessionID == id && projectHash == wantProject
+			return err == nil && info.Mode().IsRegular() && visit(root, path, info)
 		})
 		_ = chatDir.Close()
 		return matched
@@ -746,7 +773,7 @@ func geminiBucketCWD(root *os.Root, bucket string) string {
 	if err != nil || !info.Mode().IsRegular() || info.Size() > geminiProjectRootLimit {
 		return ""
 	}
-	f, err := root.Open(path)
+	f, err := openSessionMetadata(root, path)
 	if err != nil {
 		return ""
 	}
@@ -763,17 +790,17 @@ func geminiBucketCWD(root *os.Root, bucket string) string {
 }
 
 // Ownership strings are bounded; native messages stream without a payload-size limit.
-func geminiSessionMetadata(r io.Reader, multiline bool) (sessionID, projectHash string) {
+func geminiSessionMetadata(r io.Reader, multiline bool) (sessionID, projectHash, kind string) {
 	done := errors.New("native Gemini session metadata read")
-	err := nativeHistoryObjects(r, []string{"sessionId", "projectHash"}, multiline,
+	err := nativeHistoryObjects(r, []string{"sessionId", "projectHash", "kind"}, multiline,
 		func(fields map[string]string, _, _ int64) error {
-			sessionID, projectHash = fields["sessionId"], fields["projectHash"]
+			sessionID, projectHash, kind = fields["sessionId"], fields["projectHash"], fields["kind"]
 			return done
 		})
 	if !errors.Is(err, done) {
-		return "", ""
+		return "", "", ""
 	}
-	return sessionID, projectHash
+	return sessionID, projectHash, kind
 }
 
 func (geminiAgent) Login(*config.Config) []string { return []string{"gemini"} }

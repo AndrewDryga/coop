@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **All four interactive agents show a Coop resume command.** When one saved conversation changes,
+  the final line gives the command to reopen it in the same project and account. Codex uses
+  `coop codex resume <id>` and Claude, Gemini, and Grok use `--resume <id>` after the target.
+
 ## 15.3.1
 
 - **A killed loop's box no longer keeps working.** When a loop or `coop run` was killed outright

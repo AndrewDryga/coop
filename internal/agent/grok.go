@@ -451,7 +451,7 @@ func (a grokAgent) Interactive(cfg *config.Config) []string { return a.base(cfg)
 func (grokAgent) LaunchArgs(typed, native []string) []string { return slices.Concat(typed, native) }
 
 func (grokAgent) InteractiveInvocation(cmd []string) bool {
-	return nativeInteractiveCommand(cmd, []string{"-p", "--single", "--output-format", "--help", "-h", "--version", "-v", "login", "logout", "auth", "mcp", "inspect", "update"}, []string{"--model", "--effort"})
+	return nativeInteractiveCommand(cmd, []string{"-p", "--single", "--prompt-file", "--prompt-json", "--output-format", "--help", "-h", "--version", "-v", "login", "logout", "auth", "mcp", "inspect", "update", "agent", "doctor", "sessions", "models", "usage"}, []string{"--model", "--effort"})
 }
 
 // Headless is grok's single-turn form: `grok -p "<prompt>"` prints one response and exits.
@@ -499,14 +499,66 @@ func (a grokAgent) StartSession(cfg *config.Config, id string) []string {
 // cwd/id match means fresh, so another fork, loop, or consult session cannot be selected.
 func (a grokAgent) Resume(cfg *config.Config, home, ws, id string) ([]string, bool) {
 	if ValidSessionID(id) && grokHasSession(home, ws, id) {
-		return append(a.base(cfg), "--resume", id), true
+		return append(a.base(cfg), a.ResumeArgs(id)...), true
 	}
 	return a.Interactive(cfg), false
+}
+
+func (grokAgent) ResumeArgs(id string) []string { return []string{"--resume", id} }
+
+func (grokAgent) WatchSessions(home, cwd string) func() []string {
+	return watchSessionFiles(func(visit sessionFileVisitor) bool {
+		return visitGrokBuckets(home, cwd, func(root *os.Root, bucket string) bool {
+			dir, err := root.Open(bucket)
+			if err != nil {
+				return false
+			}
+			defer dir.Close()
+			return scanSessionDir(dir, func(entry os.DirEntry) bool {
+				if !entry.IsDir() || !ValidSessionID(entry.Name()) {
+					return false
+				}
+				path, info := grokSessionSummary(root, filepath.Join(bucket, entry.Name()))
+				return info != nil && visit(root, path, info)
+			})
+		})
+	}, func(root *os.Root, path string) string {
+		data, err := readRootUsageArtifact(root, path, 1<<20)
+		var summary struct {
+			Kind string `json:"session_kind"`
+		}
+		// Older interactive summaries omit the kind. A marked automation or child
+		// session can share this bucket but cannot identify the interactive run.
+		if err != nil || json.Unmarshal(data, &summary) != nil || summary.Kind != "" && summary.Kind != "interactive" {
+			return ""
+		}
+		return filepath.Base(filepath.Dir(path))
+	})
 }
 
 // grokHasSession matches Grok's native sessions/<cwd-bucket>/<session-id> layout. Ordinary
 // buckets URL-encode cwd; overlong names record it in a bounded .cwd file instead.
 func grokHasSession(home, ws, id string) bool {
+	return visitGrokBuckets(home, ws, func(root *os.Root, bucket string) bool {
+		_, info := grokSessionSummary(root, filepath.Join(bucket, id))
+		return info != nil
+	})
+}
+
+func grokSessionSummary(root *os.Root, session string) (string, os.FileInfo) {
+	info, err := root.Lstat(session)
+	if err != nil || !info.IsDir() {
+		return "", nil
+	}
+	path := filepath.Join(session, "summary.json")
+	marker, err := root.Lstat(path)
+	if err != nil || !marker.Mode().IsRegular() {
+		return "", nil
+	}
+	return path, marker
+}
+
+func visitGrokBuckets(home, ws string, visit func(*os.Root, string) bool) bool {
 	root, err := openSessionRoot(filepath.Join(home, "sessions"))
 	if err != nil {
 		return false
@@ -516,23 +568,10 @@ func grokHasSession(home, ws, id string) bool {
 	if err != nil {
 		return false
 	}
-	found := scanSessionDir(dir, func(entry os.DirEntry) bool {
-		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			return false
-		}
-		if grokBucketCWD(root, entry.Name()) != ws {
-			return false
-		}
-		session := filepath.Join(entry.Name(), id)
-		info, err := root.Lstat(session)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return false
-		}
-		marker, err := root.Lstat(filepath.Join(session, "summary.json"))
-		return err == nil && marker.Mode().IsRegular() && marker.Mode()&os.ModeSymlink == 0
+	defer dir.Close()
+	return scanSessionDir(dir, func(entry os.DirEntry) bool {
+		return entry.IsDir() && grokBucketCWD(root, entry.Name()) == ws && visit(root, entry.Name())
 	})
-	_ = dir.Close()
-	return found
 }
 
 func grokBucketCWD(root *os.Root, bucket string) string {
@@ -544,7 +583,7 @@ func grokBucketCWD(root *os.Root, bucket string) string {
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 4<<10 {
 		return ""
 	}
-	f, err := root.Open(path)
+	f, err := openSessionMetadata(root, path)
 	if err != nil {
 		return ""
 	}

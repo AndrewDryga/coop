@@ -102,7 +102,7 @@ func TestGeminiSessionMetadataRejectsOversizedOwnership(t *testing.T) {
 			}
 			body := fmt.Sprintf(`{"sessionId":%q,"projectHash":%q}`, id, project)
 			for _, multiline := range []bool{false, true} {
-				gotID, gotProject := geminiSessionMetadata(strings.NewReader(body), multiline)
+				gotID, gotProject, _ := geminiSessionMetadata(strings.NewReader(body), multiline)
 				if gotID != "" || gotProject != "" {
 					t.Fatal("oversized ownership accepted")
 				}

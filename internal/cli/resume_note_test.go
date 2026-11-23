@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -23,7 +25,7 @@ const (
 
 // resumeFixture is one project and account whose box is a runtime shim: when a box runs, the shim
 // appends a line to each session file named in writes, as the agent does while it works. The files
-// sit where Claude keeps this project's sessions in its native home, and the shim records every call.
+// sit where the selected provider keeps this project’s sessions, and the shim records every call.
 type resumeFixture struct {
 	t         *testing.T
 	configDir string
@@ -33,33 +35,44 @@ type resumeFixture struct {
 	calls     string
 	root      string // the project, as Coop resolves it
 	home      string // the native home the box mounts
-	sessions  string // where Claude keeps this project's sessions in it
+	provider  string
+	cwd       string
 }
 
-func newResumeFixture(t *testing.T, account string, writes ...string) *resumeFixture {
+func newResumeFixture(t *testing.T, provider, account string, writes ...string) *resumeFixture {
 	t.Helper()
-	f := &resumeFixture{t: t, configDir: t.TempDir(), repo: t.TempDir(), boxHome: t.TempDir()}
-	seed := f.app("claude", true)
+	f := &resumeFixture{t: t, configDir: t.TempDir(), repo: t.TempDir(), boxHome: t.TempDir(), provider: provider}
+	seed := f.app(provider, true)
 	if account == "" {
 		account = config.DefaultProfile
 	} else {
-		signInCred(t, seed.cfg, "claude", account)
+		signInCred(t, seed.cfg, provider, account)
 	}
 	var err error
 	if f.root, err = box.ResolveRepo(f.repo); err != nil {
 		t.Fatal(err)
 	}
 	// Prepared the way the launch will, so the sessions a test puts there before it survive it.
-	if f.home, err = box.PrepareNativeHome(context.Background(), seed.cfg, "claude", account, f.root, false); err != nil {
+	if f.home, err = box.PrepareNativeHome(context.Background(), seed.cfg, provider, account, f.root, false); err != nil {
 		t.Fatal(err)
 	}
-	f.sessions = filepath.Join(f.home, "projects", agents.ClaudeProjectKey(box.Workdir(seed.cfg, f.root)))
+	f.cwd = box.Workdir(seed.cfg, f.root)
+	if provider == "gemini" {
+		if err := os.MkdirAll(filepath.Join(f.home, "tmp", "project"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(f.home, "tmp", "project", ".project_root"), []byte(f.cwd+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	dir := t.TempDir()
 	f.calls = filepath.Join(dir, "calls")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(f.calls) + "\n" +
-		"if [ \"$1\" = run ]; then\n  mkdir -p " + strconv.Quote(f.sessions) + "\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + shellWord(f.calls) + "\nif [ \"$1\" = run ]; then\n  :\n"
 	for _, name := range writes {
-		script += "  printf '{}\\n' >> " + strconv.Quote(filepath.Join(f.sessions, name)) + "\n"
+		path, contents := f.sessionFile(name)
+		script += "  mkdir -p " + shellWord(filepath.Dir(path)) + "\n" +
+			"  if [ ! -f " + shellWord(path) + " ]; then printf '%s\\n' " + shellWord(contents) + " > " + shellWord(path) + "; fi\n" +
+			"  printf '\\n' >> " + shellWord(path) + "\n"
 	}
 	script += "fi\n"
 	shim := filepath.Join(dir, "runtime")
@@ -79,13 +92,30 @@ func (f *resumeFixture) app(argv0 string, homes bool) *app {
 	return &app{cfg: cfg, rt: f.shim, rtSet: true, argv: []string{argv0}}
 }
 
-// session is a session file Claude has already written here, before the run.
+// sessionFile describes the pinned client's saved session format.
+func (f *resumeFixture) sessionFile(name string) (string, string) {
+	id := strings.TrimSuffix(name, ".jsonl")
+	switch f.provider {
+	case "codex":
+		return filepath.Join(f.home, "sessions", "2026", "11", "23", "rollout-2026-11-23T10-00-00-"+name),
+			fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q,"source":"cli"}}`, id, f.cwd)
+	case "gemini":
+		return filepath.Join(f.home, "tmp", "project", "chats", "session-2026-11-23T10-00-"+id[:8]+".jsonl"),
+			fmt.Sprintf(`{"sessionId":%q,"projectHash":"%x","kind":"main"}`, id, sha256.Sum256([]byte(f.cwd)))
+	case "grok":
+		return filepath.Join(f.home, "sessions", url.PathEscape(f.cwd), id, "summary.json"), `{"session_kind":"interactive"}`
+	default:
+		return filepath.Join(f.home, "projects", agents.ClaudeProjectKey(f.cwd), name), "{}"
+	}
+}
+
 func (f *resumeFixture) session(id string) {
 	f.t.Helper()
-	if err := os.MkdirAll(f.sessions, 0o700); err != nil {
+	path, contents := f.sessionFile(id + ".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		f.t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(f.sessions, id+".jsonl"), []byte("{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(contents+"\n"), 0o600); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -137,7 +167,7 @@ func TestLaunchNamesTheCommandThatResumesTheSessionItWrote(t *testing.T) {
 		{name: "no home mounted", target: "claude", writes: []string{resumedSession + ".jsonl"}, noHome: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newResumeFixture(t, tc.account, tc.writes...)
+			f := newResumeFixture(t, "claude", tc.account, tc.writes...)
 			for _, id := range tc.before {
 				f.session(id)
 			}
@@ -159,7 +189,7 @@ func TestLaunchNamesTheCommandThatResumesTheSessionItWrote(t *testing.T) {
 // A preset starts its lead under the preset's own routing, so the command that reopens the session
 // is the preset's, not the bare agent's.
 func TestPresetLaunchNamesThePresetToResume(t *testing.T) {
-	f := newResumeFixture(t, "", resumedSession+".jsonl")
+	f := newResumeFixture(t, "claude", "", resumedSession+".jsonl")
 	writePresetFile(t, f.repo, "solo", "lead:\n  agent: [claude]\n")
 	a := f.app("solo", true)
 	p, err := a.loadRunPreset("coop", "solo")
@@ -173,32 +203,6 @@ func TestPresetLaunchNamesThePresetToResume(t *testing.T) {
 	}
 	if want := boxStopped + "\nResume this session with Coop:\n  coop solo --resume " + resumedSession + "\n"; !strings.HasSuffix(out, want) {
 		t.Errorf("output does not end with %q:\n%s", want, out)
-	}
-}
-
-// The printed command is the way back in: run as a new Coop process, it passes --resume <id> to
-// Claude and mounts the native home the session was written to, so Claude finds it.
-func TestThePrintedResumeCommandReopensTheSameSession(t *testing.T) {
-	f := newResumeFixture(t, "work", resumedSession+".jsonl")
-	out := f.launch(f.app("claude@work", true), "claude@work")
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	command := strings.Fields(lines[len(lines)-1])
-	if want := []string{"coop", "claude@work", "--resume", resumedSession}; !slices.Equal(command, want) {
-		t.Fatalf("printed command = %q, want %q\n%s", command, want, out)
-	}
-	f.launch(f.app(command[1], true), command[1], command[2:]...)
-	var runs []string
-	for _, call := range strings.Split(readFileString(f.calls), "\n") {
-		if strings.HasPrefix(call, "run ") {
-			runs = append(runs, call)
-		}
-	}
-	if len(runs) != 2 {
-		t.Fatalf("%d boxes ran, want 2:\n%s", len(runs), readFileString(f.calls))
-	}
-	if !strings.HasSuffix(runs[1], " claude --dangerously-skip-permissions --resume "+resumedSession) ||
-		!strings.Contains(runs[1], "source="+f.home+",target=/home/node/.claude") {
-		t.Errorf("the resumed box did not open session %s in the home it was written to (%s):\n%s", resumedSession, f.home, runs[1])
 	}
 }
 
@@ -218,7 +222,7 @@ func TestNothingIsSaidAfterACommandThatOpensNoSession(t *testing.T) {
 		{"the version", []string{"--version"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newResumeFixture(t, "")
+			f := newResumeFixture(t, "claude", "")
 			note := f.app("claude", true).resumeNoteAfter("claude", f.root, append(slices.Clone(base), tc.args...))
 			f.session(resumedSession) // what the run leaves behind
 			want := ""
@@ -229,5 +233,137 @@ func TestNothingIsSaidAfterACommandThatOpensNoSession(t *testing.T) {
 				t.Errorf("claude %v printed %q, want %q", tc.args, out, want)
 			}
 		})
+	}
+}
+
+// The footer uses native metadata for a newly saved conversation and an append to a resumed one.
+// Both launches run the printed target against the same account home.
+func TestEveryProviderPrintsTheExactInteractiveResumeCommand(t *testing.T) {
+	for _, provider := range agents.Names() {
+		t.Run(provider, func(t *testing.T) {
+			target := provider + "@work"
+			f := newResumeFixture(t, provider, "work", resumedSession+".jsonl")
+			f.session(otherSession)
+			verb := "--resume"
+			if provider == "codex" {
+				verb = "resume"
+			}
+			want := "\nResume this session with Coop:\n  coop " + target + " " + verb + " " + resumedSession + "\n"
+			a := f.app(provider, true)
+			a.cfg.PinDefaultProfile(provider, "work")
+			out := f.launch(a, provider)
+			if !strings.HasSuffix(out, boxStopped+want) {
+				t.Fatalf("expected %q at the end of the launch, got:\n%s", want, out)
+			}
+			lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+			command := strings.Fields(lines[len(lines)-1])
+			out = f.launch(f.app(command[1], true), command[1], command[2:]...)
+			if !strings.HasSuffix(out, boxStopped+want) {
+				t.Errorf("updating the resumed session should print %q, got:\n%s", want, out)
+			}
+			calls := readFileString(f.calls)
+			var lastRun string
+			for _, line := range strings.Split(calls, "\n") {
+				if strings.HasPrefix(line, "run ") {
+					lastRun = line
+				}
+			}
+			if !strings.HasSuffix(lastRun, " "+verb+" "+resumedSession) ||
+				!strings.Contains(lastRun, "source="+f.home+",target=/home/node/."+provider) {
+				t.Errorf("resume command did not pass the exact ID and mount the same home:\n%s", lastRun)
+			}
+		})
+	}
+}
+
+func TestEveryProviderOmitsAnAmbiguousOrHeadlessResumeCommand(t *testing.T) {
+	for _, provider := range agents.Names() {
+		t.Run(provider, func(t *testing.T) {
+			for _, tc := range []struct {
+				name   string
+				writes []string
+				args   []string
+			}{
+				{name: "several sessions", writes: []string{resumedSession + ".jsonl", otherSession + ".jsonl"}},
+				{name: "no session"},
+				{name: "one prompt", args: []string{"-p", "hi"}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					f := newResumeFixture(t, provider, "work", tc.writes...)
+					target := provider + "@work"
+					a := f.app(target, true)
+					var out string
+					if len(tc.args) == 0 {
+						out = f.launch(a, target)
+					} else {
+						// An offline integration launch refuses headless commands before the runtime.
+						a.cfg.SetActiveProfile(provider, "work")
+						cmd := append(a.defaultCmd(provider), agentArgs(provider, tc.args)...)
+						note := a.resumeNoteAfter(provider, f.root, cmd)
+						f.session(resumedSession)
+						out = captureStderr(t, note)
+					}
+					if strings.Contains(out, "Resume this session") {
+						t.Errorf("printed a resume hint:\n%s", out)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestResumeCommandIgnoresOtherNativeSessionKinds(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		old, new string
+	}{
+		{provider: "codex", old: `"source":"cli"`, new: `"source":"exec"`},
+		{provider: "gemini", old: `"kind":"main"`, new: `"kind":"subagent"`},
+		{provider: "grok", old: `"session_kind":"interactive"`, new: `"session_kind":"headless"`},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			f := newResumeFixture(t, tc.provider, "")
+			a := f.app(tc.provider, true)
+			note := a.resumeNoteAfter(tc.provider, f.root, a.defaultCmd(tc.provider))
+			f.session(resumedSession)
+			f.session(otherSession)
+			file, contents := f.sessionFile(otherSession + ".jsonl")
+			if !strings.Contains(contents, tc.old) {
+				t.Fatal("fixture did not include the expected native marker")
+			}
+			if err := os.WriteFile(file, []byte(strings.Replace(contents, tc.old, tc.new, 1)+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out := captureStderr(t, note); !strings.Contains(out, " "+resumedSession+"\n") || strings.Contains(out, otherSession) {
+				t.Errorf("expected only the interactive resume command, got %q", out)
+			}
+		})
+	}
+}
+
+func TestResumeCommandPinsAnAddressableBuiltinDefault(t *testing.T) {
+	f := newResumeFixture(t, "codex", config.DefaultProfile, resumedSession+".jsonl")
+	out := f.launch(f.app("codex", true), "codex")
+	if want := "  coop codex@" + config.DefaultProfile + " resume " + resumedSession + "\n"; !strings.HasSuffix(out, want) {
+		t.Errorf("expected the saved account in the resume command, got:\n%s", out)
+	}
+}
+
+func TestResumeCommandDoesNotFollowARuntimeRefusal(t *testing.T) {
+	f := newResumeFixture(t, "gemini", "work", resumedSession+".jsonl")
+	// Model a different process saving into the history during an attempted launch.
+	script := strings.Replace(readFileString(f.shim.Name), "\nfi\n", "\n  exit 125\nfi\n", 1)
+	if err := os.WriteFile(f.shim.Name, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := f.app("gemini@work", true)
+	var code int
+	var err error
+	out := captureStderr(t, func() { code, err = a.launchAgent("gemini@work", nil) })
+	if code != 125 || err != nil {
+		t.Fatalf("expected runtime exit 125, got (%d, %v):\n%s", code, err, out)
+	}
+	if strings.Contains(out, "Resume this session") {
+		t.Errorf("a refused launch printed a resume command:\n%s", out)
 	}
 }
