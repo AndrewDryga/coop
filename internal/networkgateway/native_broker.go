@@ -1,6 +1,7 @@
 package networkgateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -16,12 +17,19 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/networkview"
+)
+
+const (
+	maxNativeBrokerResponseBytes = 64 << 20
+	maxNativeBrokerPointerBytes  = 4096
+	nativeDownloadTimeout        = 2 * time.Minute
 )
 
 type NativeBrokerBinding struct {
@@ -40,12 +48,15 @@ type NativeAccessSnapshot struct {
 
 type NativeBrokerRequestLine struct {
 	CredentialFree       bool
+	RejectCredentials    bool
 	Method, Path, Query  string
 	Header, HeaderPrefix string
 	// Public native selector, not a capability or grant.
 	ClientHeader, ClientPrefix, ClientMarker string
 	Segment, Suffix                          string
 	Queries                                  []NativeBrokerQuery
+	MaxResponseBytes                         int64
+	SetsPointer, UsesPointer                 string
 	// Adapter-declared account-discovery identity projection; never guest input.
 	AccountResponse *NativeBrokerAccountResponse
 }
@@ -95,6 +106,10 @@ func (line NativeBrokerRequestLine) matches(request *http.Request) bool {
 		request.Method == line.Method && line.matchesPath(target.Path) && line.matchesQuery(target.RawQuery)
 }
 
+func (line NativeBrokerRequestLine) segmentValue(value string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(value, line.Path), line.Suffix)
+}
+
 func (line NativeBrokerRequestLine) matchesPath(value string) bool {
 	if line.Segment == "" {
 		return value == line.Path
@@ -102,7 +117,7 @@ func (line NativeBrokerRequestLine) matchesPath(value string) bool {
 	if !strings.HasPrefix(value, line.Path) || !strings.HasSuffix(value, line.Suffix) {
 		return false
 	}
-	segment := strings.TrimSuffix(strings.TrimPrefix(value, line.Path), line.Suffix)
+	segment := line.segmentValue(value)
 	if segment == "" || len(segment) > 1024 {
 		return false
 	}
@@ -110,6 +125,8 @@ func (line NativeBrokerRequestLine) matchesPath(value string) bool {
 	case "uuid":
 		return len(segment) == 36 && segment[8] == '-' && segment[13] == '-' && segment[18] == '-' && segment[23] == '-' &&
 			strings.Trim(strings.ReplaceAll(segment, "-", ""), "0123456789abcdef") == "" && strings.Count(segment, "-") == 4
+	case "sha1":
+		return lowerHex(segment, 40)
 	case "token":
 		return segment != "." && segment != ".." && strings.Trim(segment, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") == ""
 	case "segments":
@@ -154,9 +171,25 @@ func (line NativeBrokerRequestLine) matchesQuery(raw string) bool {
 	return len(values) == 0
 }
 
+func validNativePointerName(name string) bool {
+	return name != "" && len(name) <= 64 && strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789-_") == ""
+}
+
 func (line NativeBrokerRequestLine) valid() bool {
-	if line.Segment != "" && line.Segment != "uuid" && line.Segment != "token" && line.Segment != "segments" ||
-		strings.ContainsAny(line.Suffix, "?#% \t\x00\r\n") || len(line.Queries) > 8 || len(line.Queries) > 0 && line.Query != "" {
+	if line.Segment != "" && line.Segment != "uuid" && line.Segment != "sha1" && line.Segment != "token" && line.Segment != "segments" ||
+		strings.ContainsAny(line.Suffix, "?#% \t\x00\r\n") || len(line.Queries) > 8 || len(line.Queries) > 0 && line.Query != "" ||
+		line.RejectCredentials && (!line.CredentialFree || line.Method != http.MethodGet || line.MaxResponseBytes == 0) ||
+		line.MaxResponseBytes < 0 || line.MaxResponseBytes > maxNativeBrokerResponseBytes ||
+		line.SetsPointer != "" && line.UsesPointer != "" {
+		return false
+	}
+	if line.SetsPointer != "" && (!validNativePointerName(line.SetsPointer) || !line.RejectCredentials || line.Method != http.MethodGet ||
+		line.Segment != "" || line.Suffix != "" || line.Query != "" || len(line.Queries) != 0 ||
+		line.MaxResponseBytes <= 0 || line.MaxResponseBytes > maxNativeBrokerPointerBytes) {
+		return false
+	}
+	if line.UsesPointer != "" && (!validNativePointerName(line.UsesPointer) || !line.RejectCredentials || line.Method != http.MethodGet ||
+		line.Segment != "sha1" || line.Suffix == "" || line.Query != "" || len(line.Queries) != 0 || line.MaxResponseBytes <= 0) {
 		return false
 	}
 	names := map[string]bool{}
@@ -193,6 +226,8 @@ type NativeBrokerOrigin struct {
 	ClientAccountHeaders map[string]string
 	// Existing filtered admission or open direct dial, never guest input.
 	DialContext func(context.Context, string, string) (net.Conn, error)
+	// OrdinaryDecision reports the run's non-broker policy for public-only download origins.
+	OrdinaryDecision func(port int) egress.Decision
 }
 
 type nativeBrokerRoute struct {
@@ -205,6 +240,8 @@ type nativeBrokerOrigin struct {
 	clientAccountHeaders http.Header
 	routes               []nativeBrokerRoute
 	transport            *http.Transport
+	publicOnly           bool
+	ordinary             func(port int) egress.Decision
 }
 
 type NativeBroker struct {
@@ -222,6 +259,7 @@ type NativeBroker struct {
 	stopped         bool
 	stop            nativeBrokerStop
 	active          map[*nativeBrokerConn]struct{}
+	pointers        map[string][]string
 	// events records each refusal with the run's other gateway refusals; nil in an open run.
 	events  *GuardEvents
 	once    sync.Once
@@ -298,10 +336,26 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 			}
 			clientAccountHeaders.Set(name, value)
 		}
-		origin := nativeBrokerOrigin{certificate: declared.Certificate, clientAccountHeaders: clientAccountHeaders, transport: transport}
+		origin := nativeBrokerOrigin{certificate: declared.Certificate, clientAccountHeaders: clientAccountHeaders,
+			transport: transport, ordinary: declared.OrdinaryDecision}
 		b.origins[host] = origin // establish cleanup ownership before further validation
+		setsPointers := map[string]bool{}
+		rejectCount := 0
 		for _, line := range declared.Requests {
-			if !line.valid() || accountHeaders.Get(line.Header) != "" || line.ClientHeader != "" && accountHeaders.Get(line.ClientHeader) != "" {
+			if line.SetsPointer != "" {
+				setsPointers[line.SetsPointer] = true
+			}
+			if line.RejectCredentials {
+				rejectCount++
+			}
+		}
+		if rejectCount > 0 && (rejectCount != len(declared.Requests) || len(accountHeaders) != 0 || len(clientAccountHeaders) != 0) {
+			return fail()
+		}
+		origin.publicOnly = rejectCount == len(declared.Requests)
+		for _, line := range declared.Requests {
+			if !line.valid() || accountHeaders.Get(line.Header) != "" || line.ClientHeader != "" && accountHeaders.Get(line.ClientHeader) != "" ||
+				line.UsesPointer != "" && !setsPointers[line.UsesPointer] {
 				return fail()
 			}
 			if shape := line.AccountResponse; shape != nil && (!shape.valid() || line.CredentialFree || line.Method != http.MethodGet ||
@@ -322,12 +376,18 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 			}
 			proxy := &httputil.ReverseProxy{Transport: transport,
 				Rewrite: func(p *httputil.ProxyRequest) {
-					access := p.In.Context().Value(nativeAccessKey{}).(NativeAccessSnapshot)
+					access, _ := p.In.Context().Value(nativeAccessKey{}).(NativeAccessSnapshot)
 					p.Out.URL.Scheme, p.Out.URL.Host, p.Out.Host = "https", host, host
 					p.Out.URL.RawQuery = line.forwardedQuery(p.Out.URL.RawQuery)
-					for _, header := range []string{"Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Goog-Api-Key", line.Header, line.ClientHeader} {
-						if header != "" {
-							p.Out.Header.Del(header)
+					if line.RejectCredentials {
+						p.Out.Header = make(http.Header)
+						p.Out.Body, p.Out.GetBody = nil, nil
+						p.Out.ContentLength, p.Out.TransferEncoding, p.Out.Trailer = 0, nil, nil
+					} else {
+						for _, header := range []string{"Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Goog-Api-Key", line.Header, line.ClientHeader} {
+							if header != "" {
+								p.Out.Header.Del(header)
+							}
 						}
 					}
 					for name, values := range accountHeaders {
@@ -339,27 +399,73 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 					if !line.CredentialFree {
 						p.Out.Header.Set(line.Header, line.HeaderPrefix+access.Credential)
 					}
-					if line.AccountResponse != nil {
+					if line.AccountResponse != nil || line.SetsPointer != "" || line.MaxResponseBytes > 0 {
 						p.Out.Header.Set("Accept-Encoding", "identity")
-						// A cached upstream body would still contain the private identity.
+					}
+					if line.AccountResponse != nil || line.SetsPointer != "" {
+						// A cached upstream body would skip identity projection or pointer validation.
 						p.Out.Header.Del("If-None-Match")
 						p.Out.Header.Del("If-Modified-Since")
 					}
 				},
 				ModifyResponse: func(response *http.Response) error {
 					response.Header.Del("Set-Cookie")
+					if line.RejectCredentials && response.StatusCode >= 300 && response.StatusCode < 400 {
+						return Failure("credential_broker_redirect_refused")
+					}
 					if response.StatusCode >= 300 && response.StatusCode < 400 && response.StatusCode != http.StatusNotModified {
 						return Failure("native_broker_redirect_refused")
+					}
+					if line.MaxResponseBytes > 0 && response.ContentLength > line.MaxResponseBytes {
+						return Failure("native_broker_response_too_large")
+					}
+					if line.SetsPointer != "" {
+						if response.StatusCode != http.StatusOK {
+							response.Body = &boundedBodyReader{ReadCloser: response.Body, remaining: line.MaxResponseBytes}
+							return nil
+						}
+						raw, err := readBoundedNativeBody(response.Body, line.MaxResponseBytes)
+						_ = response.Body.Close()
+						if err != nil {
+							return Failure("native_broker_pointer_invalid")
+						}
+						pointer := strings.TrimSpace(string(raw))
+						if !lowerHex(pointer, 40) {
+							return Failure("native_broker_pointer_invalid")
+						}
+						b.recordPointer(host, line.SetsPointer, pointer)
+						response.Body = io.NopCloser(bytes.NewReader(raw))
+						response.ContentLength = int64(len(raw))
+						response.Header.Set("Content-Length", strconv.Itoa(len(raw)))
+						response.Header.Del("Transfer-Encoding")
+						return nil
+					}
+					if line.MaxResponseBytes > 0 {
+						response.Body = &boundedBodyReader{ReadCloser: response.Body, remaining: line.MaxResponseBytes}
 					}
 					if shape := line.AccountResponse; shape != nil && response.StatusCode >= 200 && response.StatusCode < 400 {
 						return projectNativeAccountResponse(response, *shape, accountHeaders.Get(shape.Header), clientAccountHeaders.Get(shape.Header))
 					}
 					return nil
 				},
-				ErrorHandler: func(w http.ResponseWriter, request *http.Request, _ error) {
-					if request.Context().Err() == nil {
-						http.Error(w, "native provider unavailable", http.StatusBadGateway)
+				ErrorHandler: func(w http.ResponseWriter, request *http.Request, err error) {
+					if err := request.Context().Err(); err != nil && (!line.RejectCredentials || err == context.Canceled) {
+						return
 					}
+					if line.RejectCredentials {
+						reason := "credential_broker_upstream_unavailable"
+						message := "managed download unavailable"
+						if safeReason(err) == "credential_broker_redirect_refused" {
+							reason = "credential_broker_redirect_refused"
+							message = "managed download refused an upstream redirect"
+						}
+						if b.events != nil {
+							b.events.emit(GuardEvent{Kind: "admission_failed", Name: host, Reason: reason})
+						}
+						http.Error(w, message, http.StatusBadGateway)
+						return
+					}
+					http.Error(w, "native provider unavailable", http.StatusBadGateway)
 				}, FlushInterval: -1}
 			origin.routes = append(origin.routes, nativeBrokerRoute{line: line, proxy: proxy})
 		}
@@ -496,14 +602,38 @@ func (b *NativeBroker) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		b.fallback.ServeHTTP(w, request)
 		return
 	}
-	if err != nil || port != "443" || request.RequestURI != request.Host || request.URL.Host != request.Host ||
-		request.ContentLength > 0 || len(request.TransferEncoding) != 0 || request.Header.Get("Proxy-Authorization") != "" {
-		b.refuse(w, request, host, "native_broker_connect_refused", "native CONNECT refused")
-		return
-	}
-	if _, err := b.current(); err != nil {
-		b.refuse(w, request, host, safeReason(err), "native account unavailable")
-		return
+	if origin.publicOnly {
+		if err != nil || request.RequestURI != request.Host || request.URL.Host != request.Host ||
+			request.ContentLength > 0 || len(request.TransferEncoding) != 0 || request.Header.Get("Proxy-Authorization") != "" {
+			b.fallback.ServeHTTP(w, request)
+			return
+		}
+		if portNum, convErr := strconv.Atoi(port); convErr == nil && origin.ordinary != nil && origin.ordinary(portNum).Allowed {
+			b.fallback.ServeHTTP(w, request)
+			return
+		}
+		if port != "443" {
+			if origin.ordinary != nil {
+				b.fallback.ServeHTTP(w, request)
+				return
+			}
+			b.refusePublicOrigin(w, host, port)
+			return
+		}
+		if b.isStopped() {
+			b.refuse(w, request, host, "native_broker_revoked", "native account unavailable")
+			return
+		}
+	} else {
+		if err != nil || port != "443" || request.RequestURI != request.Host || request.URL.Host != request.Host ||
+			request.ContentLength > 0 || len(request.TransferEncoding) != 0 || request.Header.Get("Proxy-Authorization") != "" {
+			b.refuse(w, request, host, "native_broker_connect_refused", "native CONNECT refused")
+			return
+		}
+		if _, err := b.current(); err != nil {
+			b.refuse(w, request, host, safeReason(err), "native account unavailable")
+			return
+		}
 	}
 	select {
 	case b.conns <- struct{}{}:
@@ -549,6 +679,9 @@ func (b *NativeBroker) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"},
 		GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 			if hello.ServerName != host {
+				if origin.publicOnly && b.events != nil {
+					b.events.emit(GuardEvent{Kind: "tls_denied", Name: host, Port: 443, Reason: "tls_name_mismatch"})
+				}
 				return nil, Failure("native_broker_tls_name_mismatch")
 			}
 			return &origin.certificate, nil
@@ -593,6 +726,18 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 		if !route.line.matches(request) {
 			continue
 		}
+		if route.line.UsesPointer != "" && !b.hasPointer(host, route.line.UsesPointer, route.line.segmentValue(request.URL.Path)) {
+			continue
+		}
+		if route.line.RejectCredentials {
+			if request.ContentLength != 0 || len(request.TransferEncoding) != 0 || len(request.Trailer) != 0 || request.Header.Get("Upgrade") != "" {
+				continue
+			}
+			if hasNativeDownloadCredential(request.Header) {
+				b.refuse(w, request, host, "credential_broker_credential_refused", "credential broker refuses a credential on a download")
+				return
+			}
+		}
 		if route.line.ClientMarker != "" {
 			values := request.Header.Values(route.line.ClientHeader)
 			if len(values) != 1 || values[0] != route.line.ClientPrefix+route.line.ClientMarker {
@@ -607,17 +752,125 @@ func (b *NativeBroker) serveNative(w http.ResponseWriter, request *http.Request)
 			http.Error(w, "native provider busy", http.StatusServiceUnavailable)
 			return
 		}
-		access, err := b.current()
-		if err != nil {
-			b.refuse(w, request, host, safeReason(err), "native account unavailable")
-			return
+		if route.line.RejectCredentials {
+			if b.isStopped() {
+				b.refuse(w, request, host, "native_broker_revoked", "native account unavailable")
+				return
+			}
+			ctx, cancel := context.WithTimeout(request.Context(), nativeDownloadTimeout)
+			defer cancel()
+			request = request.WithContext(ctx)
+		} else {
+			access, err := b.current()
+			if err != nil {
+				b.refuse(w, request, host, safeReason(err), "native account unavailable")
+				return
+			}
+			request = request.WithContext(context.WithValue(request.Context(), nativeAccessKey{}, access))
+			request.Body = http.MaxBytesReader(w, request.Body, maxCredentialBrokerBody)
 		}
-		request = request.WithContext(context.WithValue(request.Context(), nativeAccessKey{}, access))
-		request.Body = http.MaxBytesReader(w, request.Body, maxCredentialBrokerBody)
 		route.proxy.ServeHTTP(w, request)
 		return
 	}
+	if origin.publicOnly {
+		b.refusePublicOrigin(w, host, "443")
+		return
+	}
 	b.refuse(w, request, host, "native_broker_request_refused", "native route refused")
+}
+
+func (b *NativeBroker) refusePublicOrigin(w http.ResponseWriter, host, portText string) {
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		if b.events != nil {
+			b.events.emit(GuardEvent{Kind: "tls_denied", Reason: "tls_proxy_request_invalid"})
+		}
+		http.Error(w, "proxy request refused", http.StatusForbidden)
+		return
+	}
+	reason := "unapproved_name"
+	if origin, ok := b.origins[host]; ok && origin.ordinary != nil {
+		if decision := origin.ordinary(port); !decision.Allowed && decision.Reason != "" {
+			reason = decision.Reason
+		}
+	}
+	if b.events != nil {
+		b.events.emit(GuardEvent{Kind: "tls_denied", Name: host, Port: port, Reason: reason})
+	}
+	http.Error(w, "destination is not in the approved network policy", http.StatusForbidden)
+}
+
+func (b *NativeBroker) isStopped() bool {
+	b.mu.Lock()
+	stopped := b.stopped
+	b.mu.Unlock()
+	return stopped
+}
+
+func (b *NativeBroker) recordPointer(host, name, value string) {
+	key := host + "\x00" + name
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pointers == nil {
+		b.pointers = map[string][]string{}
+	}
+	seen := b.pointers[key]
+	if slices.Contains(seen, value) {
+		return
+	}
+	if len(seen) >= 2 {
+		seen = seen[len(seen)-1:]
+	}
+	b.pointers[key] = append(seen, value)
+}
+
+func (b *NativeBroker) hasPointer(host, name, value string) bool {
+	key := host + "\x00" + name
+	b.mu.Lock()
+	seen := b.pointers[key]
+	ok := slices.Contains(seen, value)
+	b.mu.Unlock()
+	return ok
+}
+
+func hasNativeDownloadCredential(header http.Header) bool {
+	for _, name := range []string{"Authorization", "X-Api-Key", "X-Goog-Api-Key", "Proxy-Authorization", "Cookie"} {
+		if len(header.Values(name)) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+var errNativeResponseTooLarge = errors.New("native broker response exceeded bound")
+
+type boundedBodyReader struct {
+	io.ReadCloser
+	remaining int64
+}
+
+func (r *boundedBodyReader) Read(p []byte) (int, error) {
+	if int64(len(p)) > r.remaining+1 {
+		p = p[:r.remaining+1]
+	}
+	n, err := r.ReadCloser.Read(p)
+	if int64(n) > r.remaining {
+		r.remaining = 0
+		return 0, errNativeResponseTooLarge
+	}
+	r.remaining -= int64(n)
+	return n, err
+}
+
+func readBoundedNativeBody(body io.Reader, limit int64) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, errNativeResponseTooLarge
+	}
+	return raw, nil
 }
 
 // refuse answers 403 and records the refusal beside the gateway's own, so a provider refused here

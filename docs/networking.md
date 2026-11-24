@@ -210,11 +210,13 @@ container's network, and Apple's `container` runtime don't support this setup.
 ## A client's own downloads
 
 A client may need to download public files as well as call its model API. For example, Codex
-fetches its curated plugin store from chatgpt.com and github.com whenever an API-key run starts.
+fetches its curated plugin store from chatgpt.com and github.com whenever an API-key run starts,
+and Claude Code registers its official plugin marketplace from downloads.claude.ai on a new
+Claude home's first interactive start.
 
-These downloads use the broker's `download` route, which sends no credentials and rejects any that
-the box supplies. It allows only the exact requests that the provider's adapter lists, including
-their query strings. For Codex, these are:
+These downloads use credential-free broker routes, which send no credentials and reject any that
+the box supplies. They allow only the exact requests that the provider's adapter lists, including
+their query strings, and refuse redirects. For Codex, these are:
 
 | Host | Request lines |
 | --- | --- |
@@ -224,8 +226,16 @@ their query strings. For Codex, these are:
 The github.com lines fetch one public repository and never push. The same discovery path with
 `service=git-receive-pack` isn't in the list.
 
-The broker never turns the public Git download route into general GitHub access. Other GitHub
-requests still require ordinary network approval in filtered mode.
+For Claude Code, a filtered run allows two bounded requests on downloads.claude.ai:
+
+| Host | Request lines |
+| --- | --- |
+| downloads.claude.ai | `GET /claude-code-releases/plugins/claude-plugins-official/latest` and `GET /claude-code-releases/plugins/claude-plugins-official/<sha1>.zip` |
+
+The broker checks that `latest` returns a 40-character SHA-1 commit hash before allowing that
+commit's ZIP archive. Binary updates and other paths on downloads.claude.ai follow the project's
+ordinary network policy. Claude's fallback repository on github.com also requires ordinary
+network approval in filtered mode.
 
 At startup, Codex also copies the plugins installed on your ChatGPT account, downloading each one
 from `sdmntpr*.oaiusercontent.com`. Those hosts serve every ChatGPT user's uploaded files, so a

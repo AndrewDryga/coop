@@ -564,6 +564,20 @@ func (r *nativeRun) agentArgs(artifacts compositionArtifactOps) ([]string, error
 	return args, nil
 }
 
+func publicDownloadOrigin(routes []agents.NativeBrokerRoute, host string) bool {
+	matched := false
+	for _, route := range routes {
+		if route.Host != host {
+			continue
+		}
+		if !route.CredentialFree || !route.RejectCredentials {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
 func (r *nativeRun) origins() []string {
 	if r == nil {
 		return nil
@@ -571,6 +585,9 @@ func (r *nativeRun) origins() []string {
 	var hosts []string
 	for _, account := range r.accounts {
 		for _, route := range account.routes {
+			if !r.filtered && publicDownloadOrigin(account.routes, route.Host) {
+				continue
+			}
 			if !slices.Contains(hosts, route.Host) {
 				hosts = append(hosts, route.Host)
 			}
@@ -668,6 +685,9 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 		selected := networkgateway.NativeAccountConfig{Binding: networkgateway.NativeBrokerBinding{
 			RunID: r.runID, Provider: account.agent.Name(), Account: account.account, Epoch: account.record.Epoch}}
 		for _, host := range r.origins() {
+			if !r.filtered && publicDownloadOrigin(account.routes, host) {
+				continue
+			}
 			var lines []networkgateway.NativeBrokerRequestLine
 			realHeaders, publicHeaders := map[string]string{}, map[string]string{}
 			for _, route := range account.routes {
@@ -675,7 +695,8 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 					continue
 				}
 				line := networkgateway.NativeBrokerRequestLine{Method: route.Method, Path: route.Path, Query: route.Query, Segment: route.Segment, Suffix: route.Suffix,
-					Header: route.Header, HeaderPrefix: route.HeaderPrefix, ClientHeader: route.Header, ClientPrefix: route.HeaderPrefix, ClientMarker: account.seed.Marker}
+					Header: route.Header, HeaderPrefix: route.HeaderPrefix, ClientHeader: route.Header, ClientPrefix: route.HeaderPrefix, ClientMarker: account.seed.Marker,
+					RejectCredentials: route.RejectCredentials, MaxResponseBytes: route.MaxResponseBytes, SetsPointer: route.SetsPointer, UsesPointer: route.UsesPointer}
 				if shape := route.AccountResponse; shape != nil {
 					line.AccountResponse = &networkgateway.NativeBrokerAccountResponse{
 						Header: shape.Header, CollectionKey: shape.CollectionKey, IDKey: shape.IDKey,

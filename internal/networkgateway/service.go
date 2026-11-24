@@ -307,7 +307,8 @@ func ReadLaunchConfig(reader io.Reader) (LaunchConfig, error) {
 }
 
 func (c LaunchConfig) Validate() error {
-	if len(c.NativeOrigins) > 8 || len(c.NativeOrigins) > 0 && slices.Contains(c.Serve, 15445) {
+	// The four providers can use ten origins, including Codex's managed GitHub download.
+	if len(c.NativeOrigins) > 10 || len(c.NativeOrigins) > 0 && slices.Contains(c.Serve, 15445) {
 		return Failure("gateway_configuration_invalid")
 	}
 	for i, host := range c.NativeOrigins {
@@ -652,6 +653,7 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 	if g.native != nil {
 		ordinary := newNativeOrdinaryProxy(ctx, g.guard)
 		g.native.fallback = ordinary
+		g.native.ordinary = g.guard.policy.Domain
 		workers.Go(func() { defer ordinary.close(); failures <- g.native.serve(ctx, partReady) })
 	}
 	for _, broker := range g.brokers {

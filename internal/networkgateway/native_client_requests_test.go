@@ -26,7 +26,9 @@ func nativeAdapterRoutes(t *testing.T, provider, selection, host, account string
 				continue
 			}
 			line := NativeBrokerRequestLine{Method: route.Method, Path: route.Path, Query: route.Query, Segment: route.Segment, Suffix: route.Suffix,
-				CredentialFree: route.CredentialFree, Header: route.Header, HeaderPrefix: route.HeaderPrefix}
+				CredentialFree: route.CredentialFree, RejectCredentials: route.RejectCredentials,
+				Header: route.Header, HeaderPrefix: route.HeaderPrefix,
+				MaxResponseBytes: route.MaxResponseBytes, SetsPointer: route.SetsPointer, UsesPointer: route.UsesPointer}
 			for _, query := range route.Queries {
 				line.Queries = append(line.Queries, NativeBrokerQuery{Name: query.Name, Values: query.Values, Optional: query.Optional, MaxBytes: query.MaxBytes, Dropped: query.Dropped})
 			}

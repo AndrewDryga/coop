@@ -103,6 +103,7 @@ card is still TRUE; only reading it against its `sources` does that.
 - [native-broker-account-discovery](native-broker-account-discovery.md) — guard-selected public account aliases must match native discovery without changing workspace routing
 - [native-broker-dropped-queries](native-broker-dropped-queries.md) — a route may admit a query parameter and not forward it; only a filtered run drops it, because open runs share the broker (Codex installed-plugin download links)
 - [native-broker-managed-policy](native-broker-managed-policy.md) — Claude policy retrieval needs its exact native settings route and must retain genuine upstream policy and errors
+- [native-broker-marketplace](native-broker-marketplace.md) — Claude's cold interactive official-marketplace bootstrap uses pointer-gated, bounded public routes on downloads.claude.ai while preserving ordinary policy on every other request
 - [native-broker-images](native-broker-images.md) — Codex generation and editing require exact image routes for each provider credential family
 - [native-broker-lease-reads](native-broker-lease-reads.md) — the host renews up to 10 minutes ahead, runs on one account take turns retrying, and the held access stays leased through a passing failure; VM lease reads use fresh descriptors and the existing load deadline, never a cached grant
 - [native-helper-file-modes](native-helper-file-modes.md) — native helper read mounts keep their intended modes under a private umask while outer custody remains owner-only

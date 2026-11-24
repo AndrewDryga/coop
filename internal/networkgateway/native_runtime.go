@@ -182,6 +182,7 @@ type nativeRunRuntime struct {
 	config   NativeRunConfig
 	dial     map[string]func(context.Context, string, string) (net.Conn, error)
 	fallback http.Handler
+	ordinary func(string, int) egress.Decision
 	events   *GuardEvents // nil in an open run, which keeps no gateway record
 	// read loads one access document; nil is readNativeDocument. Tests point it away from the
 	// fixed private directory.
@@ -236,8 +237,14 @@ func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
 			if err != nil {
 				return Failure("native_broker_configuration_invalid")
 			}
-			origins = append(origins, NativeBrokerOrigin{Host: origin.Host, Certificate: certificate, Requests: origin.Requests,
-				AccountHeaders: origin.AccountHeaders, ClientAccountHeaders: origin.ClientAccountHeaders, DialContext: r.dial[origin.Host]})
+			host := origin.Host
+			var ordinaryDecision func(int) egress.Decision
+			if r.ordinary != nil {
+				ordinaryDecision = func(port int) egress.Decision { return r.ordinary(host, port) }
+			}
+			origins = append(origins, NativeBrokerOrigin{Host: host, Certificate: certificate, Requests: origin.Requests,
+				AccountHeaders: origin.AccountHeaders, ClientAccountHeaders: origin.ClientAccountHeaders,
+				DialContext: r.dial[host], OrdinaryDecision: ordinaryDecision})
 		}
 		broker, err := NewNativeBroker(ctx, account.Binding, origins, func(ctx context.Context) (NativeAccessSnapshot, error) {
 			if err := ctx.Err(); err != nil {

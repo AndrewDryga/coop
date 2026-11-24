@@ -96,13 +96,37 @@ func seedClaudeBroker(selection string) (NativeBrokerSeed, error) {
 	return out, err
 }
 
+const (
+	claudeMarketplaceHost       = "downloads.claude.ai"
+	claudeMarketplacePath       = "/claude-code-releases/plugins/claude-plugins-official/"
+	claudeMarketplacePointer    = "claude-plugins-official"
+	claudeMarketplacePointerMax = 256
+	claudeMarketplaceArchiveMax = 64 << 20
+)
+
+func claudeMarketplaceBrokerRoutes() []NativeBrokerRoute {
+	return []NativeBrokerRoute{
+		{
+			CredentialFree: true, RejectCredentials: true,
+			Host: claudeMarketplaceHost, Method: "GET", Path: claudeMarketplacePath + "latest",
+			MaxResponseBytes: claudeMarketplacePointerMax, SetsPointer: claudeMarketplacePointer,
+		},
+		{
+			CredentialFree: true, RejectCredentials: true,
+			Host: claudeMarketplaceHost, Method: "GET", Path: claudeMarketplacePath, Segment: "sha1", Suffix: ".zip",
+			MaxResponseBytes: claudeMarketplaceArchiveMax, UsesPointer: claudeMarketplacePointer,
+		},
+	}
+}
+
 func claudeBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	if selection == "apikey" {
-		return []NativeBrokerRoute{
+		out := []NativeBrokerRoute{
 			{Host: "api.anthropic.com", Method: "POST", Path: "/v1/messages", Query: "beta=true", Header: "X-Api-Key"},
 			{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/policy_limits", Header: "X-Api-Key"},
 			{Host: "api.anthropic.com", Method: "GET", Path: "/api/claude_code/settings", Header: "X-Api-Key"},
-		}, nil
+		}
+		return append(out, claudeMarketplaceBrokerRoutes()...), nil
 	}
 	if selection != "claude-oauth" {
 		return nil, errors.New("unsupported Claude broker selection")
@@ -121,7 +145,7 @@ func claudeBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 		out[i].Header = "Authorization"
 		out[i].HeaderPrefix = "Bearer "
 	}
-	return out, nil
+	return append(out, claudeMarketplaceBrokerRoutes()...), nil
 }
 
 func importClaudeIdentity(data []byte) ([]byte, error) {

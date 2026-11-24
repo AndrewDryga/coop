@@ -386,10 +386,12 @@ with an ordinary bridge or a project services network. Host networking, arbitrar
 container&#39;s network, and Apple&#39;s <code>container</code> runtime don&#39;t support this setup.</p>
 </section><section class="doc-section reference-section" id="a-clients-own-downloads"><h2>A client&#39;s own downloads</h2>
 <p>A client may need to download public files as well as call its model API. For example, Codex
-fetches its curated plugin store from chatgpt.com and github.com whenever an API-key run starts.</p>
-<p>These downloads use the broker&#39;s <code>download</code> route, which sends no credentials and rejects any that
-the box supplies. It allows only the exact requests that the provider&#39;s adapter lists, including
-their query strings. For Codex, these are:</p>
+fetches its curated plugin store from chatgpt.com and github.com whenever an API-key run starts,
+and Claude Code registers its official plugin marketplace from downloads.claude.ai on a new
+Claude home&#39;s first interactive start.</p>
+<p>These downloads use credential-free broker routes, which send no credentials and reject any that
+the box supplies. They allow only the exact requests that the provider&#39;s adapter lists, including
+their query strings, and refuse redirects. For Codex, these are:</p>
 <div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="A client&#39;s own downloads table"><table class="ref">
 <thead>
 <tr>
@@ -410,8 +412,25 @@ their query strings. For Codex, these are:</p>
 </table></div></div>
 <p>The github.com lines fetch one public repository and never push. The same discovery path with
 <code>service=git-receive-pack</code> isn&#39;t in the list.</p>
-<p>The broker never turns the public Git download route into general GitHub access. Other GitHub
-requests still require ordinary network approval in filtered mode.</p>
+<p>For Claude Code, a filtered run allows two bounded requests on downloads.claude.ai:</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="A client&#39;s own downloads table"><table class="ref">
+<thead>
+<tr>
+<th scope="col">Host</th>
+<th scope="col">Request lines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>downloads.claude.ai</td>
+<td><code>GET /claude-code-releases/plugins/claude-plugins-official/latest</code> and <code>GET /claude-code-releases/plugins/claude-plugins-official/&lt;sha1&gt;.zip</code></td>
+</tr>
+</tbody>
+</table></div></div>
+<p>The broker checks that <code>latest</code> returns a 40-character SHA-1 commit hash before allowing that
+commit&#39;s ZIP archive. Binary updates and other paths on downloads.claude.ai follow the project&#39;s
+ordinary network policy. Claude&#39;s fallback repository on github.com also requires ordinary
+network approval in filtered mode.</p>
 <p>At startup, Codex also copies the plugins installed on your ChatGPT account, downloading each one
 from <code>sdmntpr*.oaiusercontent.com</code>. Those hosts serve every ChatGPT user&#39;s uploaded files, so a
 filtered box never allows them. Instead, its broker asks chatgpt.com for the installed-plugin list

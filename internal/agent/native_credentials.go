@@ -79,11 +79,14 @@ type NativeBrokerSeed struct {
 }
 type NativeBrokerRoute struct {
 	CredentialFree            bool
+	RejectCredentials         bool
 	Host, Method, Path, Query string
 	Segment, Suffix           string
 	Queries                   []NativeBrokerQuery
 	Header, HeaderPrefix      string
 	AccountHeader             string
+	MaxResponseBytes          int64
+	SetsPointer, UsesPointer  string
 	// Alias the selected identity in account discovery without changing routing.
 	AccountResponse *NativeBrokerAccountResponse
 }
