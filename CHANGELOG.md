@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 15.4.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+- **Claude Code installs its official marketplace in filtered boxes.** A new Claude home can
+  register the marketplace on its first interactive launch through two bounded public requests.
+  The project's ordinary network policy still governs other CDN paths and GitHub.
+
+- **Filtered boxes recover from brief gateway stalls.** A temporary proxy readiness timeout gives
+  the gateway time to recover while the box continues running under its network rules. A sustained
+  failure stops the attempt and records the observed reason in the network receipt.
+
+- **Interactive boxes retain true color.** Coop passes the terminal's true-color setting through
+  to the agent so supported terminals can render the client's full color palette.
 
 - **Refreshed bundled clients and runtime components.** Claude Code 2.1.331 and its editor adapter
   0.110.1, Codex 0.171.0 and its editor adapter 2.10.0, Gemini CLI 0.71.1, and Grok 1.0.92.

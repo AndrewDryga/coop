@@ -2,12 +2,11 @@
      release skill rewrites this file in each finalize commit, and the release workflow publishes
      its section as is (tools/releasenotes). CHANGELOG.md keeps every change. -->
 
-## 15.3.1
+## 15.4.0
 
-A fix for a 15.3.0 regression, and a safety fix for killed loops.
+- **Claude Code can set up its official marketplace in filtered boxes.** A fresh interactive session can register the marketplace through two bounded download requests. Other destinations still follow project network policy.
+- **Filtered boxes ride out brief gateway stalls.** Coop gives the proxy time to recover under the same network rules. If the gateway stays unavailable, Coop stops the box and records the reason.
+- **Interactive boxes make it easier to pick up where you left off.** All four clients show an exact Coop resume command when a saved conversation changes, and supported terminals retain true color.
+- **Bundled clients and runtime components are refreshed.** Coop updates its shared image on the next launch. If a custom project image is stale, run `coop build`. Filtered runs redo network setup once.
 
-- **A killed loop's box no longer keeps working.** If a loop or `coop run` was killed outright (`kill -9`, a crash), its agent kept running with nobody watching and could still commit to your repository. Now a small helper started with each launch removes the box within seconds. It never touches a box whose owner is still running.
-- **`coop help tasks ls --all` works again.** 15.3.0 refused a command's own options after `coop help`.
-- **A launch that needs `coop build` says so**, with the build command on its own line, and the loop's status shows "project box needs a build" instead of "loop failed".
-
-[Full changelog](https://github.com/AndrewDryga/coop/compare/v15.3.0...v15.3.1)
+[Full changelog](https://github.com/AndrewDryga/coop/compare/v15.3.1...v15.4.0)
