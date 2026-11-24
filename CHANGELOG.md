@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+## 15.4.1
 
 - **Updated the Claude and Codex editor adapters.** Claude editor sessions can start when
   managed policy blocks the supplied MCP servers. The adapter reports which servers it skipped.
