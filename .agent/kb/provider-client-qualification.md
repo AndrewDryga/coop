@@ -3,7 +3,7 @@ name: provider-client-qualification
 description: locked clients, conformance rows, on-demand live suites and the client bump procedure
 subsystem: agent
 sources: [internal/agent/locked_clients.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/networkgateway/native_client_requests_test.go, internal/agent/locked-clients/package.json, internal/agent/locked-clients/package-lock.json, internal/box/locked_image.go, internal/box/image.go, internal/box/gitenv.go, Makefile, internal/cli/provider_live_e2e_test.go, internal/cli/provider_loop_live_e2e_test.go, internal/cli/provider_resume_live_e2e_test.go, internal/cli/provider_network_live_e2e_test.go, internal/cli/provider_consult_live_e2e_test.go, internal/loop/provider_accounts_live_e2e_test.go, internal/acpproxy/e2e_test.go, internal/box/credential_broker_test.go, internal/box/locked_client_fixture_e2e_test.go, internal/box/skills_runtime_e2e_test.go, internal/box/native_roles_runtime_e2e_test.go, internal/box/mcp_runtime_e2e_test.go, internal/testutil/liveprovider/contract.go, internal/testutil/liveprovider/credentials.go, internal/acpctl/network.go, internal/acpctl/control.go, internal/acpctl/visible_selects.go, internal/box/mcp_broker_test.go, internal/ladder/limit_test.go, internal/cli/scripted_skills_process_e2e_test.go, internal/cli/scripted_mcp_process_e2e_test.go, internal/box/testdata/mcpprobe/main.go]
-updated: 2026-11-17
+updated: 2026-11-24
 ---
 
 **One manifest.** `locked-clients/package.json` + `package-lock.json` (embedded) and each adapter's
@@ -245,6 +245,11 @@ executable or world-writable modes, retaining their paths/types and exact semant
 reflog and index checks.
 
 ## Changelog
+- 2026-11-24 — Claude ACP 0.111.0 (SDK 0.3.331) and Codex ACP 2.11.0 keep the pinned
+  ACP v1 startup and MCP request contracts in the locked image. A synthetic managed policy
+  with `disableSideloadFlags` makes Claude ACP 0.110.1 reject `session/new`. The new adapter
+  starts the same session without the refused MCP server and logs its name. The Codex adapter
+  still uses native Codex 0.171.0.
 - 2026-11-21 — Claude Code 2.1.330, claude-agent-acp 0.109.0 (SDK claude 2.1.328), Codex 0.170.0 (not
   0.171.0: codex-acp 2.8.0 requires ^0.170.0) and codex-acp 2.8.0, for Claude Fable 5.2. Same method,
   old and new coop-box images offline through capx with the broker seeds (the kit's `run.sh` is a copy

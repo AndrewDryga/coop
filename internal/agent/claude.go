@@ -571,7 +571,7 @@ func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	}
 	return []LockedClient{
 		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.331", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.331"}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.110.1", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.330"}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.111.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.331"}}},
 	}
 }
 
@@ -749,7 +749,7 @@ func (claudeAgent) LoginConfig(*config.Config) (MCPConfig, error) { return MCPCo
 
 // UpdateControls: DISABLE_UPDATES is the first switch the updater checks, and a manual `claude
 // update` refuses under it too — read out of the 2.1.319 binary and its ACP adapter's SDK, and still
-// in 2.1.331's and its adapter's 2.1.330.
+// in Claude Code 2.1.331, including the adapter's bundled binary.
 func (claudeAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"DISABLE_UPDATES=1"}}
 }

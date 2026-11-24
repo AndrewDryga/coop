@@ -4,6 +4,10 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Updated the Claude and Codex editor adapters.** Claude editor sessions can start when
+  managed policy blocks the supplied MCP servers. The adapter reports which servers it skipped.
+  The Codex adapter update includes protocol and terminal fixes.
+
 ## 15.4.0
 
 - **Claude Code installs its official marketplace in filtered boxes.** A new Claude home can

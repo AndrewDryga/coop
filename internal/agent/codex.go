@@ -661,7 +661,7 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	native := lockedClientRoot + "/node_modules/@openai/codex-linux-" + cpu + "/vendor/" + target + "/bin/codex"
 	return []LockedClient{
 		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.171.0", Binary: "codex", SetupFile: codexNativeCLISetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.171.0-linux-" + cpu}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.10.0", Binary: "codex-acp", SetupFile: codexNativeACPSetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH", "DEFAULT_AUTH_REQUEST"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.171.0-linux-" + cpu}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.11.0", Binary: "codex-acp", SetupFile: codexNativeACPSetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH", "DEFAULT_AUTH_REQUEST"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.171.0-linux-" + cpu}}},
 	}
 }
 

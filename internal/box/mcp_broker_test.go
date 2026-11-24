@@ -514,9 +514,9 @@ func TestMCPRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 	lines := []string{"POST /mcp", "GET /mcp"}
 	headers := []string{"x-api-key: <stand-in>", "x-auth: Token <stand-in>"}
 	captured := map[string]map[egress.Client]capture{
-		"claude": {egress.ClientCLI: {"2.1.331", lines, headers}, egress.ClientACP: {"0.110.1", lines, headers}}, // the adapter's SDK claude, 2.1.330
+		"claude": {egress.ClientCLI: {"2.1.331", lines, headers}, egress.ClientACP: {"0.111.0", lines, headers}}, // the adapter's SDK claude, 2.1.331
 		// codex-acp drives the same codex, and Coop refuses text before a reference for Codex.
-		"codex":  {egress.ClientCLI: {"0.171.0", lines, headers[:1]}, egress.ClientACP: {"2.10.0", lines, headers[:1]}},
+		"codex":  {egress.ClientCLI: {"0.171.0", lines, headers[:1]}, egress.ClientACP: {"2.11.0", lines, headers[:1]}},
 		"gemini": {egress.ClientCLI: {"0.71.1", lines, headers}, egress.ClientACP: {"0.71.1", lines, headers}},
 		"grok":   {egress.ClientCLI: {"1.0.92", lines, headers}, egress.ClientACP: {"1.0.92", lines, headers}},
 	}
