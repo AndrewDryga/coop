@@ -514,11 +514,11 @@ func TestMCPRoutesAdmitWhatThePinnedClientsSend(t *testing.T) {
 	lines := []string{"POST /mcp", "GET /mcp"}
 	headers := []string{"x-api-key: <stand-in>", "x-auth: Token <stand-in>"}
 	captured := map[string]map[egress.Client]capture{
-		"claude": {egress.ClientCLI: {"2.1.330", lines, headers}, egress.ClientACP: {"0.109.0", lines, headers}}, // the adapter's SDK claude, 2.1.328
+		"claude": {egress.ClientCLI: {"2.1.331", lines, headers}, egress.ClientACP: {"0.110.1", lines, headers}}, // the adapter's SDK claude, 2.1.330
 		// codex-acp drives the same codex, and Coop refuses text before a reference for Codex.
-		"codex":  {egress.ClientCLI: {"0.170.0", lines, headers[:1]}, egress.ClientACP: {"2.8.0", lines, headers[:1]}},
-		"gemini": {egress.ClientCLI: {"0.67.0", lines, headers}, egress.ClientACP: {"0.67.0", lines, headers}},
-		"grok":   {egress.ClientCLI: {"1.0.77", lines, headers}, egress.ClientACP: {"1.0.77", lines, headers}},
+		"codex":  {egress.ClientCLI: {"0.171.0", lines, headers[:1]}, egress.ClientACP: {"2.10.0", lines, headers[:1]}},
+		"gemini": {egress.ClientCLI: {"0.71.1", lines, headers}, egress.ClientACP: {"0.71.1", lines, headers}},
+		"grok":   {egress.ClientCLI: {"1.0.92", lines, headers}, egress.ClientACP: {"1.0.92", lines, headers}},
 	}
 	cfg, spec := brokerFixture(t, "TOKEN=secret\nKEY=secret\nAUTH=secret\n")
 	plan, err := planMCPRoutes(cfg, spec, []byte(`{"mcpServers":{

@@ -327,7 +327,7 @@ func grokUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, err
 	var raw grokQuotaResponse
 	err = readUsageQuota(ctx, http.MethodGet, "https://cli-chat-proxy.grok.com/v1/billing?format=credits", http.Header{
 		"Authorization": {"Bearer " + state.AccessToken}, "X-Xai-Token-Auth": {"xai-grok-cli"},
-		"X-Userid": {state.AccountID}, "X-Grok-Client-Version": {"1.0.77"}, "X-Grok-Client-Mode": {"headless"},
+		"X-Userid": {state.AccountID}, "X-Grok-Client-Version": {"1.0.92"}, "X-Grok-Client-Mode": {"headless"},
 	}, nil, &raw)
 	if err != nil {
 		return UsageQuota{}, err
@@ -891,15 +891,15 @@ func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	if !platform.valid() {
 		return nil
 	}
-	arch, digest := "aarch64", "ad0bdf44d84197f4a746d7f3fb949724c63023b89baefc54a4132303da7bff87"
+	arch, digest := "aarch64", "5996d1859b898fb9ac4e5d19045e0c52789985c8c81b93065420c00cc0d33739"
 	if platform.Architecture == "amd64" {
-		arch, digest = "x86_64", "243a669421d0af2c3a56b4283601d8c22815312224feb38a0059396659926250"
+		arch, digest = "x86_64", "34e6ee11e2da9ed32715e9eb78d7e620dc31b5e63303bc91f2f9bb7a985c7db5"
 	}
 	destination := lockedClientRoot + "/native/grok"
-	client := LockedClient{Version: "1.0.77", Binary: "grok", Exec: []string{destination},
-		RequiredExecutables: []LockedExecutable{{Path: destination, Version: "1.0.77"}},
+	client := LockedClient{Version: "1.0.92", Binary: "grok", Exec: []string{destination},
+		RequiredExecutables: []LockedExecutable{{Path: destination, Version: "1.0.92"}},
 		NativeArtifact: &LockedNativeArtifact{
-			URL:    "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-" + arch + ".gz",
+			URL:    "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.92-linux-" + arch + ".gz",
 			SHA256: digest, Destination: destination,
 		}}
 	cli, acp := client, client
@@ -910,7 +910,7 @@ func (grokAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a grokAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "access-file", input,
 		[]string{"auth.x.ai", "cli-chat-proxy.grok.com", "code.grok.com"},
-		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-aarch64.gz"})
+		[]string{"https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.92-linux-aarch64.gz"})
 }
 
 // NetworkAuthSelection: restricted networking serves Grok's signed-in login, never an API key.

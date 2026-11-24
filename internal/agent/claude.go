@@ -390,7 +390,7 @@ func claudeUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, e
 	var raw claudeQuotaResponse
 	headers := http.Header{
 		"Authorization": {"Bearer " + source.AccessToken}, "Anthropic-Beta": {"oauth-2025-04-20"},
-		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.330 (external, cli)"},
+		"Content-Type": {"application/json"}, "User-Agent": {"claude-cli/2.1.331 (external, cli)"},
 	}
 	err = readUsageQuota(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", headers, nil, &raw)
 	if err != nil {
@@ -570,8 +570,8 @@ func (claudeAgent) LockedClients(platform ClientPlatform) []LockedClient {
 		cpu = "x64"
 	}
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.330", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.330"}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.109.0", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.328"}}},
+		{Client: egress.ClientCLI, Package: "@anthropic-ai/claude-code", Version: "2.1.331", Binary: "claude", Exec: []string{lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-code-linux-" + cpu + "/claude", Version: "2.1.331"}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/claude-agent-acp", Version: "0.110.1", Binary: "claude-agent-acp", Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"}, UnsetEnv: []string{"CLAUDE_CODE_EXECUTABLE"}, RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@anthropic-ai/claude-agent-sdk-linux-" + cpu + "/claude", Version: "0.3.330"}}},
 	}
 }
 
@@ -749,7 +749,7 @@ func (claudeAgent) LoginConfig(*config.Config) (MCPConfig, error) { return MCPCo
 
 // UpdateControls: DISABLE_UPDATES is the first switch the updater checks, and a manual `claude
 // update` refuses under it too — read out of the 2.1.319 binary and its ACP adapter's SDK, and still
-// in 2.1.330's and its adapter's 2.1.328.
+// in 2.1.331's and its adapter's 2.1.330.
 func (claudeAgent) UpdateControls() UpdateControls {
 	return UpdateControls{Env: []string{"DISABLE_UPDATES=1"}}
 }
@@ -774,7 +774,7 @@ func (claudeAgent) Effort() EffortSpec {
 	return EffortSpec{Flag: "--effort", Validate: validateClaudeEffort}
 }
 
-// claudeEfforts are the levels the pinned Claude Code lists for --effort (2.1.330). It only warns
+// claudeEfforts are the levels the pinned Claude Code lists for --effort (2.1.331). It only warns
 // about any other level and runs at its default effort, so a typo in a preset would quietly lower
 // every run: Coop refuses the rest itself. Recheck this list when the pin moves.
 var claudeEfforts = []string{"low", "medium", "high", "xhigh", "max"}
@@ -1213,7 +1213,7 @@ func (claudeAgent) fastMode() {}
 // ACPSessionSettings keeps Claude's live session aligned with Coop's target. Model
 // precedes effort because each model owns its available effort levels, and fast mode comes last:
 // Fable 5.2 keeps only a fast mode turned on while it is the selected model (claude-agent-acp
-// 0.109.0). The adapter offers "fast" only for a model that has it; for any other, its refusal of
+// 0.110.1). The adapter offers "fast" only for a model that has it; for any other, its refusal of
 // the setting is swallowed with the rest of Coop's forced replies and the run keeps standard speed.
 func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 	settings := []ACPSessionSetting{{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"}}

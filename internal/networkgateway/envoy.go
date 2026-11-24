@@ -1,6 +1,6 @@
 package networkgateway
 
-// EnvoyBootstrap is fixed trusted configuration for the pinned 1.39.1 binary.
+// EnvoyBootstrap is fixed trusted configuration for the pinned 1.40.2 binary.
 // The capless guard is the sole filesystem-socket caller and has already checked
 // the shared canonical name matcher, ECH and the concrete controller lease.
 // No destination is selected from client metadata or HTTP application fields:

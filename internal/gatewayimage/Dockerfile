@@ -3,7 +3,7 @@ WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -buildvcs=false -o /out/coop-net ./cmd/coop-net
 
-FROM envoyproxy/envoy:v1.39.1@sha256:57e14a549d7bd43c8d3f6d03e8cfa653e037d4b38e133acd9b54f38c524401b4
+FROM envoyproxy/envoy:v1.40.2@sha256:8de97e654644827d62afdbf7e1d3dc9fee01a8690d410dd1c63a30dc6b6cecbb
 USER root
 # Pin the complete added package closure; inherited libc/GMP/tinfo/CA versions
 # come from the digest-pinned base. Missing versions fail the build, never float.

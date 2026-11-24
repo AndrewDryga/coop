@@ -380,9 +380,9 @@ co:op sets the working directory itself, so no `WORKDIR` is required. Here is a 
 ```dockerfile
 FROM <your-language-base>
 RUN <install your toolchain> \
- && npm install -g @anthropic-ai/claude-code@2.1.330 @openai/codex@0.170.0 @google/gemini-cli@0.67.0 \
-      @agentclientprotocol/claude-agent-acp@0.109.0 @agentclientprotocol/codex-acp@2.8.0 \
- && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-$(uname -m).gz" \
+ && npm install -g @anthropic-ai/claude-code@2.1.331 @openai/codex@0.171.0 @google/gemini-cli@0.71.1 \
+      @agentclientprotocol/claude-agent-acp@0.110.1 @agentclientprotocol/codex-acp@2.10.0 \
+ && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.92-linux-$(uname -m).gz" \
       | gunzip > /usr/local/bin/grok && chmod 755 /usr/local/bin/grok \
  && git config --system --add safe.directory '*'
 ARG COOP_BOX_UID=1000
@@ -450,9 +450,9 @@ top:
 
 ```dockerfile
 FROM your-devcontainer-image          # the team's source of truth for the env
-RUN npm install -g @anthropic-ai/claude-code@2.1.330 @openai/codex@0.170.0 @google/gemini-cli@0.67.0 \
-      @agentclientprotocol/claude-agent-acp@0.109.0 @agentclientprotocol/codex-acp@2.8.0 \
- && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.77-linux-$(uname -m).gz" \
+RUN npm install -g @anthropic-ai/claude-code@2.1.331 @openai/codex@0.171.0 @google/gemini-cli@0.71.1 \
+      @agentclientprotocol/claude-agent-acp@0.110.1 @agentclientprotocol/codex-acp@2.10.0 \
+ && curl -fsSL "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-1.0.92-linux-$(uname -m).gz" \
       | gunzip > /usr/local/bin/grok && chmod 755 /usr/local/bin/grok \
  && git config --system --add safe.directory '*'
 USER <the devcontainer's non-root user>

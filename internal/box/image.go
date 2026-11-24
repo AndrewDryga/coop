@@ -76,8 +76,8 @@ func asdfBuild() string {
 
 // npm's complete distribution includes its runtime dependency tree. Replace the
 // inherited directory after verification so obsolete bundled packages cannot survive.
-const imageNPMVersion = "11.21.2"
-const imageNPMSHA256 = "8ad8563b81e71b90ef405b140bccf3ba9b5e7884ab210bd49ee4e2f4bc6f61f5"
+const imageNPMVersion = "12.2.3"
+const imageNPMSHA256 = "fa0711dd513fa1386bbad3962a292cb813461cb57dedf07d6eb7efe76dffe897"
 
 func npmInstall() string {
 	return fmt.Sprintf(`curl --fail --silent --show-error --location --proto '=https' --output /tmp/coop-npm.tgz 'https://registry.npmjs.org/npm/-/npm-%s.tgz' \
@@ -93,7 +93,7 @@ func npmInstall() string {
 // fetches the newest. Bump pinnedNodeImage when you intentionally move the stable
 // base (e.g. after a `coop update` proves a newer node works).
 const (
-	pinnedNodeImage   = "node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9" // node 24 (slim)
+	pinnedNodeImage   = "node:24-bookworm-slim@sha256:190bcf5115694c9d3c4d654a1aa88177d77600a06d67972fd7bf4cf224f7692c" // node 24 (slim)
 	floatingNodeImage = "node:24-bookworm-slim"
 )
 

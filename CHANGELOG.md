@@ -4,6 +4,11 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- **Refreshed bundled clients and runtime components.** Claude Code 2.1.331 and its editor adapter
+  0.110.1, Codex 0.171.0 and its editor adapter 2.10.0, Gemini CLI 0.71.1, and Grok 1.0.92.
+  Coop refreshes its shared image on the next launch. If a custom project image is stale, run
+  `coop build`. Filtered runs redo network setup once.
+
 - **All four interactive agents show a Coop resume command.** When one saved conversation changes,
   the final line gives the command to reopen it in the same project and account. Codex uses
   `coop codex resume <id>` and Claude, Gemini, and Grok use `--resume <id>` after the target.

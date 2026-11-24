@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/launch_sections.go, internal/runtime/docker_lifecycle.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go, internal/box/native_account.go, internal/cli/project_build.go]
-updated: 2026-11-23
+updated: 2026-11-24
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -185,7 +185,7 @@ Facts the code cannot say twice, all still true:
   because a port inside the box names no endpoint. It is a SOURCE — never fed to `Destination()`,
   never counted as traffic.
 
-- The pinned Envoy 1.39.1 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
+- The pinned Envoy 1.40.2 `tls_inspector` caps ClientHello at 16 KiB, so both inspection layers use
   the same bound (`MaxHelloBytes` in hello.go, `max_client_hello_size` in envoy.go's
   `EnvoyBootstrap`).
 - Envoy runs with `--disable-hot-restart` (`GuardRuntime.Run` in `service.go`): the box shares the
@@ -438,6 +438,7 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-24 — bumped Envoy to 1.40.2 with the same 16 KiB ClientHello bound.
 - 2026-11-23 — tolerate brief Envoy admin timeouts during a run and retain the guard's proxy stop reason.
 - 2026-11-17 — the image pins thirteen packages (apt, libapt-pkg6.0, openssl and libssl3 added), seven
   from jammy-updates, from snapshot 20261109T000000Z, to move before 2028-11; verified against

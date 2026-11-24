@@ -11,17 +11,17 @@ import (
 
 // pinnedNetworkBundles is each release-owned bundle's canonical content under one
 // NetworkBundleVersion: the sha256 of its JSON after egress.SelectedBundles, by provider/client.
-const pinnedNetworkBundleVersion = "2026-11-21.1"
+const pinnedNetworkBundleVersion = "2026-11-24.1"
 
 var pinnedNetworkBundles = map[string]string{
-	"claude/cli": "73215887895726e47241ca0616b6f636906ecc165c77f578ecd83dd9b2e49c82",
-	"claude/acp": "0f9a4f5fbf8ee3793f1f1b023569fce1d6d2379cce14a09c698a8de0faf65727",
-	"codex/cli":  "fd318c522ce8f260b519474c967492f17e89b29f38b6bd8f4d841e6c8f1ced80",
-	"codex/acp":  "bfb1fa9b8911483ed9de57e903cd23a82a3629d42c57845a6eb07f4d22956e7c",
-	"gemini/cli": "cadfc59464024abec0ff78b6b326b367c4eb9f2808af3862b8d05de36c9d45ad",
-	"gemini/acp": "b2e3e70e62cfe43e9355ef95954fba3aff5fa52aa372448bbbddc26b5afb24df",
-	"grok/cli":   "317cf8a565a21af6da61f716eb2ea386e4c6addd3997eadb7fab3b416adc4f28",
-	"grok/acp":   "7a59ceb0829a8fca95c090cd9e1aa61b25e578c186f3be6f7a0516a47b6efc36",
+	"claude/cli": "e0c7e53cf5220d8a5940ae8da1ef6a5e05c11d4ce187d861e1d452505cd71209",
+	"claude/acp": "cc402cc3cd3189f328d0802ffd982d34cd5687c86934063302e11b24064b5af0",
+	"codex/cli":  "f6b6bb02820bed5cf0a94b365c6fe9829d8628e70cb47ac9f4354e15fd6b982f",
+	"codex/acp":  "c0093d2847621434d2792422b5fb6c6cea3dab2f099cda89657e059bf57707a4",
+	"gemini/cli": "eb7af90153554bb5487395f8affbef2ea69a32a07e51ba5694f9d4c5878fd4db",
+	"gemini/acp": "be4e9ae37bed8c3b861ddd19d2037f45ca34ee8dd995f7a1f9931535a0ed1a04",
+	"grok/cli":   "1cdc7f6ab82a3227756810a541dc72ec9a1416af999fe924ae36dec767c1c708",
+	"grok/acp":   "8189f0be63e915b80918d02aa50f356989e0d8b6d2bcf2319a5ac12594489c25",
 }
 
 // A bundle's content under its version never changes: a new endpoint set needs a new

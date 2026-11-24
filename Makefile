@@ -18,9 +18,9 @@ VET_TAGS := filesystemruntimee2e,acpe2e,boxruntimee2e,networkruntimee2e,provider
 TESTDATA_PACKAGES := ./internal/acpproxy/testdata/acpfixture ./internal/box/testdata/initprobe ./internal/box/testdata/mcpprobe ./internal/cli/testdata/providerfixture
 STATICCHECK_VERSION := $(shell awk '$$1 == "honnef.co/go/tools" {print $$2}' $(STATICCHECK_MODFILE))
 STATICCHECK_XTOOLS_VERSION := $(shell awk '$$1 == "golang.org/x/tools" {print $$2}' $(STATICCHECK_MODFILE))
-GOVULNCHECK_VERSION := v1.9.0
-NPM_VERSION := 11.21.2
-TRIVY_VERSION := 0.72.0
+GOVULNCHECK_VERSION := v1.10.0
+NPM_VERSION := 12.2.3
+TRIVY_VERSION := 0.76.2
 SHELLCHECK_VERSION := 0.11.0
 
 build: ## Build the coop binary to ./coop

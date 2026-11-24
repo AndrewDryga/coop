@@ -1279,7 +1279,7 @@ func TestCodexMCPRequiresEveryReferencedEnvironmentName(t *testing.T) {
 	}
 }
 
-// Codex 0.170.0 takes its Fast tier only from configuration (codex-acp offers no option for it),
+// The generated Codex configuration selects the Fast tier for the CLI and editor adapter,
 // so a +fast run's box config.toml leads with it, for the CLI and the adapter alike; a controller
 // job's box gets it the same way. A run that asked for no fast mode keeps the file as it was.
 func TestCodexFastTargetSetsTheServiceTierInTheBoxConfig(t *testing.T) {

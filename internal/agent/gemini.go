@@ -813,7 +813,7 @@ func (geminiAgent) LoginConfig(*config.Config) (MCPConfig, error) {
 }
 
 // geminiNoUpdates is Gemini's update switch, a system-settings block. /etc/gemini-cli/settings.json
-// is the pinned 0.67.0's system layer, which overrides both the user's and a workspace's settings
+// is the pinned 0.71.1's system layer, which overrides both the user's and a workspace's settings
 // (it reports a bad file there by path). Pointing GEMINI_CLI_SYSTEM_SETTINGS_PATH at another file
 // replaces that layer instead of merging with it, so every system file Coop writes repeats the block.
 var geminiNoUpdates = map[string]any{"enableAutoUpdate": false, "enableAutoUpdateNotification": false}
@@ -1174,9 +1174,9 @@ func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	if !platform.valid() {
 		return nil
 	}
-	client := LockedClient{Package: "@google/gemini-cli", Version: "0.67.0", Binary: "gemini",
+	client := LockedClient{Package: "@google/gemini-cli", Version: "0.71.1", Binary: "gemini",
 		Exec:                []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js"},
-		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.67.0"}}}
+		RequiredExecutables: []LockedExecutable{{Path: lockedClientRoot + "/node_modules/@google/gemini-cli/bundle/gemini.js", Version: "0.71.1"}}}
 	cli, acp := client, client
 	cli.Client, acp.Client = egress.ClientCLI, egress.ClientACP
 	return []LockedClient{cli, acp}
@@ -1185,7 +1185,7 @@ func (geminiAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a geminiAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "api-key", input,
 		[]string{"generativelanguage.googleapis.com"},
-		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/core/contentGenerator.ts"})
+		[]string{"https://github.com/google-gemini/gemini-cli/blob/v0.71.1/packages/core/src/core/contentGenerator.ts"})
 }
 
 // NetworkAuthSelection refuses a stored native sign-in (OAuth or Vertex) until each has its own
@@ -1198,7 +1198,7 @@ func (geminiAgent) NetworkAuthSelection(_ string, markerPresent bool) (NetworkAu
 	return NetworkAuthSelection{AuthMode: "api-key", EnvKey: "GEMINI_API_KEY"}, nil
 }
 
-// Gemini has no reasoning-effort flag or variable: the pinned client (0.67.0) takes thinking only
+// Gemini has no reasoning-effort flag or variable: the pinned client (0.71.1) takes thinking only
 // from its settings. What it does with them was captured at the request level, against a local
 // listener (.agent/kb/gemini-effort-thinking-settings.md), and two facts decide the shape here.
 //

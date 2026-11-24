@@ -140,7 +140,7 @@ func codexBrokerRoutes(selection string) ([]NativeBrokerRoute, error) {
 	add("GET", "/backend-api/codex/responses", "")
 	add("POST", "/backend-api/codex/images/generations", "")
 	add("POST", "/backend-api/codex/images/edits", "")
-	add("GET", "/backend-api/codex/models", "client_version=0.170.0")
+	add("GET", "/backend-api/codex/models", "client_version=0.171.0")
 	add("GET", "/backend-api/wham/accounts/check", "")
 	out[len(out)-1].AccountResponse = &NativeBrokerAccountResponse{
 		Header: "Chatgpt-Account-Id", CollectionKey: "accounts", IDKey: "id",
@@ -510,7 +510,7 @@ func codexUsageQuota(ctx context.Context, input UsageQuotaInput) (UsageQuota, er
 	var raw codexQuotaResponse
 	headers := http.Header{
 		"Authorization":      {"Bearer " + state.AccessToken},
-		"Chatgpt-Account-Id": {state.AccountID}, "User-Agent": {"codex_cli_rs/0.170.0"},
+		"Chatgpt-Account-Id": {state.AccountID}, "User-Agent": {"codex_cli_rs/0.171.0"},
 	}
 	err = readUsageQuota(ctx, http.MethodGet, "https://chatgpt.com/backend-api/wham/usage", headers, nil, &raw)
 	if err != nil {
@@ -660,8 +660,8 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 	}
 	native := lockedClientRoot + "/node_modules/@openai/codex-linux-" + cpu + "/vendor/" + target + "/bin/codex"
 	return []LockedClient{
-		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.170.0", Binary: "codex", SetupFile: codexNativeCLISetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.170.0-linux-" + cpu}}},
-		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.8.0", Binary: "codex-acp", SetupFile: codexNativeACPSetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH", "DEFAULT_AUTH_REQUEST"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.170.0-linux-" + cpu}}},
+		{Client: egress.ClientCLI, Package: "@openai/codex", Version: "0.171.0", Binary: "codex", SetupFile: codexNativeCLISetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@openai/codex/bin/codex.js"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.171.0-linux-" + cpu}}},
+		{Client: egress.ClientACP, Package: "@agentclientprotocol/codex-acp", Version: "2.10.0", Binary: "codex-acp", SetupFile: codexNativeACPSetup, Exec: []string{"/usr/local/bin/node", lockedClientRoot + "/node_modules/@agentclientprotocol/codex-acp/dist/index.js"}, UnsetEnv: []string{"CODEX_PATH", "DEFAULT_AUTH_REQUEST"}, RequiredExecutables: []LockedExecutable{{Path: native, Version: "0.171.0-linux-" + cpu}}},
 	}
 }
 
@@ -669,7 +669,7 @@ func (codexAgent) LockedClients(platform ClientPlatform) []LockedClient {
 func (a codexAgent) NetworkBundle(input NetworkBundleInput) (egress.Bundle, error) {
 	return directNetworkBundle(a.Name(), "chatgpt-file", input,
 		[]string{"chatgpt.com", "auth.openai.com"},
-		[]string{"https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/model-provider-info/src/lib.rs", "https://github.com/openai/codex/blob/rust-v0.170.0/codex-rs/login/src/auth/manager.rs"})
+		[]string{"https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/model-provider-info/src/lib.rs", "https://github.com/openai/codex/blob/rust-v0.171.0/codex-rs/login/src/auth/manager.rs"})
 }
 
 // Stream: codex keys every item lifecycle event on the item id, so command_execution, MCP, and
@@ -859,11 +859,11 @@ func (codexAgent) Login(*config.Config) []string {
 }
 
 // codexManagedConfig is the pinned codex's managed layer, which it loads after -c, the project
-// and the user's own config (verified on 0.166.0 and again on 0.170.0: its model beats both -c and
+// and the user's own config (verified on 0.166.0 and again on 0.171.0: its model beats both -c and
 // the user's; /etc/codex/config.toml is only a default the user's overrides) — so what it sets
 // holds whatever a home or project sets.
 //
-// codexNoDaemon opens the layer's one [features] table (0.170.0 still has daemon_auto_start).
+// codexNoDaemon opens the layer's one [features] table (0.171.0 still has daemon_auto_start).
 // Otherwise 0.166.0's interactive screen,
 // launched without -c or --profile, starts a shared background server: the first time in a home it
 // copies the whole client package (382 MB) into $CODEX_HOME/packages, a home Coop keeps per
@@ -894,12 +894,11 @@ fi
 	}}
 }
 
-// fastMode: Codex's Fast service tier ("priority": about twice the speed for more of the plan's
-// allowance), which codex-acp 2.8.0 offers no option for. The box's generated config.toml sets it
-// (codexServiceTier), so the CLI and the adapter in that box both run it.
+// fastMode uses the box's generated config.toml to select the priority service tier
+// (codexServiceTier) for both the Codex CLI and its editor adapter.
 func (codexAgent) fastMode() {}
 
-// codexFastTier is the config.toml line that asks Codex 0.170.0 for its Fast tier.
+// codexFastTier is the config.toml line that asks Codex 0.171.0 for its Fast tier.
 const codexFastTier = "service_tier = \"priority\"\n"
 
 // codexServiceTier puts the Fast tier at the top of a generated config.toml, where a top-level key

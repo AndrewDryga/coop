@@ -16,7 +16,7 @@ import (
 // list, its LOW/HIGH enum. Moving the locked client must send someone back to re-read them, so the
 // version the mapping was captured on is pinned here, apart from the locked declaration it guards.
 func TestGeminiThinkingIsQualifiedOnTheLockedClient(t *testing.T) {
-	const qualified = "0.67.0"
+	const qualified = "0.71.1"
 	gemini, _ := Get("gemini")
 	clients := gemini.LockedClients(ClientPlatform{OS: "linux", Architecture: "arm64", Libc: "glibc"})
 	if len(clients) == 0 {
