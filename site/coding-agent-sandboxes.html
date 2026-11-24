@@ -1,0 +1,385 @@
+<!doctype html>
+<!-- Generated public reference by tools/gendocs. Edit docs/coding-agent-sandboxes.md, not this file. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0e1014">
+  <title>Claude Code, Codex, Gemini and Grok sandboxes compared · co:op</title>
+  <meta name="description" content="co:op gives the whole coding agent a stronger sandbox. You choose which folders it can access and where it can connect. co:op hides common secret files and keeps your provider credentials outside the container.">
+  <link rel="canonical" href="https://coop.dryga.com/coding-agent-sandboxes.html">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="co:op">
+  <meta property="og:url" content="https://coop.dryga.com/coding-agent-sandboxes.html">
+  <meta property="og:title" content="Claude Code, Codex, Gemini and Grok sandboxes compared">
+  <meta property="og:description" content="co:op gives the whole coding agent a stronger sandbox. You choose which folders it can access and where it can connect. co:op hides common secret files and keeps your provider credentials outside the container.">
+  <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A project mounted inside the sandbox, protected secret files, and filtered connections to the AI provider and approved destinations.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/img/favicon.svg?v=contained-entrance" type="image/svg+xml">
+  <link rel="icon" href="assets/img/favicon.ico?v=contained-entrance" sizes="32x32">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
+  <link rel="manifest" href="site.webmanifest?v=contained-entrance">
+  <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/site.css?v=f24d1b7acc">
+  <script src="assets/js/site.js?v=f24d1b7acc" defer></script>
+  <script src="assets/js/analytics.js?v=f24d1b7acc" defer></script>
+  <noscript><style>.copy { display: none; }</style></noscript>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="wrap nav">
+    <a class="brand" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="32" height="32" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a class="nav-optional" href="./#sandbox">Sandbox</a>
+      <a href="orchestrator.html">Orchestrator</a>
+      <a class="nav-optional" href="./#features">Features</a>
+      <a href="docs.html" aria-current="true">Docs</a>
+      <a class="nav-optional" href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a class="button button-small" href="./#start">Install</a>
+    </nav>
+  </header>
+
+  <div class="wrap docs-shell">
+<div class="docs-rail">
+<button class="docs-search-open" type="button" data-docs-search hidden><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search</span><kbd aria-hidden="true"></kbd></button>
+<details class="docs-nav" open><summary>Docs menu</summary><script>document.documentElement.classList.add("docs-js");document.querySelector("[data-docs-search]").hidden=!window.HTMLDialogElement</script><script>if(!matchMedia("(min-width:1024px)").matches)document.currentScript.parentElement.open=false</script>
+<nav aria-label="Documentation">
+<p class="docs-nav-group">Get started</p>
+<ul role="list">
+<li><a href="docs.html">Overview</a></li>
+<li><a href="install.html">Install</a></li>
+<li><a href="sandbox-guide.html">First sandbox run</a><ul role="list"><li><a href="claude-code-sandbox.html">Claude Code</a></li><li><a href="codex-sandbox.html">Codex CLI</a></li><li><a href="gemini-cli-sandbox.html">Gemini CLI</a></li><li><a href="grok-cli-sandbox.html">Grok CLI</a></li></ul></li>
+<li><a href="overnight-guide.html">First overnight run</a></li>
+</ul>
+<p class="docs-nav-group">Sandbox</p>
+<ul role="list">
+<li><a href="box.html">Files, images and services</a></li>
+<li><a href="networking.html">Networking</a></li>
+<li><a href="coding-agent-sandboxes.html" aria-current="page">Compare agent sandboxes</a></li>
+</ul>
+<p class="docs-nav-group">Agents</p>
+<ul role="list">
+<li><a href="agents.html">Accounts, models, presets</a></li>
+<li><a href="integrations.html">Editors and MCP</a></li>
+<li><a href="usage-reports.html">Usage and billing</a></li>
+</ul>
+<p class="docs-nav-group">Hand off work</p>
+<ul role="list">
+<li><a href="loop.html">Task queues and loops</a></li>
+<li><a href="forks.html">Forks and review</a></li>
+<li><a href="evals.html">Evaluations</a></li>
+</ul>
+<p class="docs-nav-group">Reference</p>
+<ul role="list">
+<li><a href="cli.html">Commands</a></li>
+<li><a href="configuration.html">Configuration</a></li>
+<li><a href="session-api.html">Worker API</a></li>
+<li><a href="migrating.html">Upgrading</a></li>
+</ul>
+<p class="docs-nav-group">Project</p>
+<ul role="list">
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CHANGELOG.md" target="_blank" rel="nofollow noopener">Changelog<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/blob/main/CONTRIBUTING.md" target="_blank" rel="nofollow noopener">Contributing<span class="go" aria-hidden="true">↗</span></a></li>
+<li><a href="https://github.com/AndrewDryga/coop/issues" target="_blank" rel="nofollow noopener">Report an issue<span class="go" aria-hidden="true">↗</span></a></li>
+</ul>
+</nav>
+</details>
+</div>
+  <main id="main" class="docs-page guide reference" tabindex="-1">
+    <header class="guide-hero">
+      <div class="guide-intro">
+        <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Sandbox</p>
+        <h1>Claude Code, Codex, Gemini and Grok sandboxes compared</h1>
+        <p class="guide-lead">co:op gives the whole coding agent a stronger sandbox. You choose which folders it can access and where it can connect. co:op hides common secret files and keeps your provider credentials outside the container.</p>
+      </div>
+    </header>
+    <div class="docs guide-body">
+      <details class="docs-side" open>
+        <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
+        <nav aria-label="On this page"><ul role="list"><li><a href="#what-does-each-cli-actually-isolate">What does each CLI actually isolate?</a></li>
+<li><a href="#what-if-the-agent-installs-a-malicious-package">What if the agent installs a malicious package?</a></li>
+<li><a href="#can-an-agent-break-out-of-its-sandbox">Can an agent break out of its sandbox?</a></li>
+<li><a href="#what-are-you-approving-when-a-command-starts-with-ssh">What are you approving when a command starts with SSH?</a></li>
+<li class="reference-subsection"><a href="#keep-ssh-keys-and-production-secrets-out-of-the-sandbox">Keep SSH keys and production secrets out of the sandbox</a></li>
+<li class="reference-subsection"><a href="#what-else-can-a-saved-approval-cover">What else can a saved approval cover?</a></li>
+<li><a href="#what-we-could-read-write-and-reach-on-a-mac">What we could read, write and reach on a Mac</a></li>
+<li class="reference-subsection"><a href="#can-a-bash-or-nodejs-script-reach-the-internet">Can a Bash or Node.js script reach the internet?</a></li>
+<li class="reference-subsection"><a href="#what-about-files-outside-the-checkout">What about files outside the checkout?</a></li>
+<li><a href="#when-a-test-needs-the-npm-registry">When a test needs the npm registry</a></li>
+<li><a href="#how-the-agent-signs-in-without-getting-your-key">How the agent signs in without getting your key</a></li>
+</ul></nav>
+      </details>
+      <article class="docs-main reference-content" aria-label="Reference">
+        <section class="doc-section reference-section" id="what-does-each-cli-actually-isolate"><h2>What does each CLI actually isolate?</h2>
+<p>An agent fixing a test needs your checkout. On our Mac, Claude’s shell and Codex’s workspace sandbox could also read a key file under <code>~/.ssh</code>. In co:op, the agent could edit the checkout while that key stayed out of reach.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="What does each CLI actually isolate? table"><table role="table" class="ref ref-wide comparison-table comparison-narrative">
+<thead role="rowgroup">
+<tr role="row">
+<th role="columnheader" scope="col">Agent</th>
+<th role="columnheader" scope="col">Native sandbox</th>
+<th role="columnheader" class="comparison-coop" scope="col"><strong>With co:op</strong></th>
+</tr>
+</thead>
+<tbody role="rowgroup">
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://coop.dryga.com/claude-code-sandbox.html">Claude Code </a></th>
+<td role="cell" data-label="Native sandbox">If you block Bash from reading <code>.env</code>, check Claude’s <code>Read</code> tool too. It has its own permissions.</td>
+<td role="cell" data-label="With co:op" class="comparison-coop">co:op hides <code>.env</code> from both tools by default.</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://coop.dryga.com/codex-sandbox.html">Codex CLI </a></th>
+<td role="cell" data-label="Native sandbox">Workspace-write blocks network access by default. On our Mac it could still read files outside the checkout.</td>
+<td role="cell" data-label="With co:op" class="comparison-coop">You choose which folders to share. Other repos and SSH keys stay outside by default.</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://coop.dryga.com/gemini-cli-sandbox.html">Gemini CLI </a></th>
+<td role="cell" data-label="Native sandbox">Both macOS Seatbelt profiles we tested could read <code>.env</code> and reach <code>example.com</code>. Gemini’s Docker sandbox uses different rules.</td>
+<td role="cell" data-label="With co:op" class="comparison-coop">You approve sites for one run or the whole project. The network receipt shows which sites the agent contacted.</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://coop.dryga.com/grok-cli-sandbox.html">Grok Build CLI </a></th>
+<td role="cell" data-label="Native sandbox">Sandboxing is off by default. In <a href="https://docs.x.ai/build/features/sandbox" target="_blank" rel="nofollow noopener">xAI’s strict mode</a>, shell commands can reach the network on macOS. Linux blocks them.</td>
+<td role="cell" data-label="With co:op" class="comparison-coop">The project’s file and network rules apply on both systems.</td>
+</tr>
+</tbody>
+</table></div></div>
+</section><section class="doc-section reference-section" id="what-if-the-agent-installs-a-malicious-package"><h2>What if the agent installs a malicious package?</h2>
+<p>When your agent installs an npm dependency, the package can run code of its own. In a supply chain attack, even an update to a package you already use can introduce a malicious install script. <a href="https://docs.npmjs.com/cli/v11/using-npm/scripts/#npm-install" target="_blank" rel="nofollow noopener">When npm runs install scripts</a></p>
+<p>In our filtered co:op sandbox, an install script could read the README and write to the checkout. It couldn’t read the contents of <code>.env.coop-demo</code>. Your SSH keys and real provider credentials stay outside the container by default, and the script inherits the project’s network rules. <strong>Review changes to your source code after an install.</strong> The script can edit the same files your agent can.</p>
+<details class="guide-detail">
+<summary><strong>How we tested it</strong></summary><div>
+<p>We installed a local npm package on a Mac. Its install script checked which files it could read and wrote the results to the checkout. The network receipt showed no allowed external connections. <a href="https://github.com/AndrewDryga/coop/blob/main/examples/sandbox/2026-11-24-native-profiles.txt" target="_blank" rel="nofollow noopener">Package install test results</a></p>
+</div></details>
+<p>Claude’s native Bash sandbox also restricts programs it starts, including npm. co:op applies the same project rules whichever of the four agents installs the package. <a href="https://code.claude.com/docs/en/sandboxing#what-the-sandbox-restricts" target="_blank" rel="nofollow noopener">Claude’s sandbox rules</a></p>
+</section><section class="doc-section reference-section" id="can-an-agent-break-out-of-its-sandbox"><h2>Can an agent break out of its sandbox?</h2>
+<p>An agent can leak a credential without escaping if the sandbox lets it read the file and contact the destination.</p>
+<p>Any coding agent’s sandbox can have bugs. For example, see <a href="https://github.com/anthropics/sandbox-runtime/security/advisories/GHSA-9gqj-5w7c-vx47" target="_blank" rel="nofollow noopener">Anthropic’s network sandbox fix (CVE-2025-66479)</a> and the sandbox escapes fixed in <a href="https://github.com/anthropics/claude-code/security/advisories/GHSA-7835-87q9-rgvv" target="_blank" rel="nofollow noopener">Claude Code (CVE-2026-55607)</a> and <a href="https://www.cve.org/CVERecord?id=CVE-2026-19592" target="_blank" rel="nofollow noopener">Codex CLI (CVE-2026-19592)</a>.</p>
+</section><section class="doc-section reference-section" id="what-are-you-approving-when-a-command-starts-with-ssh"><h2>What are you approving when a command starts with SSH?</h2>
+<p>Your agent asks to check a service on staging. Here’s the command in the approval prompt:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="What are you approving when a command starts with SSH? code example" tabindex="0"><code class="language-sh">ssh staging.example /bin/sh -c &#34;python3 healthcheck.py&#34;
+</code></pre></div>
+<p>If you choose “always allow,” could the agent ask SSH to run a different script tomorrow? In our tests, Claude Code and Gemini offered rules broad enough to cover a different server, too.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="What are you approving when a command starts with SSH? table"><table role="table" class="ref ref-wide comparison-table comparison-narrative">
+<thead role="rowgroup">
+<tr role="row">
+<th role="columnheader" scope="col">Agent</th>
+<th role="columnheader" scope="col">What the CLI offers to remember</th>
+<th role="columnheader" scope="col">Would changing the filename to <code>diskcheck.py</code> match?</th>
+</tr>
+</thead>
+<tbody role="rowgroup">
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://code.claude.com/docs/en/permissions#bash" target="_blank" rel="nofollow noopener">Claude Code</a> <em>2.1.312</em></th>
+<td role="cell" data-label="What the CLI offers to remember">The terminal showed “Yes, and don’t ask again for: <code>ssh *</code>”.</td>
+<td role="cell" data-label="Would changing the filename to diskcheck.py match?"><strong>Yes.</strong> The rule names neither the host nor the script.</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://github.com/openai/codex/blob/29eb79e9866b3262a777fdf8195c1b9e63684c91/codex-rs/tui/src/bottom_pane/approval_overlay.rs#L877-L892" target="_blank" rel="nofollow noopener">Codex CLI</a> <em>0.170.0</em></th>
+<td role="cell" data-label="What the CLI offers to remember">“Yes, and don&#39;t ask again for commands that start with” <code>ssh staging.example /bin/sh -c &#39;python3 healthcheck.py&#39;</code>.</td>
+<td role="cell" data-label="Would changing the filename to diskcheck.py match?"><strong>No.</strong> The rule includes the filename. But if the agent adds <code>--verbose</code> after the closing quote, the command still matches.</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/cli/src/ui/components/messages/ToolConfirmationMessage.tsx#L350-L378" target="_blank" rel="nofollow noopener">Gemini CLI</a> <em>0.50.0 and 0.67.0</em></th>
+<td role="cell" data-label="What the CLI offers to remember">“Allow for this session” remembers <code>ssh</code>. “Allow this command for all future sessions” remembers the same prefix if you enable permanent approvals.</td>
+<td role="cell" data-label="Would changing the filename to diskcheck.py match?"><strong>Yes.</strong> Both choices cover other SSH commands. The second lasts beyond this session and is off by default.</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader"><a href="https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-workspace/src/permission/grants_tests.rs#L462-L484" target="_blank" rel="nofollow noopener">Grok Build</a> <em>1.0.45</em></th>
+<td role="cell" data-label="What the CLI offers to remember">The suggested rule is “Always allow: <code>ssh staging.example /bin/sh -c &#34;python3 healthcheck.py&#34;</code>”. It applies in this worktree.</td>
+<td role="cell" data-label="Would changing the filename to diskcheck.py match?"><strong>No.</strong> Grok matches the whole command. Its separate always-approve mode applies to other tools as well.</td>
+</tr>
+<tr role="row" class="comparison-coop">
+<th scope="row" role="rowheader"><strong>co:op</strong> <em>Filtered project</em></th>
+<td role="cell" data-label="What the CLI offers to remember">You choose which sites the project can reach before launch. The agent works inside the container without per-command approval prompts.</td>
+<td role="cell" data-label="Would changing the filename to diskcheck.py match?"><strong>SSH is blocked by default.</strong> Your SSH keys and SSH-agent socket stay on your computer.</td>
+</tr>
+</tbody>
+</table></div></div>
+<p>Even an approval that names <code>healthcheck.py</code> will still match if a later release changes what the script does.</p>
+<details class="guide-detail">
+<summary><strong>How we tested it</strong></summary><div>
+<p>We captured the Claude and Codex terminal prompts. Claude’s programmatic interface suggested the exact command for the same request. For Gemini and Grok, we checked the code that builds the prompts and rules offline. <a href="https://github.com/AndrewDryga/coop/blob/main/examples/sandbox/2026-11-24-native-profiles.txt" target="_blank" rel="nofollow noopener">Full menu choices and test results</a></p>
+</div></details>
+<h3 id="keep-ssh-keys-and-production-secrets-out-of-the-sandbox">Keep SSH keys and production secrets out of the sandbox</h3>
+<p>A malicious instruction in a bug report could trick an agent into posting a token from your <code>.env</code> file in a public issue. Anyone who finds that token could use it until it expires or you revoke it. <a href="https://genai.owasp.org/llmrisk/llm01-prompt-injection/" target="_blank" rel="nofollow noopener">How prompt injection works</a></p>
+<p>Command output can also put a secret in the conversation sent to your model provider. Depending on your plan and settings, that conversation may be used for training. Researchers have recovered some memorized training text by querying a model. If a token appears in a chat or issue, revoke it and issue a new one. <a href="https://help.openai.com/en/articles/5722486-how-your-data-is-used-to-improve-model-performance" target="_blank" rel="nofollow noopener">OpenAI’s data policy</a> · <a href="https://privacy.claude.com/en/articles/10023580-is-my-data-used-for-model-training" target="_blank" rel="nofollow noopener">Anthropic’s data policy</a> · <a href="https://arxiv.org/abs/2012.07805" target="_blank" rel="nofollow noopener">Training data study</a></p>
+<p>Keep SSH agent forwarding off. A forwarded SSH agent can let a coding agent log in as you even when your key stays on your laptop. co:op keeps both the key and the agent socket outside the container by default. <a href="box.html#ssh-keys-and-agent-forwarding">How co:op handles SSH keys</a></p>
+<p>If staging looks unhealthy, <a href="https://emisar.dev/" target="_blank" rel="nofollow noopener">emisar</a> can give the agent access to container logs without your SSH key. You can require approval for a restart and see the host and exact command before you decide. <a href="https://emisar.dev/docs/investigate-a-service" target="_blank" rel="nofollow noopener">Walk through a service investigation</a></p>
+<h3 id="what-else-can-a-saved-approval-cover">What else can a saved approval cover?</h3>
+<ul>
+<li><strong>Another package.</strong> A Codex rule for <code>cargo install</code> allowed both <code>cargo install cargo-insta</code> and <code>cargo install ripgrep</code>. <a href="https://github.com/openai/codex/blob/29eb79e9866b3262a777fdf8195c1b9e63684c91/codex-rs/core/src/exec_policy_tests.rs#L1137-L1158" target="_blank" rel="nofollow noopener">OpenAI’s approval test</a></li>
+<li><strong>Writing a file.</strong> Gemini allowed <code>git status</code> but asked before <code>git status &gt; status.txt</code>. In co:op, the command wrote the file to our checkout. The neighboring folder stayed out of reach. <a href="https://github.com/google-gemini/gemini-cli/blob/v0.50.0/packages/core/src/policy/policy-engine.ts#L414-L425" target="_blank" rel="nofollow noopener">Gemini’s redirection check</a></li>
+</ul>
+</section><section class="doc-section reference-section" id="what-we-could-read-write-and-reach-on-a-mac"><h2>What we could read, write and reach on a Mac</h2>
+<p>The project held four files that often contain secrets (<code>.env</code>, <code>.env.local</code>, <code>.ssh/id_ed25519</code> and <code>client.pem</code>). All files held harmless text, including the <code>id_ed25519</code> file we placed in a temporary folder under the Mac’s own <code>~/.ssh</code> directory.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="What we could read, write and reach on a Mac table"><table role="table" class="ref ref-wide comparison-table">
+<thead role="rowgroup">
+<tr role="row">
+<th role="columnheader" scope="col">Sandbox</th>
+<th role="columnheader" scope="col">Project secrets</th>
+<th role="columnheader" scope="col">Key in <code>~/.ssh</code></th>
+<th role="columnheader" scope="col">README and <code>.env.example</code></th>
+</tr>
+</thead>
+<tbody role="rowgroup">
+<tr role="row">
+<th scope="row" role="rowheader">Claude Code <em>Bash sandbox</em></th>
+<td role="cell" data-label="Project secrets">Read all four</td>
+<td role="cell" data-label="Key in ~/.ssh">Read</td>
+<td role="cell" data-label="README and .env.example">Read both</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Codex CLI <em>Workspace profile</em></th>
+<td role="cell" data-label="Project secrets">Read all four</td>
+<td role="cell" data-label="Key in ~/.ssh">Read</td>
+<td role="cell" data-label="README and .env.example">Read both</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Gemini CLI <em>permissive-open</em></th>
+<td role="cell" data-label="Project secrets">Read all four</td>
+<td role="cell" data-label="Key in ~/.ssh">Read</td>
+<td role="cell" data-label="README and .env.example">Read both</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Gemini CLI <em>strict-open</em></th>
+<td role="cell" data-label="Project secrets">Read all four</td>
+<td role="cell" data-label="Key in ~/.ssh">Couldn’t read</td>
+<td role="cell" data-label="README and .env.example">Read both</td>
+</tr>
+<tr role="row" class="comparison-coop">
+<th scope="row" role="rowheader"><strong>co:op</strong> <em>Filtered</em></th>
+<td role="cell" data-label="Project secrets">Couldn’t read any</td>
+<td role="cell" data-label="Key in ~/.ssh">Couldn’t read</td>
+<td role="cell" data-label="README and .env.example">Read both</td>
+</tr>
+</tbody>
+</table></div></div>
+<details class="guide-detail">
+<summary><strong>How we tested it</strong></summary><div>
+<p>We put a 20-byte <code>.env.coop-demo</code> file beside a 21-byte README and asked Claude to count the bytes in each file using Bash. In co:op, Bash reported 21 bytes for the README and “Operation not permitted” for the secret. After we blocked the secret in Claude’s Bash sandbox settings, its shell also lost access. <a href="box.html#what-claude-code-can-read-on-your-mac">See the commands and output</a> · <a href="https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox" target="_blank" rel="nofollow noopener">Which Claude tools run outside Bash</a></p>
+</div></details>
+<h3 id="can-a-bash-or-nodejs-script-reach-the-internet">Can a Bash or Node.js script reach the internet?</h3>
+<p>We requested the headers from <code>https://example.com/</code> twice, once with curl and once with Node’s built-in <code>fetch</code>.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="Can a Bash or Node.js script reach the internet? table"><table role="table" class="ref ref-wide comparison-table">
+<thead role="rowgroup">
+<tr role="row">
+<th role="columnheader" scope="col">Sandbox</th>
+<th role="columnheader" scope="col">curl from Bash</th>
+<th role="columnheader" scope="col">Node.js fetch</th>
+</tr>
+</thead>
+<tbody role="rowgroup">
+<tr role="row">
+<th scope="row" role="rowheader">Mac without a sandbox</th>
+<td role="cell" data-label="curl from Bash">HTTP 200</td>
+<td role="cell" data-label="Node.js fetch">HTTP 200</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Claude Code <em>No domains allowed</em></th>
+<td role="cell" data-label="curl from Bash">Blocked</td>
+<td role="cell" data-label="Node.js fetch">Failed to resolve the hostname</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Codex CLI <em>Workspace profile</em></th>
+<td role="cell" data-label="curl from Bash">Failed to resolve the hostname</td>
+<td role="cell" data-label="Node.js fetch">Failed to resolve the hostname</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Gemini CLI <em>Both Mac profiles</em></th>
+<td role="cell" data-label="curl from Bash">HTTP 200</td>
+<td role="cell" data-label="Node.js fetch">HTTP 200</td>
+</tr>
+<tr role="row" class="comparison-coop">
+<th scope="row" role="rowheader"><strong>co:op</strong> <em>No sites approved</em></th>
+<td role="cell" data-label="curl from Bash">Blocked</td>
+<td role="cell" data-label="Node.js fetch">Blocked</td>
+</tr>
+<tr role="row" class="comparison-coop">
+<th scope="row" role="rowheader"><strong>co:op</strong> <em>One site approved</em></th>
+<td role="cell" data-label="curl from Bash">HTTP 200</td>
+<td role="cell" data-label="Node.js fetch">HTTP 200</td>
+</tr>
+</tbody>
+</table></div></div>
+<p>Both Gemini profiles allow outgoing connections. In co:op, the receipt showed blocked DNS lookups on the first run and two allowed TLS connections on the second. Approving the website still left all four project secrets hidden.</p>
+<h3 id="what-about-files-outside-the-checkout">What about files outside the checkout?</h3>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="What about files outside the checkout? table"><table role="table" class="ref ref-wide comparison-table">
+<thead role="rowgroup">
+<tr role="row">
+<th role="columnheader" scope="col">Sandbox</th>
+<th role="columnheader" scope="col">Read a neighboring file</th>
+<th role="columnheader" scope="col">Write in the checkout</th>
+<th role="columnheader" scope="col">Write in the host folder next to it</th>
+</tr>
+</thead>
+<tbody role="rowgroup">
+<tr role="row">
+<th scope="row" role="rowheader">Codex CLI <em>Workspace profile</em></th>
+<td role="cell" data-label="Read a neighboring file">Read</td>
+<td role="cell" data-label="Write in the checkout">Allowed</td>
+<td role="cell" data-label="Write in the host folder next to it">Denied</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Gemini CLI <em>permissive-open</em></th>
+<td role="cell" data-label="Read a neighboring file">Read</td>
+<td role="cell" data-label="Write in the checkout">Allowed</td>
+<td role="cell" data-label="Write in the host folder next to it">Denied</td>
+</tr>
+<tr role="row">
+<th scope="row" role="rowheader">Gemini CLI <em>strict-open</em></th>
+<td role="cell" data-label="Read a neighboring file">Denied</td>
+<td role="cell" data-label="Write in the checkout">Allowed</td>
+<td role="cell" data-label="Write in the host folder next to it">Denied</td>
+</tr>
+<tr role="row" class="comparison-coop">
+<th scope="row" role="rowheader"><strong>co:op</strong> <em>Filtered</em></th>
+<td role="cell" data-label="Read a neighboring file">Outside the container</td>
+<td role="cell" data-label="Write in the checkout">Allowed</td>
+<td role="cell" data-label="Write in the host folder next to it">Outside the container</td>
+</tr>
+</tbody>
+</table></div></div>
+<details class="guide-detail">
+<summary><strong>How we tested it</strong></summary><div>
+<p>We ran these checks on macOS 15.6.1 on November 24, 2026, using Claude Code 2.1.312’s Bash tool, Codex CLI 0.170.0’s workspace helper, Gemini CLI 0.50.0’s Seatbelt profiles and <code>coop run</code> in Docker. The Mac’s Grok CLI required sign-in, so the Grok row uses xAI’s documentation. <a href="https://github.com/AndrewDryga/coop/blob/main/examples/sandbox/2026-11-24-native-profiles.txt" target="_blank" rel="nofollow noopener">Test settings and results</a></p>
+</div></details>
+</section><section class="doc-section reference-section" id="when-a-test-needs-the-npm-registry"><h2>When a test needs the npm registry</h2>
+<p>If npm reports <code>EAI_AGAIN</code> in a filtered co:op session, check whether the sandbox blocked the registry. In our test, <code>coop net blocked registry.npmjs.org</code> showed exactly that. We gave npm access for one run and asked for a package version.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="When a test needs the npm registry code example" tabindex="0"><code class="language-sh">coop run --allow-domain registry.npmjs.org -- npm view is-number@7.0.0 version
+</code></pre></div>
+<p>npm returned <code>7.0.0</code> without installing the package. The network receipt showed connections to <code>registry.npmjs.org:443</code>. Afterward, <code>coop net check https://registry.npmjs.org</code> confirmed that the registry was still blocked for the project. <a href="https://github.com/AndrewDryga/coop/blob/main/examples/sandbox/2026-11-24-native-profiles.txt" target="_blank" rel="nofollow noopener">See the network checks and output</a></p>
+<p>Approving a registry gives the agent access to other packages there, too. If only the build needs dependencies, install them in your project image and keep the registry closed during agent sessions. <a href="box.html#your-own-image-agentdockerfile">Build a co:op project image</a></p>
+</section><section class="doc-section reference-section" id="how-the-agent-signs-in-without-getting-your-key"><h2>How the agent signs in without getting your key</h2>
+<p>The CLI gets a placeholder. A separate container checks each provider request and adds the real credential before sending it. Code in the agent container can still make approved requests that count against your account. <a href="networking.html#provider-credentials-stay-outside-the-box">How co:op handles provider credentials</a></p>
+<p>Files the agent can read can still reach its provider. Add private files such as <code>customers.csv</code> to <code>.coopignore</code>. Cloud connectors on your provider account keep their own access. <a href="box.html#hiding-secrets">Choose which files to hide</a></p>
+<p><a href="https://coop.dryga.com/sandbox-guide.html">Try the file and network checks in a disposable project</a>.</p>
+</section>
+        <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="networking.html"><span>Previous</span>Networking</a><a class="docs-pager-next" href="agents.html"><span>Next</span>Accounts, models, presets</a></nav>
+        <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/coding-agent-sandboxes.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>
+      </article>
+    </div>
+  </main>
+  </div>
+  <footer class="wrap footer">
+    <a class="brand brand-small" href="./" aria-label="co:op home">
+      <img src="assets/img/coop-mark.svg" width="24" height="24" alt="">
+      <span><img class="brand-wordmark" src="assets/img/coop-wordmark.svg" width="77" height="22" alt=""></span>
+    </a>
+    <nav aria-label="Footer">
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/AndrewDryga/coop" target="_blank" rel="nofollow noopener">GitHub</a>
+      <a href="https://emisar.dev" target="_blank" rel="nofollow noopener">Emisar</a>
+      <a href="https://ryker.emisar.dev" target="_blank" rel="nofollow noopener">Ryker</a>
+    </nav>
+    <p>By <a href="https://github.com/ProtectorateHQ" target="_blank" rel="nofollow noopener">Protectorate</a></p>
+  </footer>
+</body>
+</html>

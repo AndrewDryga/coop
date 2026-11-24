@@ -469,16 +469,24 @@ That lets tools in the container use a loaded key while the key file stays on yo
 With co:op, the [SSH agent stays outside by default](#ssh-keys-and-agent-forwarding) and
 [common secret files are hidden](#hiding-secrets).
 
-### Other ways to run Claude Code
+### What Claude Code can read on your Mac
 
-Claude Code’s [built-in sandbox](https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox)
-restricts its shell commands. Its file tools have separate permission rules.
-To put the Claude Code process itself inside a container, you can use a devcontainer or co:op.
-[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) also offers a local microVM for running coding agents.
+On our Mac, Claude’s Bash tool could read the README in both sandboxes. It could also read `.env.coop-demo` in Claude’s native sandbox until we added a rule to block it. co:op hid the secret file by default.
 
-Whichever setup you choose, try it on a disposable checkout. The
-[Claude Code walkthrough](https://coop.dryga.com/claude-code-sandbox.html#shadow-secret) includes
-a fake secret and a README you can use to check which files the agent can actually read.
+| From Claude’s Bash tool | Built-in sandbox | co:op with filtered networking |
+|---|---|---|
+| Read the README | 21 bytes | 21 bytes |
+| Read `.env.coop-demo` | 20 bytes | Permission denied |
+| Reach example.com | Blocked | Blocked |
+| Connect to the Mac’s SSH agent | Permission denied | No SSH agent socket |
+
+> **How we tested it**
+>
+> We asked Claude’s Bash tool to count the bytes in both files, connect to `example.com`, and try the socket of an empty SSH agent. Neither sandbox had a rule allowing the website. For the second file check, we added `.env.coop-demo` to Claude’s `sandbox.filesystem.denyRead` setting.
+>
+> Both runs used the same Mac. The [commands, versions and output](../examples/sandbox/2026-11-24-shell-checks.txt) include the settings for each sandbox. Claude’s built-in `Read` tool has [its own permissions](https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox).
+
+[Try the file check with Claude Code](https://coop.dryga.com/claude-code-sandbox.html#shadow-secret) or [see the results for the other agents](coding-agent-sandboxes.md).
 
 ## Project services
 

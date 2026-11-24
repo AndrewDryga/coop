@@ -126,14 +126,13 @@ git -c user.name=&#x27;Sandbox demo&#x27; \
     commit -m &#x27;Create sandbox demo&#x27; &amp;&amp;
 coop init</code></li></ul>
 <p><code>coop init</code> asks which languages and services this project uses. Press Enter at both questions to skip them. It also sets filtered networking for this new project.</p>
-<p>Create a file with a fake secret:</p>
+<p>Create a test file named <code>.env.coop-demo</code>:</p>
 <div class="terminal-example">
-<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="dummy secret setup">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
+<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="create test environment file">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
 wc -c &lt; .env.coop-demo</code></li></ul>
 <pre class="code"><samp>34</samp></pre>
 </div>
 
-<p>We’ll use this fake secret to check that co:op hides it from the agent.</p>
 
 
 </section>

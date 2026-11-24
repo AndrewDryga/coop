@@ -126,14 +126,13 @@ git -c user.name=&#x27;Sandbox demo&#x27; \
     commit -m &#x27;Create sandbox demo&#x27; &amp;&amp;
 coop init</code></li></ul>
 <p><code>coop init</code> asks which languages and services this project uses. Press Enter at both questions to skip them. It also sets filtered networking for this new project.</p>
-<p>Create a file with a fake secret:</p>
+<p>Create a test file named <code>.env.coop-demo</code>:</p>
 <div class="terminal-example">
-<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="dummy secret setup">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
+<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="create test environment file">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
 wc -c &lt; .env.coop-demo</code></li></ul>
 <pre class="code"><samp>34</samp></pre>
 </div>
 
-<p>We’ll use this fake secret to check that co:op hides it from the agent.</p>
 
 
 </section>
@@ -378,6 +377,7 @@ git diff &quot;$coop_review_base&quot;</code></li></ul>
 <p>The <a href="networking.html">networking guide</a> explains the rules. If Docker or a sandbox check fails, fix the reported problem before trying again with filtered networking.</p>
 </div></details>
 <p>Ready to use your own project? Follow the <a href="sandbox-guide.html">general sandbox walkthrough</a> to protect its secrets, set up its tools and approve its network access. Each project needs its own approval. Review and test the agent’s changes before keeping them.</p>
+<p>See <a href="coding-agent-sandboxes.html#what-about-files-outside-the-checkout">which files Codex could read and write outside the checkout</a> in our Mac test.</p>
 <p>For longer jobs, the <a href="overnight-guide.html">overnight walkthrough</a> shows how to run a task queue. You can delete the test project at <code>$coop_demo_dir</code> when you’re finished. This does not sign you out.</p>
 
 <h3>Using another coding agent?</h3><ul class="reference-list" role="list"><li><a href="claude-code-sandbox.html">Run Claude Code in a sandbox</a><p>Claude sign-in, connectors and the container boundary.</p></li><li><a href="gemini-cli-sandbox.html">Run Gemini CLI in a sandbox</a><p>AI Studio keys, Google routes and supported authentication.</p></li><li><a href="grok-cli-sandbox.html">Run Grok CLI in a sandbox</a><p>Grok device sign-in, account access and network rules.</p></li></ul></section>

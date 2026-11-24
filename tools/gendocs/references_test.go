@@ -363,3 +363,16 @@ func TestFullCLIReferenceRetainsEveryCommandBody(t *testing.T) {
 		}
 	}
 }
+
+func TestComparisonTablesKeepHeadersWhenStacked(t *testing.T) {
+	source := "# Comparison\n\n| Agent | Native sandbox | **With co:op** |\n| --- | --- | --- |\n| Claude Code *2.1.312* | Bash | Whole CLI |\n"
+	_, content, _, err := renderReference(docsPage{Slug: "coding-agent-sandboxes"}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`comparison-narrative`, `role="columnheader"`, `scope="row" role="rowheader"`, `data-label="Native sandbox"`, `data-label="With co:op"`, `<em>2.1.312</em>`} {
+		if !strings.Contains(content, want) {
+			t.Errorf("comparison markup missing %s", want)
+		}
+	}
+}

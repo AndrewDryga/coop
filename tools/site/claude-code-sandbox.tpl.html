@@ -89,8 +89,8 @@
 </section>
 <section class="doc-section guide-section" id="boundary"><h2><span class="guide-step" aria-hidden="true">01</span>Why use a sandbox?</h2>
 <p>Coding agents run commands, install packages, and change files. A mistake can affect more than the project you’re working on. An attacker can also hide instructions in content the agent reads, tricking it into running harmful commands. This is called prompt injection.</p>
-<p>A sandbox limits what the agent can access and how much damage it can do if something goes wrong. You can give it room to work without giving it access to everything.</p>
-<p>co:op runs Claude Code in a Docker container on your computer:</p>
+<p>Claude can open a file with its built-in <code>Read</code> tool or run a command that opens it. Claude’s Bash sandbox only covers the shell and the programs it starts. File tools, hooks and local MCP servers run outside that boundary.</p>
+<p>co:op runs Claude Code inside Docker. You choose which project it can see, which files to hide and where it can connect:</p>
 <ul>
   <li>File access is limited to the project and folders you share.</li>
   <li>Secret files appear empty or cannot be read.</li>
@@ -127,14 +127,13 @@ git -c user.name=&#x27;Sandbox demo&#x27; \
     commit -m &#x27;Create sandbox demo&#x27; &amp;&amp;
 coop init</code></li></ul>
 <p><code>coop init</code> asks which languages and services this project uses. Press Enter at both questions to skip them. It also sets filtered networking for this new project.</p>
-<p>Create a file with a fake secret:</p>
+<p>Create a test file named <code>.env.coop-demo</code>:</p>
 <div class="terminal-example">
-<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="dummy secret setup">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
+<ul class="cmds" role="list"><li class="command-block"><code data-copy-source data-copy-kind="command" data-copy-label="create test environment file">(umask 077; set -C; printf &#x27;%s\n&#x27; &#x27;COOP_DEMO_VALUE=not-a-real-secret&#x27; &gt; .env.coop-demo) &amp;&amp;
 wc -c &lt; .env.coop-demo</code></li></ul>
 <pre class="code"><samp>34</samp></pre>
 </div>
 
-<p>We’ll use this fake secret to check that co:op hides it from the agent.</p>
 
 
 </section>
@@ -176,7 +175,7 @@ coop claude --egress filtered</code></li></ul>
 <p>Claude Code’s header may say <code>Claude API</code>. If you signed in with <code>coop login claude</code>, that is only its label, and your work still counts toward your subscription.</p>
 
 <details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Can I use another container runtime?</summary><div><p>This sign-in setup requires Docker with filtered networking. Host networking and Apple’s <code>container</code> runtime are not supported.</p></div></details>
-<details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Why the agent runs without approval prompts</summary><div><p>Claude Code has a <a href="https://code.claude.com/docs/en/sandboxing">built-in sandbox for its Bash tool</a>. Here, co:op’s Docker container limits its file and network access.</p><p>co:op starts Claude with <code>--dangerously-skip-permissions</code> inside the container. Claude can work without asking permission for every command, within the file and network access you allow.</p><p>The agent can also read or change this project’s saved history and settings.</p></div></details>
+<details class="guide-detail guide-help"><summary><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.7-2.5 2-2.5 4"/><path d="M12 16.5h.01"/></svg>Why the agent runs without approval prompts</summary><div><p>co:op starts Claude with <code>--dangerously-skip-permissions</code> inside the container. Claude can work without asking permission for every command, within the file and network access you allow.</p><p>The agent can still edit visible project files and its saved settings. See <a href="box.html#what-claude-code-can-read-on-your-mac">what Claude could read on our Mac</a>.</p></div></details>
 </section>
 <section class="doc-section guide-section" id="shadow-secret"><h2><span class="guide-step" aria-hidden="true">05</span>Verify how co:op hides secrets</h2>
 <p>In Claude Code, run this command. The <code>!</code> runs it directly in the sandbox:</p>

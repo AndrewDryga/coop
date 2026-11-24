@@ -36,7 +36,8 @@ Agents do what they read in code, docs and issues, even when an attacker wrote i
 - A package the agent installs can try to send your `.env` to a stranger's server. In the sandbox
   `.env` cannot be read, and with filtered networking, the default, that server can't be reached.
 
-And sometimes the agent just gets it wrong. An agent cleaning up can run `rm -rf tests/ plan/ ~/`. With the sandbox, that doesn't cause damage any more.
+An agent can still delete files in the project you give it. For a cleanup or a large refactor,
+use a [fork](https://coop.dryga.com/forks.html) so you can review the changes before they reach your checkout.
 
 Supply chain attacks are common too. The sandbox keeps the agent from installing anything on your
 computer or reading anything outside your project, and the filtered network keeps it from reaching
@@ -90,6 +91,9 @@ coop init                  # 3. set up the project: settings, task queue, hooks
 coop claude                # 4. start the agent in the box
 ```
 
+For a first run, follow the [Claude Code sandbox walkthrough](https://coop.dryga.com/claude-code-sandbox.html).
+It uses a throwaway project so you can try the file and network limits yourself.
+
 `coop init` sets up the task queue, hooks, shared instructions and skills, and the
 selected [agent directories](https://coop.dryga.com/agents.html#instructions). It configures the agents you're signed
 in to, so sign in first.
@@ -97,10 +101,8 @@ in to, so sign in first.
 Each agent starts with its own "don't stop to ask" flag on (`--dangerously-skip-permissions`,
 `--dangerously-bypass-approvals-and-sandbox`, `--yolo`, `--permission-mode bypassPermissions`).
 
-An agent that goes off the rails works on the repo you gave it, which you can restore from Git. The
-rest of your computer stays out of reach. You can also use `coop fork` to give the agent its own
-copy of your repo, so you can keep working in yours without risking your local changes. See
-[forks](https://coop.dryga.com/forks.html).
+The agent edits your checkout directly. If you have unfinished work there, give the agent
+[its own fork](https://coop.dryga.com/forks.html) and review its changes separately.
 
 Arguments after the agent's name go to the agent, so `coop claude --continue` resumes Claude's last
 session in the box. After an interactive agent exits, co:op prints an exact resume command when
@@ -118,6 +120,9 @@ coop claude --peer codex --peer gemini        # read-only second opinions for ha
 coop shell                                    # a shell in the box, to look around
 coop run -- npm test                          # any command in the box
 ```
+
+For Codex, the [Codex CLI sandbox walkthrough](https://coop.dryga.com/codex-sandbox.html) covers
+ChatGPT sign-in and shows how to check what Codex can read.
 
 ## What stays out of the box
 
@@ -218,7 +223,7 @@ which starts no container and spends nothing:
 coop eval run core codex --timeout 35m --dry-run
 ```
 
-See [evaluations](https://coop.dryga.com/evals.html).
+To compare agents on your code, [turn a bug you’ve fixed into a repeatable test](https://coop.dryga.com/evals.html#try-a-bug-from-your-own-project).
 
 ## Limitations
 

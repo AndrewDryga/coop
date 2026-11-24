@@ -23,9 +23,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
-  <script src="assets/js/site.js?v=66031b5921" defer></script>
-  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=f24d1b7acc">
+  <script src="assets/js/site.js?v=f24d1b7acc" defer></script>
+  <script src="assets/js/analytics.js?v=f24d1b7acc" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -62,6 +62,7 @@
 <ul role="list">
 <li><a href="box.html">Files, images and services</a></li>
 <li><a href="networking.html">Networking</a></li>
+<li><a href="coding-agent-sandboxes.html">Compare agent sandboxes</a></li>
 </ul>
 <p class="docs-nav-group">Agents</p>
 <ul role="list">
@@ -206,6 +207,7 @@ customer-export.csv</pre></div>
           </section><section class="doc-section guide-section" id="next">
             <h2><span class="guide-step" aria-hidden="true">06</span>Build on a verified first run</h2>
 <p>Want instructions for your agent? Choose <a href="claude-code-sandbox.html">Claude Code</a>, <a href="codex-sandbox.html">Codex CLI</a>, <a href="gemini-cli-sandbox.html">Gemini CLI</a> or <a href="grok-cli-sandbox.html">Grok CLI</a>.</p>
+<p><a href="coding-agent-sandboxes.html">See what Claude, Codex, Gemini and Grok can read</a> with their own sandbox settings, and what changes when the whole agent runs in co:op.</p>
 <p>Keep the next task small until the project builds and tests reliably inside the container. For a queue that can continue without your supervision, use the overnight walkthrough.</p>
 <details class="guide-detail"><summary>Other runtimes and editor sessions</summary><div><p>Use Docker for the provider sessions in this guide. It supports the helper that keeps your provider credentials outside the container. Apple container can run commands with open networking and no credentials, but cannot replace Docker for this setup.</p><p>An agent connected through ACP can ask your editor to read files or run commands on your computer. The editor controls that access. Read the <a href="docs.html#editors">editor documentation</a> before using it.</p></div></details>
           </section>
