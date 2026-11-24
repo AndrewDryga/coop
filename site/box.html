@@ -117,6 +117,7 @@
 <li class="reference-subsection"><a href="#the-box-contract">The box contract</a></li>
 <li class="reference-subsection"><a href="#inherit-coops-base">Inherit co:op&#39;s base</a></li>
 <li class="reference-subsection"><a href="#reusing-a-devcontainer">Reusing a devcontainer</a></li>
+<li class="reference-subsection"><a href="#other-ways-to-run-claude-code">Other ways to run Claude Code</a></li>
 <li><a href="#project-services">Project services</a></li>
 <li class="reference-subsection"><a href="#development-and-loop-stacks">Development and loop stacks</a></li>
 <li class="reference-subsection"><a href="#starting-and-stopping">Starting and stopping</a></li>
@@ -517,10 +518,22 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.330 @openai/codex@0.170.0 @goog
 USER &lt;the devcontainer&#39;s non-root user&gt;
 # If that user&#39;s home isn&#39;t /home/node, run with COOP_HOME_IN_BOX=/home/&lt;user&gt;.
 </code></pre></div>
-<p>co:op adds secret hiding, its container restrictions, the task queue and the supervisor that runs
-it. A devcontainer alone mounts the whole workspace, including <code>.env</code>, and a malicious project
-running under <code>--dangerously-skip-permissions</code> can send the contents of <code>~/.claude</code> outside your
-machine. Don&#39;t rely on the devcontainer alone to protect those files.</p>
+<p>Reusing the image gives the agent your team&#39;s tools. What it can read also depends on what
+you mount. VS Code Dev Containers normally shares the workspace when you use an image or
+Dockerfile. A project <code>.env</code> can be readable through that mount even if Git ignores it.
+You can <a href="https://code.visualstudio.com/remote/advancedcontainers/change-default-source-mount" target="_blank" rel="nofollow noopener">mount a narrower folder</a>.</p>
+<p>VS Code can also <a href="https://code.visualstudio.com/remote/advancedcontainers/sharing-git-credentials" target="_blank" rel="nofollow noopener">forward a running SSH agent</a>.
+That lets tools in the container use a loaded key while the key file stays on your computer.
+With co:op, the <a href="#ssh-keys-and-agent-forwarding">SSH agent stays outside by default</a> and
+<a href="#hiding-secrets">common secret files are hidden</a>.</p>
+<h3 id="other-ways-to-run-claude-code">Other ways to run Claude Code</h3>
+<p>Claude Code’s <a href="https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox" target="_blank" rel="nofollow noopener">built-in sandbox</a>
+restricts its shell commands. Its file tools have separate permission rules.
+To put the Claude Code process itself inside a container, you can use a devcontainer or co:op.
+<a href="https://docs.docker.com/ai/sandboxes/" target="_blank" rel="nofollow noopener">Docker Sandboxes</a> also offers a local microVM for running coding agents.</p>
+<p>Whichever setup you choose, try it on a disposable checkout. The
+<a href="https://coop.dryga.com/claude-code-sandbox.html#shadow-secret">Claude Code walkthrough</a> includes
+a fake secret and a README you can use to check which files the agent can actually read.</p>
 </section><section class="doc-section reference-section" id="project-services"><h2>Project services</h2>
 <p>Services such as databases run in separate containers alongside the box. None are added by
 default. <code>coop init</code> asks which ones you want, or you can pass <code>--services postgres,redis</code>, and it
