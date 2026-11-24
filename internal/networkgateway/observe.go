@@ -34,7 +34,16 @@ func (g *GuardRuntime) observation() RuntimeObservation {
 }
 
 func (g *GuardRuntime) finishObservation(path string, prior error) error {
-	return errors.Join(prior, writeFinalObservation(path, g.observation()))
+	observation := g.observation()
+	// Keep only the fixed readiness and exit codes from the guard. A normal stop has no reason.
+	var failure Failure
+	if errors.As(prior, &failure) {
+		switch failure {
+		case envoyAdminTimeout, envoyAdminNotReady, envoyClockUnavailable, envoyProcessExited:
+			observation.Network.Health.Gateway.Reason = string(failure)
+		}
+	}
+	return errors.Join(prior, writeFinalObservation(path, observation))
 }
 
 func (g *GuardRuntime) serveObservation(ctx context.Context, path string, authenticate func(*net.UnixConn) bool) error {

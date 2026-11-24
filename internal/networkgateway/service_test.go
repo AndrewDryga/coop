@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/testutil/wait"
@@ -29,17 +30,18 @@ func TestGuardReadinessCannotReopenDuringShutdown(t *testing.T) {
 	var gateway GuardRuntime
 	gateway.stopReady()
 	gateway.markReady() // delayed listener callback after another component failed
-	if gateway.phase.Load() != gatewayStopped {
+	if gateway.phase != gatewayStopped {
 		t.Fatal("late callback reopened a stopping generation")
 	}
 	var normal GuardRuntime
 	normal.markReady()
-	if normal.phase.Load() != gatewayReady {
+	if normal.phase != gatewayReady {
 		t.Fatal("healthy startup did not publish readiness")
 	}
 	normal.stopReady()
 	normal.markReady()
-	if normal.phase.Load() != gatewayStopped {
+	normal.setProxyReady(true)
+	if normal.ready() || normal.phase != gatewayStopped {
 		t.Fatal("stopped generation became ready again")
 	}
 }
@@ -54,7 +56,7 @@ func TestGuardReadinessIsPublishedAtOnce(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		c.Run(ctx, func() bool { return gateway.phase.Load() == gatewayReady })
+		c.Run(ctx, gateway.ready)
 	}()
 	wait.For(t, "the collector's first sample", func() bool { return c.Snapshot().Sequence >= 1 })
 	if c.Snapshot().Health.Gateway.Status == "ready" {
@@ -66,6 +68,10 @@ func TestGuardReadinessIsPublishedAtOnce(t *testing.T) {
 	if took := time.Since(began); took > 500*time.Millisecond {
 		t.Fatalf("readiness waited %s for the collector's tick", took)
 	}
+	gateway.setProxyReady(false)
+	wait.For(t, "a sample with the proxy unavailable", func() bool { return c.Snapshot().Health.Gateway.Status == "unavailable" })
+	gateway.setProxyReady(true)
+	wait.For(t, "a sample with the proxy recovered", func() bool { return c.Snapshot().Health.Gateway.Status == "ready" })
 	cancel()
 	<-done
 	c.sample(context.Background(), false, true, c.clock.instant())
@@ -75,6 +81,54 @@ func TestGuardReadinessIsPublishedAtOnce(t *testing.T) {
 	if after := c.Snapshot(); !final.Terminal || after.Sequence != final.Sequence || len(c.wake) != 1 {
 		t.Fatalf("a wake after the observer stopped was taken (%d queued) or sampled past the terminal sample: %d, then %d", len(c.wake), final.Sequence, after.Sequence)
 	}
+}
+
+func TestRuntimeLivenessSurvivesProxyTimeoutAndEndsWithGuard(t *testing.T) {
+	c, _ := collectorFixture(t)
+	g := &GuardRuntime{Identity: c.identity, collector: c}
+	ctx, cancel := context.WithCancel(context.Background())
+	path := shortControlPath(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = g.serveReadiness(ctx, path, func(*net.UnixConn) bool { return true })
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	wait.For(t, "runtime probe socket", func() bool {
+		conn, err := net.DialTimeout("unix", path, ControlTimeout)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	})
+	client := ControllerClient{Identity: c.identity, Clock: c.clock}
+	check := func(operation string, want bool) {
+		t.Helper()
+		_, err := client.callPath(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: operation}, path)
+		if (err == nil) != want {
+			t.Fatalf("runtime %s check returned %v, want success=%t", operation, err, want)
+		}
+	}
+	check("ready", false)
+	check("live", false)
+	g.markReady()
+	check("ready", true)
+	check("live", true)
+	g.setProxyReady(false)
+	check("ready", false)
+	for range envoyAdminTimeoutLimit {
+		check("live", true)
+	}
+	g.setProxyReady(true)
+	check("ready", true)
+	g.stopReady()
+	check("ready", false)
+	check("live", false)
+	check("unknown", false)
 }
 
 func TestGatewayLaunchConfigurationIsBoundedAndConcrete(t *testing.T) {
@@ -288,6 +342,64 @@ func TestEnvoyHealthIsPrivateBoundedAndNotRedirectable(t *testing.T) {
 				t.Fatalf("health acceptance: %v", err)
 			}
 		})
+	}
+}
+
+func TestEnvoyHealthWatchRetriesConsecutiveTimeouts(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*HeartbeatInterval)
+		defer cancel()
+		replies := []error{
+			context.DeadlineExceeded, context.DeadlineExceeded, nil,
+			context.DeadlineExceeded, context.DeadlineExceeded, context.DeadlineExceeded,
+		}
+		probes := 0
+		health := &envoyHealth{clock: testBootClock(), client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			probes++
+			if probes > len(replies) {
+				t.Fatal("watch kept running after persistent timeouts")
+			}
+			if err := replies[probes-1]; err != nil {
+				return nil, err
+			}
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("LIVE\n"))}, nil
+		})}}
+		var readiness []bool
+		err := health.watch(ctx, func(ready bool) { readiness = append(readiness, ready) })
+		if !errors.Is(err, envoyAdminTimeout) || !slices.Equal(readiness, []bool{false, false, true, false, false, false}) {
+			t.Fatalf("watch recorded readiness %v and ended with %v", readiness, err)
+		}
+	})
+}
+
+func TestEnvoyHealthWatchStopsOnAnExplicitFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	probes := 0
+	health := &envoyHealth{clock: testBootClock(), client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		probes++
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: http.NoBody}, nil
+	})}}
+	err := health.watch(ctx, func(ready bool) {
+		if ready || probes > 1 {
+			t.Fatal("watch kept waiting after Envoy reported unready")
+		}
+	})
+	if !errors.Is(err, envoyAdminNotReady) || probes != 1 {
+		t.Fatalf("watch stopped after %d probes with %v", probes, err)
+	}
+}
+
+func TestEnvoyHealthWatchStopsOnCancellationDuringATimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	health := &envoyHealth{clock: testBootClock(), client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		cancel()
+		return nil, context.DeadlineExceeded
+	})}}
+	err := health.watch(ctx, func(bool) { t.Fatal("watch published a canceled probe") })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled watch ended with %v", err)
 	}
 }
 

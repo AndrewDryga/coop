@@ -111,8 +111,8 @@ func (f *filteredExecution) cleanupWithFilesystem(workload string, retire func()
 			if agentGone {
 				ctx, cancel := context.WithTimeout(context.Background(), filteredControlTimeout)
 				// This round-trip happens after exact agent absence. A guard that
-				// already terminated cannot produce the causal readiness reply.
-				if _, err := f.docker.ExecRead(ctx, guard, 4096, "/usr/local/bin/coop-net", "probe"); err == nil {
+				// already terminated cannot produce the causal liveness reply.
+				if _, err := f.docker.ExecRead(ctx, guard, 4096, "/usr/local/bin/coop-net", "live"); err == nil {
 					networkErr = errors.Join(networkErr, f.update(func(r networkstate.Execution) (networkstate.Execution, error) {
 						return f.store.RecordObserverAfterWorkload(ctx, r.ID, r.Revision)
 					}))

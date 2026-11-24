@@ -497,9 +497,7 @@ func (f *filteredExecution) launch(ctx context.Context, spec RunSpec, options []
 	return code, outcome
 }
 
-// gatewayProbeFailureLimit is how many health checks in a row may go unanswered before the run
-// ends. A busy computer slows Docker, so a miss or two proves nothing; meanwhile the box has no
-// network (nft stays fail-closed), so waiting costs only time.
+// The packet filter stays in force while Coop tolerates a brief loss of the host's gateway probe.
 const gatewayProbeFailureLimit = 3
 
 func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc) error {
@@ -533,9 +531,8 @@ func (f *filteredExecution) watch(ctx context.Context, cancel context.CancelFunc
 				continue // nft remains fail-closed while bounded observation retries run
 			}
 			cancel()
-			// The loop shows only an attempt's first line, so it names the cause and the likely reason
-			// in plain words; Docker's own account of the failed check follows on the next line.
-			return fmt.Errorf("the network gateway stopped answering %d checks in a row, so the box could reach nothing and Coop ended the attempt. Docker or this computer may be busy.\n%w", probeFailures, err)
+			// The loop shows only the first line. The failed operation follows on the next line.
+			return fmt.Errorf("the network gateway failed %d liveness checks in a row, so Coop ended the attempt.\n%w", probeFailures, err)
 		}
 		probeFailures = 0
 		// Observation loss is not permission to open networking, nor an

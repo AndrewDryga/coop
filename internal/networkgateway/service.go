@@ -424,8 +424,11 @@ type GuardRuntime struct {
 	native      *nativeRunRuntime
 	doh         *DoH
 	collector   *Collector
-	phase       atomic.Uint32
 	started     atomic.Bool
+
+	readiness        sync.Mutex
+	phase            uint32
+	proxyUnavailable bool
 }
 
 const (
@@ -437,12 +440,45 @@ const (
 // markReady opens the gateway and has the collector say so at once: its latest sample predates
 // readiness, and the next tick is up to a second away.
 func (g *GuardRuntime) markReady() {
-	if g.phase.CompareAndSwap(gatewayStarting, gatewayReady) {
+	g.readiness.Lock()
+	changed := g.phase == gatewayStarting
+	if changed {
+		g.phase = gatewayReady
+	}
+	g.readiness.Unlock()
+	if changed {
 		g.collector.Wake()
 	}
 }
 
-func (g *GuardRuntime) stopReady() { g.phase.Store(gatewayStopped) }
+func (g *GuardRuntime) stopReady() {
+	g.readiness.Lock()
+	g.phase = gatewayStopped
+	g.readiness.Unlock()
+}
+
+func (g *GuardRuntime) ready() bool {
+	_, ready := g.probeStatus()
+	return ready
+}
+
+func (g *GuardRuntime) probeStatus() (live, ready bool) {
+	g.readiness.Lock()
+	defer g.readiness.Unlock()
+	live = g.phase == gatewayReady
+	return live, live && !g.proxyUnavailable
+}
+
+func (g *GuardRuntime) setProxyReady(ready bool) {
+	unavailable := !ready
+	g.readiness.Lock()
+	changed := g.proxyUnavailable != unavailable
+	g.proxyUnavailable = unavailable
+	g.readiness.Unlock()
+	if changed {
+		g.collector.Wake()
+	}
+}
 
 func NewGuardRuntime(config LaunchConfig) (*GuardRuntime, error) {
 	if config.Validate() != nil || verifyServiceRole("guard") != nil {
@@ -533,7 +569,7 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 	defer cancel()
 	observerCtx, stopObserver := context.WithCancel(context.WithoutCancel(ctx))
 	var observers sync.WaitGroup
-	observers.Go(func() { g.collector.Run(observerCtx, func() bool { return g.phase.Load() == gatewayReady }) })
+	observers.Go(func() { g.collector.Run(observerCtx, g.ready) })
 	observers.Go(func() { _ = g.serveObservation(observerCtx, RuntimeObserveSocket, servicePeer) })
 	defer func() {
 		stopObserver()
@@ -593,7 +629,7 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 	for health.check(startup) != nil {
 		select {
 		case <-processDone:
-			return Failure("gateway_unavailable")
+			return envoyProcessExited
 		case <-startup.Done():
 			return Failure("gateway_start_timeout")
 		case <-time.After(20 * time.Millisecond):
@@ -621,17 +657,26 @@ func (g *GuardRuntime) Run(ctx context.Context) (result error) {
 	for _, broker := range g.brokers {
 		workers.Go(func() { failures <- broker.Serve(ctx, partReady) })
 	}
-	workers.Go(func() { failures <- health.watch(ctx) })
-	workers.Go(func() { failures <- g.serveReadiness(ctx) })
+	workers.Go(func() { failures <- health.watch(ctx, g.setProxyReady) })
+	workers.Go(func() { failures <- g.serveReadiness(ctx, RuntimeSocket, servicePeer) })
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-processDone:
-		return Failure("gateway_unavailable")
+		return envoyProcessExited
 	case err := <-failures:
 		return err
 	}
 }
+
+const envoyAdminTimeoutLimit = 3
+
+const (
+	envoyAdminTimeout     Failure = "envoy_admin_timeout"
+	envoyAdminNotReady    Failure = "envoy_admin_not_ready"
+	envoyClockUnavailable Failure = "envoy_clock_unavailable"
+	envoyProcessExited    Failure = "envoy_process_exited"
+)
 
 type envoyHealth struct {
 	client    *http.Client
@@ -652,27 +697,63 @@ func newEnvoyHealth(path string, clock *BootClock) *envoyHealth {
 func (h *envoyHealth) check(ctx context.Context) error {
 	started := h.clock.instant()
 	if !started.Valid() {
-		return Failure("clock_unavailable")
+		return envoyClockUnavailable
 	}
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://gateway/ready", nil)
 	response, err := h.client.Do(request)
 	if err != nil {
-		return Failure("gateway_unavailable")
+		return envoyAdminError(err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return envoyAdminNotReady
+	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, 33))
+	if err != nil {
+		return envoyAdminError(err)
+	}
 	completed := h.clock.instant()
-	if err != nil || response.StatusCode != http.StatusOK || string(body) != "LIVE\n" || !completed.Valid() || completed.Before(started) || completed.Sub(started) > EnvoyHealthTimeout {
-		return Failure("gateway_unavailable")
+	if !completed.Valid() || completed.Before(started) {
+		return envoyClockUnavailable
+	}
+	if string(body) != "LIVE\n" {
+		return envoyAdminNotReady
+	}
+	if completed.Sub(started) > EnvoyHealthTimeout {
+		return envoyAdminTimeout
 	}
 	return nil
 }
 
-func (h *envoyHealth) watch(ctx context.Context) error {
+func envoyAdminError(err error) Failure {
+	var timeout net.Error
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return envoyAdminTimeout
+	}
+	return envoyAdminNotReady
+}
+
+func (h *envoyHealth) watch(ctx context.Context, setReady func(bool)) error {
 	ticker := time.NewTicker(HeartbeatInterval)
 	defer ticker.Stop()
+	timeouts := 0
 	for {
-		if err := h.check(ctx); err != nil {
+		err := h.check(ctx)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		setReady(err == nil)
+		switch err {
+		case nil:
+			timeouts = 0
+		case envoyAdminTimeout:
+			// An admin deadline can expire while the same process is still forwarding.
+			// Only the readiness report changes until repeated misses justify teardown.
+			timeouts++
+			if timeouts >= envoyAdminTimeoutLimit {
+				return err
+			}
+		default:
 			return err
 		}
 		select {
@@ -683,13 +764,13 @@ func (h *envoyHealth) watch(ctx context.Context) error {
 	}
 }
 
-func (g *GuardRuntime) serveReadiness(ctx context.Context) error {
-	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: RuntimeSocket, Net: "unix"})
+func (g *GuardRuntime) serveReadiness(ctx context.Context, path string, authenticate func(*net.UnixConn) bool) error {
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
 	if err != nil {
 		return Failure("gateway_socket_occupied")
 	}
 	defer listener.Close()
-	if os.Chmod(RuntimeSocket, 0600) != nil {
+	if os.Chmod(path, 0600) != nil {
 		return Failure("gateway_socket_occupied")
 	}
 	stop := context.AfterFunc(ctx, func() { _ = listener.Close() })
@@ -710,14 +791,22 @@ func (g *GuardRuntime) serveReadiness(ctx context.Context) error {
 		}
 		workers.Go(func() {
 			defer func() { <-slots; _ = conn.Close() }()
-			if conn.SetDeadline(time.Now().Add(ControlTimeout)) != nil || !servicePeer(conn) {
+			if conn.SetDeadline(time.Now().Add(ControlTimeout)) != nil || !authenticate(conn) {
 				return
 			}
 			var request controlRequest
-			if readControl(conn, &request) != nil || request.Version != PrivateProtocolVersion || !request.Identity.matchesPeer(g.Identity) || request.Operation != "ready" || request.Lease != nil || request.AfterBoot != 0 {
+			if readControl(conn, &request) != nil || request.Version != PrivateProtocolVersion || !request.Identity.matchesPeer(g.Identity) || request.Lease != nil || request.AfterBoot != 0 {
 				return
 			}
-			_ = json.NewEncoder(conn).Encode(controlReply{Identity: g.Identity, Version: PrivateProtocolVersion, Ready: g.phase.Load() == gatewayReady})
+			live, ready := g.probeStatus()
+			switch request.Operation {
+			case "live":
+				ready = live
+			case "ready":
+			default:
+				return
+			}
+			_ = json.NewEncoder(conn).Encode(controlReply{Identity: g.Identity, Version: PrivateProtocolVersion, Ready: ready})
 		})
 	}
 }
@@ -725,6 +814,16 @@ func (g *GuardRuntime) serveReadiness(ctx context.Context) error {
 // ProbeRuntime is a host-exec readiness probe, not a guard heartbeat. It cannot
 // keep a failed guard alive. The socket is absent from the agent's filesystem.
 func ProbeRuntime(ctx context.Context, config LaunchConfig) error {
+	return probeRuntime(ctx, config, "ready")
+}
+
+// ProbeRuntimeLiveness keeps the running watchdog independent of the guard's
+// bounded proxy timeout recovery. It only succeeds while the guard is serving.
+func ProbeRuntimeLiveness(ctx context.Context, config LaunchConfig) error {
+	return probeRuntime(ctx, config, "live")
+}
+
+func probeRuntime(ctx context.Context, config LaunchConfig, operation string) error {
 	if config.Validate() != nil || verifyServiceRole("guard") != nil {
 		return Failure("gateway_configuration_invalid")
 	}
@@ -733,6 +832,6 @@ func ProbeRuntime(ctx context.Context, config LaunchConfig) error {
 		return err
 	}
 	client := ControllerClient{Path: RuntimeSocket, Identity: config.identity(clock), Clock: clock}
-	_, err = client.callPath(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: "ready"}, RuntimeSocket)
+	_, err = client.callPath(ctx, controlRequest{Version: PrivateProtocolVersion, Operation: operation}, RuntimeSocket)
 	return err
 }

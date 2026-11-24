@@ -50,7 +50,7 @@ func TestPrivateObservationReadsCacheWithoutProbingOrRenewing(t *testing.T) {
 			t.Fatalf("cached observation: %#v %v", value, err)
 		}
 	}
-	if probes.Load() != 0 || g.phase.Load() != gatewayStarting {
+	if probes.Load() != 0 || g.phase != gatewayStarting {
 		t.Fatal("read triggered sampling or changed readiness")
 	}
 	wrong := c.identity
@@ -157,5 +157,42 @@ func TestFinalObservationWriteFailureSurvivesOrdinaryCancellation(t *testing.T) 
 	err := g.finishObservation(filepath.Join(t.TempDir(), "missing"), context.Canceled)
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, Failure("observation_storage_unavailable")) {
 		t.Fatalf("terminal storage outcome was swallowed: %v", err)
+	}
+}
+
+func TestFinalObservationKeepsOnlyFixedProxyStopReasons(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{context.Canceled, ""},
+		{Failure("unrecognized_error"), ""},
+		{errors.Join(envoyAdminTimeout, context.Canceled), string(envoyAdminTimeout)},
+		{envoyAdminNotReady, string(envoyAdminNotReady)},
+		{envoyClockUnavailable, string(envoyClockUnavailable)},
+		{envoyProcessExited, string(envoyProcessExited)},
+	} {
+		t.Run(tc.err.Error(), func(t *testing.T) {
+			c, _ := collectorFixture(t)
+			c.envoy.Finish(nil)
+			c.sample(context.Background(), false, true, c.clock.instant())
+			g := &GuardRuntime{Identity: c.identity, collector: c}
+			dir := t.TempDir()
+			if err := g.finishObservation(dir, tc.err); !errors.Is(err, tc.err) {
+				t.Fatalf("terminal error was lost: %v", err)
+			}
+			file, err := os.Open(filepath.Join(dir, "final.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			value, err := ReadObservation(file, c.identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason := value.Network.Health.Gateway.Reason; !value.Network.Terminal || reason != tc.want {
+				t.Fatalf("terminal=%v, stop reason=%q, want %q", value.Network.Terminal, reason, tc.want)
+			}
+		})
 	}
 }

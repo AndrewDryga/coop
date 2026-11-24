@@ -604,7 +604,7 @@ func (d *filteredDaemonFixture) ExecRead(_ context.Context, _ runtime.DockerRef,
 	defer d.mu.Unlock()
 	verb := command[len(command)-1]
 	d.execs = append(d.execs, verb)
-	if verb == "probe" || verb == "watch" {
+	if verb == "probe" || verb == "live" || verb == "watch" {
 		if d.earlyGuardEnd && d.f.resource("agent").State == "gone" {
 			return nil, errors.New("fixture collector already ended")
 		}
@@ -1138,11 +1138,11 @@ func TestFilteredHealthLossCancelsAttachmentAndRemovesAgent(t *testing.T) {
 	}
 	// The loop shows an attempt's first line. It once read only "context canceled", and later ended on
 	// Docker's own words for a busy host ("Docker evidence source unavailable"). The first line now
-	// says what failed and the likely reason; the failed check's own error is kept on the next.
+	// says which check failed; the failed operation is kept on the next line.
 	first, rest, _ := strings.Cut(err.Error(), "\n")
-	want := fmt.Sprintf("the network gateway stopped answering %d checks in a row", gatewayProbeFailureLimit)
-	if !strings.HasPrefix(first, want) || !strings.Contains(first, "may be busy") || strings.Contains(first, "evidence source") || strings.Contains(err.Error(), "context canceled") {
-		t.Fatalf("health loss did not lead with its cause and the busy host: %q", err)
+	want := fmt.Sprintf("the network gateway failed %d liveness checks in a row", gatewayProbeFailureLimit)
+	if !strings.HasPrefix(first, want) || strings.Contains(first, "evidence source") || strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("health loss did not lead with its cause: %q", err)
 	}
 	if !strings.Contains(rest, "fixture guard unhealthy") {
 		t.Fatalf("the failed check's own error was dropped: %q", err)

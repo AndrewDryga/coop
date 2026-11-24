@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/networkstate"
 	"github.com/AndrewDryga/coop/internal/networkview"
 )
 
@@ -129,5 +130,19 @@ func TestAGatewayFailureOnARefusalNamesTheGateway(t *testing.T) {
 		if got := refusalReasonText(reason); got != want {
 			t.Errorf("refusalReasonText(%q) = %q, want %q", reason, got, want)
 		}
+	}
+}
+
+func TestTerminalGatewayWarningKeepsTheProxyStopReason(t *testing.T) {
+	var run networkstate.Inspection
+	run.Observed.Terminal = true
+	run.Observed.Health.Gateway.Status = "stopped"
+	if got := healthWarnings(run); len(got) != 0 {
+		t.Fatalf("normal teardown reported a warning: %+v", got)
+	}
+	run.Observed.Health.Gateway.Reason = "envoy_process_exited"
+	got := healthWarnings(run)
+	if len(got) != 1 || !strings.Contains(got[0].headline, "the proxy process exited") {
+		t.Fatalf("terminal gateway failure lacked a reason: %+v", got)
 	}
 }

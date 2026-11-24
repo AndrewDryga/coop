@@ -59,6 +59,8 @@ func run() error {
 		return gateway.Run(ctx)
 	case "probe":
 		return networkgateway.ProbeRuntime(ctx, config)
+	case "live":
+		return networkgateway.ProbeRuntimeLiveness(ctx, config)
 	case "snapshot":
 		value, err := networkgateway.ObserveRuntime(ctx, config)
 		if err != nil {
@@ -69,10 +71,9 @@ func run() error {
 		}
 		return nil
 	case "watch":
-		// The host's once-a-second check in one exec: the probe decides the exit status, and the
-		// snapshot rides along when it can be read. A lost observation prints nothing and still
-		// exits 0, because it must neither end the run nor open networking.
-		if err := networkgateway.ProbeRuntime(ctx, config); err != nil {
+		// A live guard can publish degraded health while it retries a proxy timeout.
+		// Observation loss does not decide the exit status of this liveness check.
+		if err := networkgateway.ProbeRuntimeLiveness(ctx, config); err != nil {
 			return err
 		}
 		if value, err := networkgateway.ObserveRuntime(ctx, config); err == nil {

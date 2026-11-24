@@ -1045,6 +1045,14 @@ func evidenceReasonText(reason string) string {
 		return "it never became ready"
 	case "gateway_unavailable":
 		return "it could not be reached"
+	case "envoy_admin_timeout":
+		return "the proxy readiness check repeatedly timed out"
+	case "envoy_admin_not_ready":
+		return "the proxy readiness check failed"
+	case "envoy_clock_unavailable":
+		return "the proxy readiness check could not verify elapsed time"
+	case "envoy_process_exited":
+		return "the proxy process exited"
 	case "enforcement_unavailable":
 		return "it was not ready"
 	case "controller_observation_unavailable":
@@ -1152,7 +1160,7 @@ func healthWarnings(inspection networkstate.Inspection) []warning {
 		{"gateway", inspection.Observed.Health.Gateway},
 		{"resolver", inspection.Observed.Health.Resolver},
 	} {
-		if layer.value.Status == "" || layer.value.Status == "ready" || layer.value.Status == "stopped" && terminal {
+		if layer.value.Status == "" || layer.value.Status == "ready" || layer.value.Status == "stopped" && terminal && layer.value.Reason == "" {
 			continue
 		}
 		name := layerName(layer.name)

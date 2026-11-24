@@ -3,7 +3,7 @@ name: network-gateway
 description: the two helper containers that enforce a filtered run — controller (nftables) and guard (SNI/DNS) — how the helper image is built, what observation actually measures, and how cleanup seals a receipt
 subsystem: networking
 sources: [internal/runtime/docker.go, internal/runtime/docker_objects.go, internal/networkstate/execution_transitions.go, internal/runtime/docker_volume.go, internal/runtime/volume_exposure.go, internal/networkgateway/native_broker.go, internal/networkgateway/open_broker.go, internal/networkgateway/controller.go, internal/networkgateway/guard.go, internal/networkgateway/hello.go, internal/networkgateway/destination_linux.go, internal/networkgateway/resolver.go, internal/networkgateway/envoy.go, internal/networkgateway/proxy.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/networkgateway/collector.go, internal/networkgateway/kernel_events.go, internal/networkgateway/clock.go, internal/networkgateway/clock_linux.go, internal/networkgateway/control.go, internal/networkgateway/identity.go, internal/networkgateway/observe.go, internal/networkgateway/alerts.go, internal/gatewayimage/image.go, internal/gatewayimage/image_test.go, internal/gatewayimage/Dockerfile, tools/gennetimage/main.go, cmd/coop-net/main.go, internal/box/filtered_launch.go, internal/box/filtered_cleanup.go, internal/box/launch_sections.go, internal/runtime/docker_lifecycle.go, internal/box/network_setup.go, internal/box/network_recover.go, internal/cli/boxsweep.go, internal/cli/net_cmd.go, internal/forkctl/host.go, internal/box/native_account.go, internal/cli/project_build.go]
-updated: 2026-11-17
+updated: 2026-11-23
 ---
 
 A filtered run adds two helper containers from one pinned image, both running `coop-net`
@@ -82,6 +82,14 @@ flow's LIFETIME (the guard's own context). `forwardTLS(flow, admission, …)` ta
 every guarded TLS flow died 10 s after admission — long streamed model responses were cut mid-body
 and retried forever (`TestGuardFlowOutlivesTheAdmissionBudget`,
 `TestServiceProxyFlowOutlivesTheAdmissionBudget`).
+
+Envoy's private admin readiness check has a 750 ms deadline. A timeout during a run makes
+readiness unavailable. Startup still requires readiness. The host watches guard liveness while
+forwarding health is degraded, so it can retain observations through the recovery window. A valid
+reply restores readiness and resets the count. The third consecutive timeout ends the guard, as
+does a failed admin reply or an observed child exit. Probes grant no forwarding authority. The controller heartbeat and policy checks continue during the retry window.
+The terminal observation records a fixed proxy stop reason so `coop net inspect` can tell a repeated
+timeout from a failed admin check or an observed exit.
 
 Filtered project services use the same guard through a second, bounded listener on `:15444`.
 Compose puts only the approved service closure on an internal network and points standard HTTPS
@@ -430,6 +438,7 @@ largest block of a start. `markReady` now wakes the collector (`Collector.Wake`,
 pattern), so readiness is published when it happens: start p50 3.97 s → 3.00 s.
 
 ## Changelog
+- 2026-11-23 — tolerate brief Envoy admin timeouts during a run and retain the guard's proxy stop reason.
 - 2026-11-17 — the image pins thirteen packages (apt, libapt-pkg6.0, openssl and libssl3 added), seven
   from jammy-updates, from snapshot 20261109T000000Z, to move before 2028-11; verified against
   `gatewayimage/Dockerfile`.
