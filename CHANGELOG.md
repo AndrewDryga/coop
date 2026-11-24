@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
+
 ## 15.4.0
 
 - **Claude Code installs its official marketplace in filtered boxes.** A new Claude home can
