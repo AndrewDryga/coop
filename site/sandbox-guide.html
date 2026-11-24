@@ -148,7 +148,7 @@
 <div class="guide-checkpoint"><p class="guide-label">Before you continue</p><p>You know which checkout will change, and you have reviewed its co:op configuration. A disposable container does not undo edits to the mounted project.</p></div>
           </section><section class="doc-section guide-section" id="files">
             <h2><span class="guide-step" aria-hidden="true">03</span>Decide what the agent can read</h2>
-<p>co:op hides common secret files, including environment files and private keys, from the container. Check for other private data in your project, including files ignored by Git.</p>
+<p>co:op hides common secret files, including environment files and private keys, from the container. Check for other private data in your project, including files ignored by Git. If you already use VS Code Dev Containers, see <a href="box.html#reusing-a-devcontainer">how workspace mounts and SSH access differ</a>.</p>
 <p class="guide-location">Host terminal · project root</p>
 <ul class="cmds" role="list">
               <li><code data-copy-source>coop check-secrets --include-ignored</code></li>

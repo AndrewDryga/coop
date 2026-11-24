@@ -459,10 +459,26 @@ USER <the devcontainer's non-root user>
 # If that user's home isn't /home/node, run with COOP_HOME_IN_BOX=/home/<user>.
 ```
 
-co:op adds secret hiding, its container restrictions, the task queue and the supervisor that runs
-it. A devcontainer alone mounts the whole workspace, including `.env`, and a malicious project
-running under `--dangerously-skip-permissions` can send the contents of `~/.claude` outside your
-machine. Don't rely on the devcontainer alone to protect those files.
+Reusing the image gives the agent your team's tools. What it can read also depends on what
+you mount. VS Code Dev Containers normally shares the workspace when you use an image or
+Dockerfile. A project `.env` can be readable through that mount even if Git ignores it.
+You can [mount a narrower folder](https://code.visualstudio.com/remote/advancedcontainers/change-default-source-mount).
+
+VS Code can also [forward a running SSH agent](https://code.visualstudio.com/remote/advancedcontainers/sharing-git-credentials).
+That lets tools in the container use a loaded key while the key file stays on your computer.
+With co:op, the [SSH agent stays outside by default](#ssh-keys-and-agent-forwarding) and
+[common secret files are hidden](#hiding-secrets).
+
+### Other ways to run Claude Code
+
+Claude Code’s [built-in sandbox](https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox)
+restricts its shell commands. Its file tools have separate permission rules.
+To put the Claude Code process itself inside a container, you can use a devcontainer or co:op.
+[Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) also offers a local microVM for running coding agents.
+
+Whichever setup you choose, try it on a disposable checkout. The
+[Claude Code walkthrough](https://coop.dryga.com/claude-code-sandbox.html#shadow-secret) includes
+a fake secret and a README you can use to check which files the agent can actually read.
 
 ## Project services
 
