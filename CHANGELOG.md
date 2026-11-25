@@ -4,6 +4,9 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Codex editor sessions register each shared MCP server once. Zed now shows genuine startup
+  errors without a failed card for each server already configured by Coop.
+
 ## 15.4.1
 
 - **Updated the Claude and Codex editor adapters.** Claude editor sessions can start when

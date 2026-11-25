@@ -156,7 +156,7 @@ func TestACPChildrenRequestTheirOwnMCPHandoff(t *testing.T) {
 				t.Fatal("editor child has no shared tool projection")
 			}
 			servers, err := child.MCPServers()
-			if err != nil || len(servers) != 1 || servers[0]["name"] != "shared" {
+			if err != nil || len(servers.Forwarded) != 1 || servers.Forwarded[0]["name"] != "shared" {
 				t.Fatalf("read child-produced tools = %v, %v", servers, err)
 			}
 			child.Stop()

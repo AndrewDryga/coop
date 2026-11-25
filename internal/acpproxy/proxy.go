@@ -32,6 +32,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
 // Child is one run of the agent adapter (one container). The proxy writes ACP to In
@@ -57,7 +59,7 @@ type Child struct {
 	HoldPrompts bool
 	// MCPServers returns this child's final shared tool projection, after initialize. The caller
 	// owns credential rendering; the proxy adds it only to wire-bound session setup, never snapshots.
-	MCPServers func() ([]map[string]any, error)
+	MCPServers func() (mcp.SessionServers, error)
 	// Launched reports whether this child's box has started, for watchFirstAnswer. Nil if it cannot tell.
 	Launched func() bool
 	// WaitsForLock reports that this child says it waits for the project's service launch lock. Nil if

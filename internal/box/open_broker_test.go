@@ -267,7 +267,7 @@ func TestAnOpenSessionHandsOverStandInsAndNothingElse(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "handoff.json")
 	child := spec
 	child.RunID, child.NetworkClient = "session-run-1", egress.ClientACP
-	if err := handOffSessionMCP(child, target, snapshot, broker.mcpStandIns(cfg, spec)); err != nil {
+	if err := handOffSessionMCP(child, target, snapshot, agents.MCPConfig{}, broker.mcpStandIns(cfg, spec)); err != nil {
 		t.Fatal(err)
 	}
 	data := string(mustReadFile(t, target))

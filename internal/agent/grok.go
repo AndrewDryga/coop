@@ -780,8 +780,8 @@ func (grokAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 
 // ACPMCPServers is nil: this agent's ACP adapter reads the config.toml MCP mounts,
 // so passing the servers again would register every one of them twice.
-func (grokAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[string]any, error) {
-	return nil, nil
+func (grokAgent) ACPMCPServers(MCPConfig, string, func(string) (string, bool)) (mcp.SessionServers, error) {
+	return mcp.SessionServers{}, nil
 }
 
 // EnsureDefaults is a no-op: grok launches in the mounted repo (a project dir) with its

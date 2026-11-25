@@ -1031,8 +1031,8 @@ func ensureGeminiBoxDefaults(settingsJSON string, disableWebTools bool) (string,
 
 // ACPMCPServers is nil: this agent's ACP adapter reads the settings.json MCP mounts,
 // so passing the servers again would register every one of them twice.
-func (geminiAgent) ACPMCPServers(string, func(string) (string, bool)) ([]map[string]any, error) {
-	return nil, nil
+func (geminiAgent) ACPMCPServers(MCPConfig, string, func(string) (string, bool)) (mcp.SessionServers, error) {
+	return mcp.SessionServers{}, nil
 }
 
 func (geminiAgent) DefaultsPublication(*config.Config) ([]ConfigPublication, error) { return nil, nil }

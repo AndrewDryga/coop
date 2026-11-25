@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
 func TestProjectSessionMCP(t *testing.T) {
@@ -28,7 +30,7 @@ func TestProjectSessionMCP(t *testing.T) {
 	} {
 		for _, method := range []string{"session/new", "session/load", "session/resume"} {
 			t.Run(tc.name+"/"+method, func(t *testing.T) {
-				child := &Child{MCPServers: func() ([]map[string]any, error) { return shared, nil }}
+				child := &Child{MCPServers: func() (mcp.SessionServers, error) { return mcp.SessionServers{Forwarded: shared}, nil }}
 				original := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":"setup","method":%q,"params":{"cwd":"/work","sessionId":"S1","mcpServers":%s,"extension":{"keep":true}}}`+"\n", method, tc.servers))
 				before := clone(original)
 				line, err := projectSessionMCP(child, original)
@@ -58,7 +60,7 @@ func TestProjectSessionMCP(t *testing.T) {
 			})
 		}
 	}
-	failed := &Child{MCPServers: func() ([]map[string]any, error) { return nil, errors.New("foreign handoff") }}
+	failed := &Child{MCPServers: func() (mcp.SessionServers, error) { return mcp.SessionServers{}, errors.New("foreign handoff") }}
 	if _, err := projectSessionMCP(failed, []byte(`{"id":1,"method":"session/new","params":{}}`)); err == nil {
 		t.Fatal("handoff failure silently became a tool-free session")
 	} else if line := sessionMCPErrorResponse(json.RawMessage(`1`), err); !bytes.Contains(line, []byte(`"code":-32603`)) || !bytes.Contains(line, []byte("reconnect")) {
@@ -75,8 +77,8 @@ func TestProjectSessionMCP(t *testing.T) {
 func TestProxySessionMCPStoresOnlyEditorParams(t *testing.T) {
 	input := &recordingWriteCloser{}
 	var output bytes.Buffer
-	child := &Child{In: input, Provider: "claude", MCPServers: func() ([]map[string]any, error) {
-		return []map[string]any{{"name": "shared", "command": "node", "args": []any{"child-standin"}}}, nil
+	child := &Child{In: input, Provider: "claude", MCPServers: func() (mcp.SessionServers, error) {
+		return mcp.SessionServers{Forwarded: []map[string]any{{"name": "shared", "command": "node", "args": []any{"child-standin"}}}}, nil
 	}}
 	p := &proxy{child: child, out: &output, pending: map[string]bool{}, sessions: map[string]*sess{}}
 	original := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/work","mcpServers":[]}}` + "\n")
@@ -145,8 +147,8 @@ func TestProxyReplayMCPTimeoutReleasesStalledWriter(t *testing.T) {
 			fake.provider = "claude"
 			child := fake.child()
 			defer child.Stop()
-			child.MCPServers = func() ([]map[string]any, error) {
-				return []map[string]any{{"name": "shared", "command": "node", "args": []any{strings.Repeat("x", 512<<10)}}}, nil
+			child.MCPServers = func() (mcp.SessionServers, error) {
+				return mcp.SessionServers{Forwarded: []map[string]any{{"name": "shared", "command": "node", "args": []any{strings.Repeat("x", 512<<10)}}}}, nil
 			}
 			p := &proxy{
 				out: io.Discard, initialize: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"),
@@ -193,7 +195,9 @@ func TestProxySessionMCPSharedAuthority(t *testing.T) {
 	warnOut = &warnings
 	defer func() { warnOut = old }()
 	shared := map[string]any{"name": "emisar", "type": "http", "url": "http://broker/mcp", "headers": []any{map[string]any{"name": "Authorization", "value": "Bearer stand-in"}}}
-	child := &Child{In: input, Provider: "claude", MCPServers: func() ([]map[string]any, error) { return []map[string]any{shared}, nil }}
+	child := &Child{In: input, Provider: "claude", MCPServers: func() (mcp.SessionServers, error) {
+		return mcp.SessionServers{Forwarded: []map[string]any{shared}}, nil
+	}}
 	p := &proxy{child: child, out: &output, pending: map[string]bool{}, sessions: map[string]*sess{}}
 	original := []byte(`{"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"/work","mcpServers":[{"name":"emisar","command":"/usr/local/bin/emisar-mcp","args":[],"env":[{"name":"EMISAR_API_KEY","value":"editor-private-token"}]},{"name":"other","command":"node","args":[],"env":[]}]}}` + "\n")
 	p.forwardClient(original, originEditor)
@@ -219,10 +223,43 @@ func TestProxySessionMCPSharedAuthority(t *testing.T) {
 		t.Fatalf("replacement warning missing or exposes credentials: %s", warnings.String())
 	}
 	// An invalid shared handoff cannot silently pick whichever duplicate came last.
-	child.MCPServers = func() ([]map[string]any, error) {
-		return []map[string]any{shared, {"name": "emisar", "command": "conflicting"}}, nil
+	child.MCPServers = func() (mcp.SessionServers, error) {
+		return mcp.SessionServers{Forwarded: []map[string]any{shared, {"name": "emisar", "command": "conflicting"}}}, nil
 	}
 	if _, err := projectSessionMCP(child, original); err == nil {
 		t.Fatal("conflicting shared definitions accepted")
+	}
+}
+
+func TestSessionSetupForwardsOnlyEditorToolsAbsentFromNativeConfig(t *testing.T) {
+	child := &Child{Provider: "codex", MCPServers: func() (mcp.SessionServers, error) {
+		return mcp.SessionServers{UnderscoreWhitespace: true, NativeNames: []string{"coop-tasks", "emisar", "native_tool"}}, nil
+	}}
+	for _, method := range []string{"session/new", "session/load", "session/resume"} {
+		original := []byte(fmt.Sprintf(`{"id":1,"method":%q,"params":{"mcpServers":[{"name":"emisar","command":"host-private"},{"name":"native\u2003tool","command":"shadow"},{"name":"chrome-devtools","command":"editor-only"}]}}`+"\n", method))
+		line, err := projectSessionMCP(child, original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var params struct {
+			Servers []map[string]string `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(parse(line).Params, &params); err != nil {
+			t.Fatal(err)
+		}
+		if len(params.Servers) != 1 || params.Servers[0]["name"] != "chrome-devtools" || params.Servers[0]["command"] != "editor-only" || !bytes.HasSuffix(line, []byte("\n")) {
+			t.Fatalf("%s forwarded %s", method, line)
+		}
+		if !bytes.Contains(original, []byte("host-private")) {
+			t.Fatal("rewrote saved editor parameters")
+		}
+	}
+	conflict := []byte(`{"id":1,"method":"session/new","params":{"mcpServers":[{"name":"emisar","command":"a"},{"name":"emisar","command":"b"}]}}`)
+	if _, err := projectSessionMCP(child, conflict); err == nil {
+		t.Fatal("accepted conflicting editor definitions for a native server")
+	}
+	aliases := []byte(`{"id":1,"method":"session/new","params":{"mcpServers":[{"name":"native tool","command":"a"},{"name":"native_tool","command":"b"}]}}`)
+	if _, err := projectSessionMCP(child, aliases); err == nil {
+		t.Fatal("accepted conflicting editor aliases for a native server")
 	}
 }

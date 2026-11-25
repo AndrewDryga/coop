@@ -17,6 +17,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/config"
 	"github.com/AndrewDryga/coop/internal/egress"
+	"github.com/AndrewDryga/coop/internal/mcp"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -557,13 +558,9 @@ type Agent interface {
 	// workdir is the resolved box cwd so a generated native overlay can carry the same prompt-free
 	// defaults as EnsureDefaults without mutating the host before every scoped adapter validates.
 	MCP(cfg *config.Config, workdir string) (MCPConfig, error)
-	// ACPMCPServers is the same servers as the ACP session parameter, for an adapter that
-	// cannot be pointed at a file: it takes no flags, so a mount MCP already covers is no
-	// use to it. Nil for every agent whose adapter reads what MCP mounts — sending the list
-	// as well would register each server twice. mcpFile is the mcp.json THIS session runs
-	// with, which is not always the shared one; lookupEnv resolves a bearer_token_env_var
-	// against the environment that session's box gets, since ACP carries headers only.
-	ACPMCPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[string]any, error)
+	// ACPMCPServers projects tools for a session using the lead's actual native wiring.
+	// lookupEnv resolves references against the environment supplied to the box.
+	ACPMCPServers(wiring MCPConfig, mcpFile string, lookupEnv func(string) (string, bool)) (mcp.SessionServers, error)
 	// EnsureDefaults pre-answers the agent's first-run prompts (theme, folder-trust,
 	// sandbox) in its config dir so a fresh box goes straight to work. A present invalid
 	// settings file is an error, never an empty default. workdir is the resolved box cwd.

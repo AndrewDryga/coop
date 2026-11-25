@@ -1316,9 +1316,6 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		// Without a broker the box carries its MCP environment itself, and its list reads it the same way.
 		standIns = mcpStandIns{kept: effectiveMCPEnv(cfg, spec)}
 	}
-	if err := handOffSessionMCP(spec, os.Getenv(SessionMCPHandoffEnv), snapshotPath, standIns); err != nil {
-		return -1, err
-	}
 	configAgents := credentialScope(cfg, spec)
 	configForAgent := cfg
 	if !mcpPresent {
@@ -1333,6 +1330,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		wiring agents.MCPConfig
 	}
 	generated := make([]generatedMCP, 0, len(configAgents))
+	var leadWiring agents.MCPConfig
 	var requiredMCPEnv []string
 	for _, name := range configAgents {
 		ag, _ := agents.Get(name)
@@ -1350,8 +1348,15 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 		if genErr != nil {
 			return -1, fmt.Errorf("assemble MCP config for %s: %w", name, genErr)
 		}
+		if name == spec.Agent {
+			leadWiring = wiring
+		}
 		generated = append(generated, generatedMCP{name: name, wiring: wiring})
 		requiredMCPEnv = append(requiredMCPEnv, wiring.RequiredEnv...)
+	}
+
+	if err := handOffSessionMCP(spec, os.Getenv(SessionMCPHandoffEnv), snapshotPath, leadWiring, standIns); err != nil {
+		return -1, err
 	}
 
 	for _, item := range generated {

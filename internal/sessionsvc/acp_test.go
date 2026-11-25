@@ -931,17 +931,16 @@ func TestAnOfflineSessionHasNoMCPServers(t *testing.T) {
 	}
 }
 
-// Codex reads authority from the generated [mcp_servers.*] file, while
-// codex-acp 1.7 also requires the exact session inventory in mcpServers. The
-// adapter deduplicates the mounted name before constructing Codex config.
-func TestACodexSessionIsHandedItsMountedMCPInventory(t *testing.T) {
-	fixture := newSessionACPFixture(t, "normal")
+// Codex reads its controller tool from the native config. Only the forwarded
+// part of the child's handoff belongs on session/new.
+func TestACodexSessionLeavesItsMountedToolOutOfACP(t *testing.T) {
+	fixture := newSessionACPFixture(t, "native-mcp")
 	leased := fixture.submitWithTools(t, "first prompt")
 	if _, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, leased); err != nil {
 		t.Fatal(err)
 	}
-	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != sessionTestStandIns {
-		t.Fatalf("codex session/new mcpServers = %s, want %s", got, sessionTestStandIns)
+	if got := sessionACPRequestMCPServers(t, fixture.childLog, "session/new"); got != "[]" {
+		t.Fatalf("codex session/new mcpServers = %s, want []", got)
 	}
 }
 
@@ -3732,7 +3731,12 @@ func TestSessionACPChildHelper(t *testing.T) {
 		if private, err := os.ReadFile(filepath.Join(os.Getenv("COOP_CONFIG_DIR"), "mcp.json")); err != nil || !strings.Contains(string(private), `"`+mcp.ControllerToolsServer+`"`) {
 			servers = []map[string]any{}
 		}
-		data, _ := json.Marshal(map[string]any{"run_id": os.Getenv("COOP_SESSION_RUN_ID"), "gateway_epoch": "epoch", "mcpServers": servers})
+		handoffData := map[string]any{"run_id": os.Getenv("COOP_SESSION_RUN_ID"), "gateway_epoch": "epoch", "mcpServers": servers}
+		if scenario == "native-mcp" && len(servers) > 0 {
+			handoffData["mcpServers"] = []map[string]any{}
+			handoffData["nativeMCPServerNames"] = []string{mcp.ControllerToolsServer}
+		}
+		data, _ := json.Marshal(handoffData)
 		if os.WriteFile(handoff, data, 0o600) != nil {
 			os.Exit(2)
 		}

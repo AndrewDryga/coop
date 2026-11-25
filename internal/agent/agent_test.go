@@ -1432,10 +1432,7 @@ func TestManagedClientDefaultsAreBoxOnly(t *testing.T) {
 	}
 }
 
-// Every registered agent reaches the shared servers through at least one route:
-// a generated config file its adapter reads, the ACP session parameter, or both
-// where the adapter deduplicates mounted names but still requires a session
-// inventory (codex-acp 1.7).
+// Each adapter can reach shared tools through its mounted config or through ACP.
 func TestEveryAgentReachesTheSharedServersThroughItsSupportedRoutes(t *testing.T) {
 	dir := t.TempDir()
 	mcpFile := filepath.Join(dir, "mcp.json")
@@ -1447,13 +1444,13 @@ func TestEveryAgentReachesTheSharedServersThroughItsSupportedRoutes(t *testing.T
 		if err != nil {
 			t.Fatalf("%s MCP = %v", name, err)
 		}
-		servers, err := ag.ACPMCPServers(mcpFile, func(string) (string, bool) { return "", false })
+		servers, err := ag.ACPMCPServers(wiring, mcpFile, func(string) (string, bool) { return "", false })
 		if err != nil {
 			t.Fatalf("%s ACPMCPServers = %v", name, err)
 		}
-		if len(wiring.Mounts) == 0 && len(servers) == 0 {
+		if len(wiring.Mounts) == 0 && len(servers.Forwarded) == 0 {
 			t.Errorf("%s: %d generated mount(s) and %d ACP server(s); want at least one route",
-				name, len(wiring.Mounts), len(servers))
+				name, len(wiring.Mounts), len(servers.Forwarded))
 		}
 	}
 }
@@ -1469,7 +1466,7 @@ func TestCodexRefusesAnSSEServerBeforeItsACPSessionStarts(t *testing.T) {
 	mustWrite(t, mcpFile, `{"mcpServers":{"legacy":{"type":"sse","url":"https://a.example/sse"}}}`)
 
 	codex, _ := Get("codex")
-	_, err := codex.ACPMCPServers(mcpFile, nil)
+	_, err := codex.ACPMCPServers(MCPConfig{}, mcpFile, nil)
 	if err == nil || !strings.Contains(err.Error(), "codex-acp refuses") {
 		t.Fatalf("codex ACPMCPServers = %v, want a refusal naming the server", err)
 	}
@@ -1485,38 +1482,89 @@ func TestCodexRefusesAnSSEServerBeforeItsACPSessionStarts(t *testing.T) {
 			continue
 		}
 		agent, _ := Get(name)
-		servers, err := agent.ACPMCPServers(mcpFile, nil)
+		servers, err := agent.ACPMCPServers(MCPConfig{}, mcpFile, nil)
 		if err != nil {
 			t.Errorf("%s refused an SSE server its client accepts: %v", name, err)
 		}
 		switch name {
 		case "claude":
-			if len(servers) != 1 || servers[0]["type"] != "sse" {
+			if len(servers.Forwarded) != 1 || servers.Forwarded[0]["type"] != "sse" {
 				t.Errorf("claude did not carry the SSE declaration: %+v", servers)
 			}
 		default:
-			if servers != nil {
+			if servers.Forwarded != nil {
 				t.Errorf("%s declares ACP servers now; this test assumed it reads the mount: %+v", name, servers)
 			}
 		}
 	}
 }
 
-// codex-acp 1.7 treats session/new.mcpServers as the session's MCP inventory and
-// startup contract. The mounted config remains Codex's authority source, while
-// this exact ACP declaration makes those same servers callable and observable in
-// the session; codex-acp deduplicates names already present in config.toml.
-func TestCodexACPDeclaresTheMountedSharedServers(t *testing.T) {
+func TestCodexACPReservesNamesFromTheMountedConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{ConfigDir: dir, HomeInBox: "/home/node"}
+	codex, _ := Get("codex")
+	settings, err := cfg.AgentSettingsDir("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(settings, 0700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(settings, "config.toml"), `[mcp_servers."user.tool"]
+command = "disabled-command"
+enabled = false
+`)
+	shared := filepath.Join(dir, "shared.json")
+	mustWrite(t, shared, `{"mcpServers":{"shared":{"url":"https://fixture.example/mcp","bearer_token_env_var":"TOKEN"}}}`)
+	for _, tc := range []struct{ source, name string }{{"", "user.tool"}, {shared, "shared"}} {
+		cfg.MCPFile = tc.source
+		wiring, err := codex.MCP(cfg, "/workspace")
+		if err != nil {
+			t.Fatal(err)
+		}
+		servers, err := codex.ACPMCPServers(wiring, tc.source, func(string) (string, bool) { t.Fatal("looked up a native server credential"); return "", false })
+		if err != nil || len(servers.Forwarded) != 0 || !slices.Equal(servers.NativeNames, []string{tc.name}) {
+			t.Fatalf("Codex session MCP = %+v, %v", servers, err)
+		}
+	}
+}
+
+func TestCodexACPForwardsSharedNamesThatOnlyTheAdapterCanNormalize(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "shared.json")
+	cfg := &config.Config{ConfigDir: dir, MCPFile: shared, HomeInBox: "/home/node"}
+	codex, _ := Get("codex")
+	mustWrite(t, shared, `{"mcpServers":{"native":{"command":"node"},"second name":{"command":"other"}}}`)
+	wiring, err := codex.MCP(cfg, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers, err := codex.ACPMCPServers(wiring, shared, nil)
+	if err != nil || !slices.Equal(servers.NativeNames, []string{"native"}) || len(servers.Forwarded) != 1 || servers.Forwarded[0]["name"] != "second name" || servers.Forwarded[0]["command"] != "other" {
+		t.Fatalf("mixed native and forwarded names = %+v, %v", servers, err)
+	}
+	mustWrite(t, shared, `{"mcpServers":{"second_name":{"command":"node"},"second name":{"command":"other"}}}`)
+	wiring, err = codex.MCP(cfg, "/workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := codex.ACPMCPServers(wiring, shared, nil); err == nil {
+		t.Fatal("accepted conflicting normalized shared names")
+	}
+}
+
+// Without a native config mount the adapter needs complete definitions through ACP.
+func TestCodexACPForwardsSharedServersWithoutAMount(t *testing.T) {
 	dir := t.TempDir()
 	mcpFile := filepath.Join(dir, "mcp.json")
 	mustWrite(t, mcpFile, `{"mcpServers":{"emisar":{"command":"emisar-mcp","env":{"EMISAR_URL":"https://emisar.example","EMISAR_API_KEY":"secret"}}}}`)
 	agent, _ := Get("codex")
 
-	servers, err := agent.ACPMCPServers(mcpFile, nil)
+	servers, err := agent.ACPMCPServers(MCPConfig{}, mcpFile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := json.Marshal(servers)
+	got, err := json.Marshal(servers.Forwarded)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1709,17 +1757,17 @@ func TestCodexACPResolvesHTTPHeaders(t *testing.T) {
 				}
 			}
 			agent, _ := Get("codex")
-			servers, err := agent.ACPMCPServers(file, lookup)
+			servers, err := agent.ACPMCPServers(MCPConfig{}, file, lookup)
 			if test.drop {
-				if err != nil || len(servers) != 0 {
+				if err != nil || len(servers.Forwarded) != 0 {
 					t.Fatalf("header refusal: %v", err)
 				}
 				return
 			}
-			if err != nil || len(servers) != 1 {
+			if err != nil || len(servers.Forwarded) != 1 {
 				t.Fatalf("servers: %+v %v", servers, err)
 			}
-			headers := servers[0]["headers"].([]map[string]any)
+			headers := servers.Forwarded[0]["headers"].([]map[string]any)
 			if len(headers) != 1 || headers[0]["name"] != "X-Token" || headers[0]["value"] != test.want {
 				t.Fatalf("outgoing headers: %+v", headers)
 			}

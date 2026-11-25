@@ -3103,7 +3103,7 @@ func (r *sessionTurnRunner) runACP(
 			if err != nil {
 				return "", nil, session.Usage{}, "", errors.Join(acpFailure(sessionACPCredentialError, "the session child handed over no MCP servers"), err)
 			}
-			process.mcpServers, process.mcpHandoff = servers, ""
+			process.mcpServers, process.mcpHandoff = servers.Forwarded, ""
 		}
 		mcpServers := sessionACPMCPServerParam(process.mcpServers)
 		nativeID := bound.NativeSessionID

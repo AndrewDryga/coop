@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
@@ -279,6 +280,28 @@ func separateTOMLBlock(b *strings.Builder) {
 	default:
 		b.WriteString("\n\n")
 	}
+}
+
+// SessionServers describes the child's two sources of MCP tools. Only Forwarded
+// travels over ACP. Native names prevent an editor from forwarding a second
+// definition for a server the adapter already reads from its mounted config.
+type SessionServers struct {
+	Forwarded            []map[string]any `json:"mcpServers"`
+	NativeNames          []string         `json:"nativeMCPServerNames,omitempty"`
+	UnderscoreWhitespace bool             `json:"underscoreWhitespace,omitempty"`
+}
+
+// WireName matches an editor definition with the identity its adapter will use.
+func (s SessionServers) WireName(name string) string {
+	if !s.UnderscoreWhitespace {
+		return name
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return '_'
+		}
+		return r
+	}, name)
 }
 
 // ACPServers renders the shared servers as the list an ACP session/new (and the identical

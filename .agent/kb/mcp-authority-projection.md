@@ -3,7 +3,7 @@ name: mcp-authority-projection
 description: one validated shared snapshot fans out to native configs, direct command args, nested wrappers, and ACP without widening credential scope
 subsystem: box
 sources: [internal/mcp/mcp.go, internal/mcp/broker.go, internal/config/config.go, internal/box/mcp_broker.go, internal/box/open_broker.go, internal/networkgateway/open_broker.go, internal/agent/agent.go, internal/agent/claude.go, internal/agent/codex.go, internal/agent/gemini.go, internal/agent/grok.go, internal/box/auth.go, internal/box/run.go, internal/box/mcp_env.go, internal/box/taskchannel.go, internal/consult/wrapper.go, internal/preset/wrapper.go, internal/sessionsvc/acp.go, internal/cli/acp_cmd.go, internal/cli/eval_loop.go, internal/acpproxy/mcp.go, internal/acpproxy/proxy.go, internal/box/launch_sections.go, internal/box/credential_broker.go, internal/networkgateway/service.go, internal/networkgateway/credential_broker.go, internal/runtime/runtime.go, internal/box/filtered.go]
-updated: 2026-11-17
+updated: 2026-11-25
 ---
 
 `COOP_MCP_FILE` is one host authority, but a box has four different consumers. `box.Run` captures
@@ -11,17 +11,19 @@ and validates it once, then calls each credential-scoped adapter's `MCP` transfo
 any agent home. Generated native configs are immutable mounts; an outer ordinary CLI gets
 `MCPConfig.CommandArgs`; a peer or runnable preset role gets adapter-owned
 `NestedCommandEnv` consumed by its consult/delegate fragments; an ACP adapter receives servers
-through `ACPMCPServers` on `session/new` and `session/load` — codex-acp (recorded on 1.7; the pin is now 2.6.0) needs them there as well as
-in `config.toml` and deduplicates the two routes itself (`internal/agent/codex.go`). These are projections of the same snapshot,
-not separate sources.
+through `ACPMCPServers` on session setup when the adapter requires it. Codex ACP reads native
+tools from the generated TOML. Its handoff carries their names so the proxy can omit overlapping
+editor entries, including a disabled native entry. Shared names containing whitespace still travel through ACP because the adapter replaces
+whitespace with underscores before native Codex starts them. Without a config mount the complete
+shared list travels over ACP.
 
 Editor ACP children request the same final handoff as daemon children. Each editor generation owns
 a private path under the protected Coop runfiles root and MCPHandoffID, separate from runtime RunID
 so service ownership does not change. Never use system TMPDIR for this handoff: an older box may
 already have a broad bind of it.
-The proxy adds its child's final list only to wire-bound new/load/resume and replay/recreate requests;
+The proxy applies its child's final inventory only to wire-bound new/load/resume and replay/recreate requests;
 saved parameters remain the editor's originals. Replacement children therefore render new broker
-endpoints/stand-ins. Distinct editor servers survive. A shared server takes precedence over an editor server with the
+endpoints/stand-ins. Distinct editor servers survive. A stdio command supplied by the editor executes inside the box. A macOS Homebrew path forwarded by Zed fails there with ENOENT. A shared server takes precedence over an editor server with the
 same name, retaining the child's brokered endpoint and stand-ins; a server-name-only warning explains
 the replacement. Identical definitions deduplicate. Conflicting duplicates within either source
 still refuse setup. Missing/invalid/foreign handoffs fail visibly; catalog-only probes request
@@ -223,6 +225,10 @@ including `${...}` syntax; Codex does not run a second expansion after the share
 Native Codex TOML still owns its distinct exact-reference restriction.
 
 ## Changelog
+
+- 2026-11-25 — Codex ACP 2.11.0 reported every forwarded native name as a failed startup even
+  when the tool worked. A local Responses and MCP fixture confirmed a native-only tool call and a
+  genuine forwarded command failure in the same session.
 - 2026-11-17 — Grok and Gemini now require every header `${VAR}`, as Codex does (owner decision on audit find AP-2); `headerEnvNames` in internal/mcp/mcp.go.
 - 2026-11-17 — dated the client-version observations as captures and named the current pins (audit K3-5; checked the pins in internal/agent/codex.go, grok.go, claude.go); sources gain the files its named symbols live in (audit K3-7).
 - 2026-11-06 — security review follow-up: the scrub also reads the file `COOP_MCP_FILE` chose when

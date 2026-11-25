@@ -327,9 +327,9 @@ func (p *credentialPlan) checkBrokerServePorts(serve []int) error {
 // sessionMCPHandoff is what a session child hands the daemon: the final ACP mcpServers list for its
 // lead adapter, bound to the run and broker generation that minted its stand-ins.
 type sessionMCPHandoff struct {
-	RunID      string           `json:"run_id"`
-	Epoch      string           `json:"gateway_epoch"`
-	MCPServers []map[string]any `json:"mcpServers"`
+	RunID string `json:"run_id"`
+	Epoch string `json:"gateway_epoch"`
+	mcp.SessionServers
 }
 
 // mcpStandIns is what a session handoff resolves the box's MCP variables with: each brokered
@@ -357,7 +357,7 @@ func (f *filteredExecution) mcpStandIns() mcpStandIns {
 // handOffSessionMCP answers the daemon's request (target, from SessionMCPHandoffEnv) when this run is
 // a session child: only the child knows the listeners and stand-ins, and the daemon must never render
 // its ACP list from the real private env. Any other run writes nothing.
-func handOffSessionMCP(spec RunSpec, target, snapshotPath string, standIns mcpStandIns) error {
+func handOffSessionMCP(spec RunSpec, target, snapshotPath string, wiring agents.MCPConfig, standIns mcpStandIns) error {
 	if target == "" || spec.networkClient() != egress.ClientACP {
 		return nil
 	}
@@ -369,17 +369,17 @@ func handOffSessionMCP(spec RunSpec, target, snapshotPath string, standIns mcpSt
 	if spec.MCPHandoffID != "" {
 		identity = spec.MCPHandoffID
 	}
-	return writeSessionMCPHandoff(target, identity, lead, snapshotPath, standIns)
+	return writeSessionMCPHandoff(target, identity, lead, snapshotPath, wiring, standIns)
 }
 
 // writeSessionMCPHandoff renders the lead adapter's ACP mcpServers from the box's own snapshot —
 // listeners and stand-ins for every brokered server, never a real token Coop kept out of the box —
 // and writes them where the daemon asked, atomically and owner-only, before the container starts.
-func writeSessionMCPHandoff(target, runID string, lead agents.Agent, snapshotPath string, standIns mcpStandIns) error {
+func writeSessionMCPHandoff(target, runID string, lead agents.Agent, snapshotPath string, wiring agents.MCPConfig, standIns mcpStandIns) error {
 	if !filepath.IsAbs(target) {
 		return errors.New("the session's MCP handoff path must be absolute")
 	}
-	servers, err := lead.ACPMCPServers(snapshotPath, func(key string) (string, bool) {
+	servers, err := lead.ACPMCPServers(wiring, snapshotPath, func(key string) (string, bool) {
 		if value, ok := standIns.values[key]; ok {
 			return value, true
 		}
@@ -389,10 +389,10 @@ func writeSessionMCPHandoff(target, runID string, lead agents.Agent, snapshotPat
 	if err != nil {
 		return err
 	}
-	if servers == nil {
-		servers = []map[string]any{}
+	if servers.Forwarded == nil {
+		servers.Forwarded = []map[string]any{}
 	}
-	data, err := json.Marshal(sessionMCPHandoff{RunID: runID, Epoch: standIns.epoch, MCPServers: servers})
+	data, err := json.Marshal(sessionMCPHandoff{RunID: runID, Epoch: standIns.epoch, SessionServers: servers})
 	if err != nil {
 		return err
 	}
@@ -404,21 +404,21 @@ func writeSessionMCPHandoff(target, runID string, lead agents.Agent, snapshotPat
 
 // ReadSessionMCPHandoff is the daemon's side of the handoff: one bounded, owner-only regular file,
 // written by this run's own child — a stale or foreign run's list never becomes this session's.
-func ReadSessionMCPHandoff(path, runID string) ([]map[string]any, error) {
+func ReadSessionMCPHandoff(path, runID string) (mcp.SessionServers, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, fmt.Errorf("the session child handed over no MCP servers: %w", err)
+		return mcp.SessionServers{}, fmt.Errorf("the session child handed over no MCP servers: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() > 4<<20 {
-		return nil, errors.New("the session child's MCP handoff is not an owner-only regular file")
+		return mcp.SessionServers{}, errors.New("the session child's MCP handoff is not an owner-only regular file")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return mcp.SessionServers{}, err
 	}
 	var handoff sessionMCPHandoff
-	if err := json.Unmarshal(data, &handoff); err != nil || handoff.RunID == "" || handoff.RunID != runID || handoff.MCPServers == nil {
-		return nil, errors.New("the session child's MCP handoff belongs to another run")
+	if err := json.Unmarshal(data, &handoff); err != nil || handoff.RunID == "" || handoff.RunID != runID || handoff.Forwarded == nil {
+		return mcp.SessionServers{}, errors.New("the session child's MCP handoff belongs to another run")
 	}
-	return handoff.MCPServers, nil
+	return handoff.SessionServers, nil
 }

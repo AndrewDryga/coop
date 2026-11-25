@@ -4,7 +4,7 @@ description: "a new internal import edge is an architecture decision — the all
 scope: architecture
 sources: [internal, internal/importdag_test.go]
 check: "go test ./internal -run TestInternalImportDAG"
-updated: 2026-11-20
+updated: 2026-11-25
 ---
 
 # A new internal import edge is an architecture decision, not a convenience
@@ -469,3 +469,6 @@ this one has it.
   admission and worker execution. `workerproto` imports `agent` for canonical target parsing and
   `preset` for the recipe and lead-role compatibility checks. Decoding a job uses only those
   in-memory functions. `sessionsvc` stores the validated `preset` on its execution policy.
+
+- 2026-11-25 — Added `acpproxy -> mcp` and `cli -> mcp`. The editor proxy consumes the same
+  typed inventory of native and forwarded servers that the CLI reads once from each child.

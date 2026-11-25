@@ -452,15 +452,15 @@ func TestSessionMCPHandoffCarriesOnlyStandInsForItsOwnRun(t *testing.T) {
 	cli := child
 	cli.NetworkClient = egress.ClientCLI
 	for name, handOff := range map[string]func() error{
-		"a CLI box":      func() error { return handOffSessionMCP(cli, target, snapshot, f.mcpStandIns()) },
-		"an unasked run": func() error { return handOffSessionMCP(child, "", snapshot, f.mcpStandIns()) },
+		"a CLI box":      func() error { return handOffSessionMCP(cli, target, snapshot, agents.MCPConfig{}, f.mcpStandIns()) },
+		"an unasked run": func() error { return handOffSessionMCP(child, "", snapshot, agents.MCPConfig{}, f.mcpStandIns()) },
 	} {
 		err := handOff()
 		if _, statErr := os.Stat(target); err != nil || !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("%s handed over MCP servers: %v", name, err)
 		}
 	}
-	if err := handOffSessionMCP(child, target, snapshot, f.mcpStandIns()); err != nil {
+	if err := handOffSessionMCP(child, target, snapshot, agents.MCPConfig{}, f.mcpStandIns()); err != nil {
 		t.Fatal(err)
 	}
 	if data := string(mustReadFile(t, target)); strings.Contains(data, "emisar-secret") ||
@@ -468,7 +468,7 @@ func TestSessionMCPHandoffCarriesOnlyStandInsForItsOwnRun(t *testing.T) {
 		t.Fatalf("handoff = %s", data)
 	}
 	servers, err := ReadSessionMCPHandoff(target, "session-run-1")
-	if err != nil || len(servers) != 3 {
+	if err != nil || len(servers.Forwarded) != 3 {
 		t.Fatalf("read handoff = %v, %v", servers, err)
 	}
 	if _, err := ReadSessionMCPHandoff(target, "another-run"); err == nil {
@@ -486,7 +486,7 @@ func TestEditorMCPHandoffDoesNotChangeServiceOwnership(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "handoff.json")
 	spec := RunSpec{Agent: "claude", NetworkClient: egress.ClientACP,
 		ActivitySource: "editor-supervisor", MCPHandoffID: "acp-0123456789abcdef"}
-	if err := handOffSessionMCP(spec, path, "", mcpStandIns{}); err != nil {
+	if err := handOffSessionMCP(spec, path, "", agents.MCPConfig{}, mcpStandIns{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ReadSessionMCPHandoff(path, spec.MCPHandoffID); err != nil {

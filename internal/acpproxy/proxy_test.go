@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
 // fakeChild backs a Child with in-memory pipes: the test reads inR to see what the
@@ -66,8 +68,8 @@ func (f *fakeChild) child() *Child {
 	child := &Child{In: f.inW, Out: f.outR, Provider: f.provider, HoldPrompts: f.holdPrompts, Launched: f.launched, WaitsForLock: f.waitsForLock, Stop: func() { f.outW.Close(); f.inR.Close() }}
 	if f.mcp != "" {
 		marker := f.mcp
-		child.MCPServers = func() ([]map[string]any, error) {
-			return []map[string]any{{"name": "shared", "command": "node", "args": []any{marker}}}, nil
+		child.MCPServers = func() (mcp.SessionServers, error) {
+			return mcp.SessionServers{Forwarded: []map[string]any{{"name": "shared", "command": "node", "args": []any{marker}}}}, nil
 		}
 	}
 	return child

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 var errSessionMCPHandoff = errors.New("could not configure this session's shared tools; reconnect the Coop editor connection")
@@ -23,7 +24,7 @@ func projectSessionMCP(child *Child, line []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errSessionMCPHandoff, err)
 	}
-	if len(shared) == 0 {
+	if len(shared.Forwarded) == 0 && len(shared.NativeNames) == 0 {
 		return line, nil
 	}
 	var frame, params map[string]json.RawMessage
@@ -37,12 +38,16 @@ func projectSessionMCP(child *Child, line []byte) ([]byte, error) {
 		}
 	}
 	editorCount := len(servers)
-	for _, server := range shared {
+	for _, server := range shared.Forwarded {
 		raw, err := json.Marshal(server)
 		if err != nil {
 			return nil, errors.New("the shared tool projection is invalid")
 		}
 		servers = append(servers, raw)
+	}
+	nativeNames := make(map[string]bool, len(shared.NativeNames))
+	for _, name := range shared.NativeNames {
+		nativeNames[name] = true
 	}
 	seen := map[string][]byte{}
 	positions := map[string]int{}
@@ -64,26 +69,33 @@ func projectSessionMCP(child *Child, line []byte) ([]byte, error) {
 			return nil, errors.New("a session MCP server is invalid")
 		}
 		isShared := i >= editorCount
-		if prior, ok := seen[name]; ok {
+		wireName := shared.WireName(name)
+		if prior, ok := seen[wireName]; ok {
 			if !bytes.Equal(prior, canonical) {
-				if !isShared || sharedNames[name] {
+				if !isShared || sharedNames[wireName] {
 					return nil, fmt.Errorf("MCP server %q has conflicting definitions; use unique names in editor and Coop shared configuration, then reconnect", name)
 				}
 				// Shared tools carry the child's broker endpoints and credential stand-ins.
 				// An editor's host command must not replace that authority or block startup.
-				merged[positions[name]] = raw
-				seen[name] = canonical
+				merged[positions[wireName]] = raw
+				seen[wireName] = canonical
 				fmt.Fprintf(warnOut, "Coop is using its shared MCP server %q instead of the editor's definition.\n", name)
 				Trace("shared MCP server %q replaces the editor definition", name)
 			}
-			sharedNames[name] = sharedNames[name] || isShared
+			sharedNames[wireName] = sharedNames[wireName] || isShared
 			continue
 		}
-		seen[name] = canonical
-		positions[name] = len(merged)
-		sharedNames[name] = isShared
+		seen[wireName] = canonical
+		positions[wireName] = len(merged)
+		sharedNames[wireName] = isShared
+		if !isShared && nativeNames[wireName] {
+			fmt.Fprintf(warnOut, "Coop is using its native MCP server instead of the editor definition %q.\n", name)
+			Trace("native MCP server replaces editor definition %q", name)
+			raw = nil
+		}
 		merged = append(merged, raw)
 	}
+	merged = slices.DeleteFunc(merged, func(server json.RawMessage) bool { return server == nil })
 	params["mcpServers"], err = json.Marshal(merged)
 	if err != nil {
 		return nil, err

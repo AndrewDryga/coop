@@ -26,6 +26,7 @@ import (
 	"github.com/AndrewDryga/coop/internal/egress"
 	"github.com/AndrewDryga/coop/internal/forkctl"
 	"github.com/AndrewDryga/coop/internal/forkspace"
+	"github.com/AndrewDryga/coop/internal/mcp"
 	"github.com/AndrewDryga/coop/internal/preset"
 	"github.com/AndrewDryga/coop/internal/project"
 	"github.com/AndrewDryga/coop/internal/randid"
@@ -1524,13 +1525,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		}
 	}
 	if mcpPath != "" {
-		var once sync.Once
-		var servers []map[string]any
-		var readErr error
-		child.MCPServers = func() ([]map[string]any, error) {
-			once.Do(func() { servers, readErr = box.ReadSessionMCPHandoff(mcpPath, mcpRunID) })
-			return servers, readErr
-		}
+		child.MCPServers = sync.OnceValues(func() (mcp.SessionServers, error) {
+			return box.ReadSessionMCPHandoff(mcpPath, mcpRunID)
+		})
 	}
 	return child, nil
 }

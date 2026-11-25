@@ -1238,27 +1238,53 @@ func (codexAgent) ControllerJobMCP(cfg *config.Config, workdir string) (MCPConfi
 	}, nil
 }
 
-// ACPMCPServers declares the same shared servers to codex-acp. Codex still reads
-// their authority from the generated config.toml mount, while codex-acp 1.7 uses
-// session/new.mcpServers as the session inventory and startup contract. The
-// adapter deduplicates names already present in config.toml.
-//
-// One server can take the whole session down here. The pinned adapter maps a remote entry to
-// codex's own http_headers — so inline headers work — but answers an SSE entry with
-// `RequestError.invalidRequest("Codex doesn't support MCP SSE transport protocol")`, which fails
-// session/new entirely, not just that server. Coop refuses it first, naming the server, because
-// "invalid request" at session start names nothing.
-func (codexAgent) ACPMCPServers(path string, lookupEnv func(string) (string, bool)) ([]map[string]any, error) {
-	servers, err := mcp.ACPServers(path, lookupEnv)
-	if err != nil {
-		return nil, err
-	}
-	for _, server := range servers {
-		if server["type"] == "sse" {
-			return nil, fmt.Errorf("MCP server %q is declared SSE, which codex-acp refuses — give it a streamable HTTP url, or remove it from the shared configuration when only Codex (as lead or peer) is affected", server["name"])
+// Codex ACP reads its native config, including disabled servers. Forward only
+// editor tools with distinct names. With no native mount, ACP owns the shared list.
+func (codexAgent) ACPMCPServers(wiring MCPConfig, path string, lookupEnv func(string) (string, bool)) (mcp.SessionServers, error) {
+	// codex-acp normalizes ACP names before comparing them with literal TOML keys.
+	projection := mcp.SessionServers{UnderscoreWhitespace: true}
+	var native map[string]any
+	if len(wiring.Mounts) != 0 {
+		var config struct {
+			Servers map[string]any `toml:"mcp_servers"`
+		}
+		if err := toml.Unmarshal([]byte(wiring.Mounts[0].Content), &config); err != nil {
+			return projection, fmt.Errorf("read MCP server names from the generated Codex config: %w", err)
+		}
+		native = config.Servers
+		for name := range native {
+			if projection.WireName(name) == name {
+				projection.NativeNames = append(projection.NativeNames, name)
+			}
+		}
+		slices.Sort(projection.NativeNames)
+		// Native Codex cannot start a server with spaces in its name. Only
+		// codex-acp translates that name before giving it to the client.
+		if len(projection.NativeNames) == len(native) || path == "" {
+			return projection, nil
 		}
 	}
-	return servers, nil
+	servers, err := mcp.ACPServers(path, lookupEnv)
+	if err != nil {
+		return mcp.SessionServers{}, err
+	}
+	for _, server := range servers {
+		name := server["name"].(string)
+		if _, mounted := native[name]; mounted {
+			key := projection.WireName(name)
+			if name == key {
+				continue
+			}
+			if _, conflict := native[key]; conflict {
+				return mcp.SessionServers{}, fmt.Errorf("MCP server %q conflicts with %q in Codex ACP; use unique names", name, key)
+			}
+		}
+		if server["type"] == "sse" {
+			return mcp.SessionServers{}, fmt.Errorf("MCP server %q is declared SSE, which codex-acp refuses — give it a streamable HTTP url, or remove it from the shared configuration when only Codex (as lead or peer) is affected", server["name"])
+		}
+		projection.Forwarded = append(projection.Forwarded, server)
+	}
+	return projection, nil
 }
 
 func (codexAgent) DefaultsPublication(*config.Config) ([]ConfigPublication, error) { return nil, nil }

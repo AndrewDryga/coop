@@ -1021,8 +1021,9 @@ func (claudeAgent) MCP(cfg *config.Config, _ string) (MCPConfig, error) {
 // way — 706 tool calls from claude sessions with not one
 // mcp.*, against 924 mcp.emisar.* from codex, which mounts a generated [mcp_servers.*] file — and
 // what the model did instead was curl the API by hand and collect 401s.
-func (claudeAgent) ACPMCPServers(mcpFile string, lookupEnv func(string) (string, bool)) ([]map[string]any, error) {
-	return mcp.ACPServers(mcpFile, lookupEnv)
+func (claudeAgent) ACPMCPServers(_ MCPConfig, mcpFile string, lookupEnv func(string) (string, bool)) (mcp.SessionServers, error) {
+	servers, err := mcp.ACPServers(mcpFile, lookupEnv)
+	return mcp.SessionServers{Forwarded: servers}, err
 }
 
 // ClaudeProjectKey is how Claude Code names a project's session dir: the absolute cwd with
