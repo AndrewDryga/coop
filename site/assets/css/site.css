@@ -1050,3 +1050,59 @@ html:has(.docs-search[open]) { overflow: hidden; }
   .agents button[aria-checked="true"] { border-color: Highlight; }
   .agents::before { display: none; }
 }
+
+/* Sandbox comparisons: the source tables stay readable on GitHub and in search. */
+.reference-table:has(.comparison-table) { container-type: inline-size; }
+.reference-content .comparison-table {
+  min-width: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: .9375rem;
+  line-height: 1.55;
+}
+.reference-content .comparison-table :is(th, td) {
+  min-width: 0;
+  padding: 12px 14px;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.comparison-table thead th { background: var(--surface); font-size: .8125rem; }
+.comparison-table thead th:first-child { border-start-start-radius: 8px; }
+.comparison-table thead th:last-child { border-start-end-radius: 8px; }
+.comparison-table tbody th { color: var(--text); font-weight: 600; border-bottom-color: var(--divider); }
+.comparison-table tbody tr:last-child th { border-bottom: 0; }
+.comparison-table tbody th em {
+  display: block;
+  color: var(--muted);
+  font: normal .8125rem/1.5 var(--mono);
+  margin-top: 2px;
+}
+.comparison-table .comparison-coop, .comparison-table tr.comparison-coop > * {
+  background: color-mix(in srgb, var(--amber) 6%, var(--bg));
+}
+.comparison-table thead .comparison-coop, .comparison-table tr.comparison-coop th strong { color: var(--amber); }
+.comparison-table thead .comparison-coop { box-shadow: inset 0 2px var(--amber); }
+.comparison-table tr.comparison-coop th { box-shadow: inset 2px 0 var(--amber); }
+.comparison-narrative { table-layout: fixed; }
+.comparison-narrative thead th:first-child { width: 22%; }
+@container (max-width: 35rem) {
+  .reference-content .comparison-table :is(th, td) { padding: 9px 6px; }
+  .reference-content .comparison-table code { overflow-wrap: anywhere; }
+  .comparison-table:not(.comparison-narrative) { font-size: .875rem; }
+  .comparison-narrative, .comparison-narrative tbody { display: block; }
+  .comparison-narrative thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .comparison-narrative tbody tr { display: block; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .comparison-narrative tbody tr:last-child { margin-bottom: 0; }
+  .reference-content .comparison-narrative tbody :is(th, td) { display: block; padding: 10px 14px; border: 0; }
+  .comparison-narrative tbody th { background: var(--surface); }
+  .comparison-narrative tbody th em { display: inline; margin-inline-start: .5em; }
+  .comparison-narrative td::before {
+    content: attr(data-label) / "";
+    display: block;
+    color: var(--muted);
+    font-size: .8125rem;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .comparison-narrative td.comparison-coop::before { color: var(--amber); }
+}

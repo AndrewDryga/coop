@@ -1,0 +1,370 @@
+November 24, 2026. Local shell checks. macOS 15.6.1, Apple silicon.
+Codex CLI 0.170.0 and the permissive-open Seatbelt profile bundled with Gemini CLI 0.50.0.
+No model session. No provider credentials or private files were needed for these checks.
+
+Fixture: In a temporary folder in the user's home directory, create a Git repository
+named project and a sibling file named sibling.txt. Use a home-directory fixture so the
+sibling isn't in the operating system's writable temporary directory. From project:
+
+printf %s 'demo-credential-only' > .env.coop-demo
+printf '%s\n' 'outside-project' > ../sibling.txt
+
+Run the following commands first in a plain shell, then under each sandbox profile.
+Use fresh marker files for each attempt. The byte count reveals no file contents.
+
+wc -c .env.coop-demo ../sibling.txt
+touch ./write-check
+touch ../sibling-write-check
+curl -fsS --max-time 6 -o /dev/null -w '%{http_code}' https://example.com/
+
+The Codex prefix for each command was: codex sandbox -P :workspace --
+For Gemini we used /usr/bin/sandbox-exec -f with the installed
+bundle/sandbox-macos-permissive-open.sb, passing the profile parameters with -D:
+TARGET_DIR was the project, TMP_DIR and CACHE_DIR were separate paths in the fixture,
+HOME_DIR pointed to an empty fixture path and INCLUDE_DIR_0 through INCLUDE_DIR_4
+pointed to unused paths there. This exercises this specific policy, separately from
+Gemini's interactive tool permissions, its Docker backend or a model session.
+
+                                         Mac shell    Codex helper    Gemini policy
+Read .env.coop-demo (bytes)                   20              20              20
+Read ../sibling.txt (bytes)                   16              16              16
+Create ./write-check                      exit 0          exit 0          exit 0
+Create ../sibling-write-check             exit 0          exit 1          exit 1
+Fetch example.com                       HTTP 200     curl exit 6        HTTP 200
+
+Both denied writes reported “Operation not permitted”. Codex curl reported “Could not
+resolve host: example.com” with HTTP status 000. Only the host and the Gemini profile
+received an HTTP response. The fixture directory was removed after the checks.
+
+Separate startup check: co:op's Grok Build 1.0.77 Linux client image.
+In a disposable container without network access, a signed-in account or bubblewrap,
+we asked Grok to start its native strict profile with a sample README. It exited 1
+before the task. Excerpts: “bwrap exec failed: No such file or directory” and
+“Refusing to start with denied paths unprotected.” This did not exercise file or
+network enforcement under a successfully started native Grok profile.
+
+Follow-up: do edits and staging have the same permissions?
+
+Same Mac, Codex CLI 0.170.0. Fresh disposable Git checkout initialized with no
+Git template. Output below omits Git's temporary-directory warnings and abbreviates
+the absolute fixture path as <demo>. Each codex command used the native helper.
+
+$ codex sandbox -P :workspace -- touch fix.txt
+exit 0
+$ codex sandbox -P :workspace -- git status --short -- fix.txt
+?? fix.txt
+$ codex sandbox -P :workspace -- git add -- fix.txt
+fatal: Unable to create '<demo>/checkout/.git/index.lock': Operation not permitted
+exit 128
+$ codex sandbox -P :workspace -- git diff --cached --name-only
+(no paths)
+$ git add -- fix.txt
+exit 0
+$ git diff --cached --name-only
+fix.txt
+
+Follow-up: switch the Gemini Seatbelt policy
+
+Same fixture layout and parameter names as above. We used the two profile files
+sandbox-macos-permissive-open.sb and sandbox-macos-strict-open.sb from Gemini
+CLI 0.50.0. Shell reads used /usr/bin/wc, writes used /usr/bin/touch and the
+public URL was fetched with /usr/bin/curl. These are direct policy tests.
+
+                                   permissive-open    strict-open
+Read .env.coop-demo                      20 bytes       20 bytes
+Read ../sibling.txt                      16 bytes    exit 1, operation not permitted
+Create write-check                         exit 0         exit 0
+Create ../sibling-write-check              exit 1         exit 1
+Fetch https://example.com/               HTTP 200       HTTP 200
+
+Follow-up: one-run access to the npm registry
+
+co:op v15.3.1-3-g5421f2f0, Docker, fresh Git checkout with no saved network rules.
+This is an npm metadata lookup from a plain co:op box, without an agent session.
+The first two lookups used the same npm arguments; output excerpts follow.
+
+$ coop run --egress filtered -- npm view is-number@7.0.0 version --registry=https://registry.npmjs.org --fetch-retries=0 --fetch-timeout=5000 --prefer-online
+npm error code EAI_AGAIN
+exit 1
+$ coop net blocked registry.npmjs.org
+registry.npmjs.org was blocked
+No approved rule allowed this DNS lookup. It happened 4 times.
+$ coop run --egress filtered --allow-domain registry.npmjs.org -- npm view is-number@7.0.0 version --registry=https://registry.npmjs.org --fetch-retries=0 --fetch-timeout=5000 --prefer-online
+7.0.0
+Receipt: 2 allowed TLS connections to registry.npmjs.org:443.
+$ coop net check https://registry.npmjs.org
+✗ registry.npmjs.org:443 is blocked — no approved rule allows it.
+exit 3
+
+Follow-up: how much does an SSH command prefix cover?
+
+Codex CLI 0.170.0. Created a temporary file named review.rules with a single
+prompt rule. No user rules were changed. The policy checker compared arguments
+only. It never ran an SSH client or contacted a remote host.
+
+prefix_rule(pattern=["ssh", "staging.example"], decision="prompt")
+
+$ codex execpolicy check --rules review.rules -- ssh staging.example uptime
+Decision: prompt. Matched prefix: ssh staging.example.
+$ codex execpolicy check --rules review.rules -- ssh staging.example date
+Decision: prompt. Matched prefix: ssh staging.example.
+$ codex execpolicy check --rules review.rules -- ssh other.example uptime
+No matching rule in the test file. No decision returned.
+
+The results above summarize the checker's JSON output.
+
+Follow-up: SSH-key paths, project secrets and ordinary HTTPS clients
+
+macOS 15.6.1, Apple silicon, November 24, 2026. Each fixture contained the same
+13 bytes ("fixture-only" and a newline). Files were mode 0600. The shell compared
+each file against the README with cmp -s and reported only whether the bytes
+matched. No real credential file was opened. An unavailable marker can mean
+that a path was hidden, empty, absent, or unreadable.
+
+In the temporary Git checkout:
+  Controls: README.md and .env.example
+  Project secret paths: .env, .env.local, .ssh/id_ed25519, client.pem
+Outside it:
+  First pass: a file named .ssh/id_ed25519 in a neighboring mock home.
+  Second pass: one newly created file named id_ed25519 in a private temporary
+  subdirectory under the Mac user's actual .ssh directory. Only that exact
+  fixture was checked. The subdirectory and fixture were removed afterward.
+
+Both network clients issued ordinary HTTPS HEAD requests to https://example.com/.
+No credentials, fixture bytes or request body were sent. Node used its built-in
+fetch with an 8-second timeout. The unsandboxed Mac returned HTTP 200 to both.
+
+Each result below is ordered as follows:
+  project secrets (number readable out of four), controls (out of two),
+  mock-home key, actual-home key file, curl from Bash, Node fetch.
+
+Host:                   4/4  2/2  read  read   200              200
+Claude Bash:            4/4  2/2  read  read   proxy denied    ENOTFOUND
+Codex workspace:        4/4  2/2  read  read   DNS failed      ENOTFOUND
+Gemini permissive-open: 4/4  2/2  read  read   200             200
+Gemini strict-open:     4/4  2/2  none  none   200             200
+co:op filtered:         0/4  2/2  none  none   DNS failed      EAI_AGAIN
+
+Claude Code 2.1.312: actual Bash tool output in two fresh sessions. Sandbox
+enabled, failIfUnavailable true, allowUnsandboxedCommands false, allowedDomains
+empty. curl reported CONNECT response 403 and the sandbox recorded a deny
+for example.com:443. In the second tool result stdout was home-marker-readable.
+
+Codex CLI 0.170.0: codex sandbox -P :workspace with a fresh config directory.
+Gemini CLI 0.50.0: directly applied the two shipped Seatbelt profiles as above,
+using the mock HOME_DIR in the first pass and the actual HOME_DIR in the
+second. The Gemini and Codex checks did not involve a model session.
+
+co:op v15.3.1-3-g5421f2f0: coop run --egress filtered, fresh checkout, no
+approved sites. No provider session. The receipt recorded six blocked DNS
+lookups for example.com and no allowed external connections. Repeating the first
+pass with --allow-domain example.com returned HTTP 200 in both clients. The
+receipt recorded two allowed TLS connections to example.com:443. The four
+project secret markers and the mock-home marker were still unavailable.
+
+The installed macOS Grok CLI requested sign-in before any tool ran. No file or
+HTTP result is inferred for Grok. These checks exercise normal reads and HTTPS
+requests with the stated settings; they do not test sandbox vulnerabilities.
+
+Follow-up: what the CLIs offered to remember
+
+November 24, 2026. For Claude and Codex we requested the same command,
+ssh staging.example uptime, in disposable projects. A local stand-in for ssh
+was provided in PATH. Both clients paused for approval. We ended the requests
+at that point. No command was approved, no approval was saved and no SSH
+connection was opened. The protocol fields below are from the live clients;
+they are not transcripts of interactive terminal menus.
+
+Claude Code 2.1.312, manual permission mode, Bash tool:
+  input.command: ssh staging.example uptime
+  permission_suggestions: addRules, behavior allow, destination localSettings
+  rule: toolName Bash, ruleContent "ssh staging.example uptime"
+Claude documents a Bash rule without a wildcard as an exact match:
+https://code.claude.com/docs/en/permissions#bash
+
+Codex CLI 0.170.0, workspace-write, approvals on request, user reviewer:
+  command: /bin/zsh -lc 'ssh staging.example uptime'
+  proposedExecpolicyAmendment: ["ssh", "staging.example", "uptime"]
+  decisions offered: accept, acceptWithExecpolicyAmendment, cancel
+We asked the client to request approval outside the sandbox and did not specify
+which prefix to propose. A prefix matches the leading arguments. The earlier
+two-argument SSH example in this file used a manually supplied rule.
+Release UI text for remembering a prefix:
+https://github.com/openai/codex/blob/29eb79e9866b3262a777fdf8195c1b9e63684c91/codex-rs/tui/src/bottom_pane/approval_overlay.rs#L877-L892
+
+Gemini CLI 0.50.0, ordinary shell-tool approval in a trusted folder:
+The installed shell tool's getPolicyUpdateOptions returned the same result for
+ProceedAlways (session) and ProceedAlwaysAndSave (future sessions):
+  ssh staging.example uptime    -> commandPrefix: ["ssh"]
+  ssh production.example uptime -> commandPrefix: ["ssh"]
+  ssh staging.example date      -> commandPrefix: ["ssh"]
+  git status                    -> commandPrefix: ["git"]
+The CLI's parser and rule builder ran offline. No tool call or file write was
+needed. The future-sessions option requires permanent tool approvals, which
+are off by default in this release. Sandbox and higher-priority policy still apply.
+https://github.com/google-gemini/gemini-cli/blob/v0.50.0/packages/core/src/tools/shell.ts#L253-L269
+https://github.com/google-gemini/gemini-cli/blob/v0.50.0/packages/cli/src/ui/components/messages/ToolConfirmationMessage.tsx#L348-L371
+https://github.com/google-gemini/gemini-cli/blob/v0.50.0/packages/cli/src/config/settingsSchema.ts#L1864-L1873
+
+Grok Build 1.0.45, source at 2bdd1d6a, no live prompt:
+xAI's test uses "ssh host uname -a". Both the initial and shortest selectable
+scopes contain all four words. The picker label is "Always allow: " plus the
+scope. The grant matcher requires the whole parsed SSH command to match.
+The grant persists for the Git worktree on that machine.
+https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-workspace/src/permission/grants_tests.rs#L462-L484
+https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-workspace/src/permission/prompter.rs#L579-L594
+https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-workspace/src/permission/grants.rs#L698-L707
+https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/docs/user-guide/22-permissions-and-safety.md#L418-L422
+
+Follow-up: change one word in a remote shell request
+
+Same Mac and client versions as the approval comparison above. Compared an
+SSH uptime check with a date check on the same reserved example hostname.
+No SSH connections, remote commands or changes to user approval settings.
+
+Claude Code 2.1.312: live stream protocol, manual mode. Terminal UI tested separately below.
+  Bash input: ssh staging.example /bin/bash -c "uptime"
+  Proposed Bash ruleContent: ssh staging.example /bin/bash -c "uptime"
+  The proposal contained no wildcard. Under Claude's documented exact Bash
+  rule semantics it does not cover date. We captured the proposal; we did
+  not install the rule or run a second Claude request against it.
+
+Codex CLI 0.170.0: live approval request, no suggested prefix supplied by us.
+  Proposed prefix: ["ssh", "staging.example", "/bin/bash", "-c", "uptime"]
+  We passed that exact prefix to codex execpolicy check using a temporary
+  standalone rules file. Results:
+    original arguments ending in uptime -> matched this rule, decision allow
+    same arguments ending in date      -> no matching rule
+  The checker compared arguments only. An unmatched rule supplies no decision.
+
+Gemini CLI 0.50.0: offline installed rule builder and policy engine. We passed
+  ssh staging.example /bin/bash -c 'uptime'
+  ssh staging.example /bin/bash -c 'date'
+  Both remember options produced commandPrefix ["ssh"]. With an empty policy
+  engine both requests returned ask_user. We applied only the first request's
+  approval through the normal policy updater with persistence disabled.
+  The same engine then returned allow for both. These are shell-tool policy
+  decisions only. No change was made to a network or server policy.
+
+Grok Build 1.0.45: source inspection only. The default SSH scope and its
+  full-command matcher include the final argument, so substituting date
+  would not match that grant. The relevant pinned source:
+  https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-workspace/src/permission/grants.rs#L698-L707
+
+Two more shell approval checks, November 24, 2026
+
+Codex CLI 0.170.0. OpenAI's release test explicitly supplies ["cargo","install"]
+as a proposed prefix for cargo install cargo-insta. We put that prefix in an
+isolated rules file and passed three argument lists to codex execpolicy check:
+  cargo install cargo-insta -> allow
+  cargo install ripgrep     -> allow
+  cargo check               -> no matching rule
+No package was installed. This checks the supplied prefix. Other requests may
+propose different prefixes.
+https://github.com/openai/codex/blob/29eb79e9866b3262a777fdf8195c1b9e63684c91/codex-rs/core/src/exec_policy_tests.rs#L1137-L1158
+
+Gemini CLI 0.50.0. Default approval mode, installed policy engine. We applied
+the shell rule builder's commandPrefix ["git"] in memory. The rule had no
+allowRedirection setting. PolicyEngine.check returned:
+  git status              -> allow
+  git status > status.txt -> ask_user
+The decisions were the same before adding that rule. Plain git status already
+qualified for automatic approval. The local redirection still required a prompt.
+No command ran and no output file or persistent rule was written.
+https://github.com/google-gemini/gemini-cli/blob/v0.50.0/packages/core/src/policy/policy-engine.ts#L414-L425
+
+co:op comparison row: workspace writes, neighboring files and redirection
+November 24, 2026. On the same Mac, we created a temporary host folder
+outside the system temp directory, with sibling.txt and a fresh Git checkout
+next to it. From the checkout we used coop run --egress filtered with the
+default project mount. The shell could not read ../sibling.txt. It ran
+git status --short > status.txt successfully and we confirmed status.txt
+existed in the host checkout. An attempted write to ../outside-test failed,
+and that file did not exist in the host folder. This was a shell test in
+the container, without an agent session, an SSH connection or a package install.
+
+Python example: same command, different deployed script
+
+We ran python3 healthcheck.py twice in a temporary local directory. The first
+revision printed "healthy". The second printed the same output and wrote
+"healthy" to status.txt. We checked that the file existed only after the
+second run. No SSH client or approval rule was involved. The SSH command in
+the guide illustrates what the operator sees when a remote script is updated.
+
+SSH approval prompts for the Python health check, November 24, 2026
+
+Exact input in all four checks:
+  ssh staging.example /bin/sh -c "python3 healthcheck.py"
+
+Claude Code 2.1.312, manual mode, terminal, Haiku 5.5. Menu transcribed:
+  1. Yes
+  2. Yes, and don’t ask again for: ssh *
+  3. Yes, and switch to auto mode · auto mode handles these prompts for you
+  4. No
+The stream protocol for the same input instead proposed addRules, behavior
+allow, destination localSettings, with the exact command as Bash ruleContent.
+
+Codex CLI 0.170.0, native terminal, workspace-write, on-request, user reviewer.
+We asked for an outside-sandbox approval and did not specify a prefix.
+  1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `ssh staging.example /bin/sh -c 'python3 healthcheck.py'` (p)
+  3. No, and tell Codex what to do differently (esc)
+A separate app-server request proposed this argument prefix:
+  ["ssh", "staging.example", "/bin/sh", "-c", "python3 healthcheck.py"]
+With that prefix in a temporary rules file, codex execpolicy check matched
+the input and found no match after changing healthcheck.py to diskcheck.py.
+Appending --verbose as a separate argument after the closing quote also
+matched the original prefix (decision: allow). Only the rule checker ran.
+
+Gemini CLI 0.50.0 and 0.67.0, offline shell rule builders, empty history.
+Both returned commandPrefix ["ssh"] for both remember choices in a trusted
+folder. The shell confirmation menu in 0.67.0:
+  Allow once
+  Allow for this session
+  Allow this command for all future sessions (optional, off by default)
+  No, suggest changes (esc)
+The CLI can suppress both remember choices when it flags a request.
+https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/cli/src/ui/components/messages/ToolConfirmationMessage.tsx#L351-L378
+https://github.com/google-gemini/gemini-cli/blob/v0.67.0/packages/core/src/tools/shell.ts#L306-L335
+
+Grok Build 1.0.45, published terminal code at 2bdd1d6a, checked offline.
+We ran the original parser and scope formatter. With command approvals
+enabled (default), its suggested persistent allow row for this worktree is:
+  Always allow: ssh staging.example /bin/sh -c "python3 healthcheck.py"
+SSH has only the full command in its suggested allow scopes. A user can
+also edit a pattern manually. The menu builder and deny-scope code give:
+  Yes, and don't ask again for anything (always-approve mode)
+  Yes, proceed
+  No, and tell Grok what to do differently
+  Never allow: ssh staging.example
+The last row remembers a denial. The first switches modes for other tools too.
+https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-workspace/src/permission/prompter.rs#L572-L610
+https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-workspace/src/permission/grants.rs#L402-L429
+
+These checks cover local approval choices. We did not approve a request,
+save a permission or open an SSH connection. The sample reproduces the
+prompt wording. For an actual health check, the simpler remote command is
+ssh staging.example python3 healthcheck.py. OpenSSH joins remote arguments
+with spaces before sending them, so the local quotes in the longer example
+would not carry through to the remote shell.
+https://man.openbsd.org/ssh#DESCRIPTION
+
+Local npm dependency install, November 24, 2026, macOS with Docker
+co:op v15.3.1-3-g5421f2f0, Docker Engine 29.8.2. Fresh checkout, coop init.
+We packed a local dependency with one postinstall script, node check.cjs.
+It tried to count the bytes in README.md and .env.coop-demo under INIT_CWD
+and wrote only the two Boolean results to install-result.json in the checkout.
+Both test files had nonempty, harmless contents on the host. The check counted
+an empty or permission-denied read as false and surfaced other errors.
+
+coop run --egress filtered -- npm install --offline --no-audit --no-fund --ignore-scripts=false ./local-install-check.tgz
+  added 1 package
+  1 secret path hidden from the box
+  npm exit status: 0
+  Allowed: no external connections
+  Blocked: registry.npmjs.org DNS x2
+Host checkout, install-result.json:
+  {"readme":true,"protectedFile":false}
+
+This tested a harmless install hook with scripts enabled in a co:op shell.
+No third-party package, real credential or malicious payload was used.

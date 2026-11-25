@@ -114,12 +114,13 @@ func TestMenuArticleAndContentsKeepTheirOwnColumns(t *testing.T) {
 
 func TestPreviousAndNextFollowReadingOrder(t *testing.T) {
 	for slug, want := range map[string][2]string{
-		"docs":                {"", "install.html"},
-		"sandbox-guide":       {"install.html", "overnight-guide.html"},
-		"claude-code-sandbox": {"sandbox-guide.html", "overnight-guide.html"},
-		"grok-cli-sandbox":    {"sandbox-guide.html", "overnight-guide.html"},
-		"overnight-guide":     {"sandbox-guide.html", "box.html"},
-		"migrating":           {"session-api.html", ""},
+		"docs":                   {"", "install.html"},
+		"sandbox-guide":          {"install.html", "overnight-guide.html"},
+		"claude-code-sandbox":    {"sandbox-guide.html", "overnight-guide.html"},
+		"grok-cli-sandbox":       {"sandbox-guide.html", "overnight-guide.html"},
+		"overnight-guide":        {"sandbox-guide.html", "box.html"},
+		"coding-agent-sandboxes": {"networking.html", "agents.html"},
+		"migrating":              {"session-api.html", ""},
 	} {
 		pager := docsPager(slug)
 		for i, class := range []string{"docs-pager-previous", "docs-pager-next"} {

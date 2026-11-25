@@ -19,6 +19,7 @@ The website has a menu and search: <https://coop.dryga.com/docs.html>. These Mar
 
 - [Files, images and services](box.md)
 - [Networking](networking.md)
+- [Compare agent sandboxes](coding-agent-sandboxes.md)
 
 ## Agents
 

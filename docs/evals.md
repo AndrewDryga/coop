@@ -1,8 +1,32 @@
-# Evaluations
+# Evaluate a coding agent on a bug from your project
 
-`coop eval` runs the same tasks repeatedly, then an independent verifier grades the finished work.
-Use it to check whether changing a model, preset, loop recipe or co:op build improves the result.
-The [website guide](https://coop.dryga.com/docs.html#evals) walks through a first run.
+Pick a bug you’ve already fixed. Give the agent the broken code and the original bug report. Keep the regression test in a separate folder so the agent can’t read or change the answer. `coop eval` runs that test against the patch the agent leaves behind.
+
+## Catch a regression the project tests miss
+
+Our example CSV importer stores amounts in cents. Its `summary` command prints `2 130` for two entries totaling $1.30. A script that reads that output expects an integer in the second column.
+
+We changed one line in the reference implementation to print dollars instead. The output became `2 1.30`. All four project tests still passed because they check the stored entries. The independent grader also calls the CLI. It rejected the change with `ledger: summary regressed`. [Importer and tests](../examples/evals/maintenance/verifiers/ledger/oracle/) · [Independent grader](../examples/evals/maintenance/verifiers/ledger/verify.py)
+
+Use a check like that when choosing between two patches. Start with the behavior someone relies on: the output a script parses, the rows left after a failed import, or the result of retrying a request. Check that the broken version fails and the known fix passes before spending any model credits.
+
+## Try a bug from your own project
+
+Create a starter suite:
+
+```sh
+coop eval init ./evals/my-suite
+```
+
+Copy the broken code and sample input into `files/greeting/` in the new suite. In `suite.yaml`, replace the sample instruction with the bug report. Put the regression check in `verifiers/greeting/verify.sh`. The agent receives the files and the instruction. Only the grader receives the verifier.
+
+To compare Claude Code and Codex, preview the same case for both:
+
+```sh
+coop eval run ./evals/my-suite/suite.yaml claude codex --repeat 3 --timeout 1h --dry-run
+```
+
+For one case, that’s six attempts. The preview shows the plan and starts nothing. To run it, sign in to both providers, choose the model you intend to use with each, and remove `--dry-run`. Review the patches that pass. If both solve the bug consistently, try the next failure your team actually sees before switching agents.
 
 ## Try it
 
@@ -54,9 +78,8 @@ co:op labels the measurement as missing.
   compare presets or loop recipes. Each trial works through its tasks in order and can take
   hours. For example, `coop eval run queue frontier --timeout 2h` uses your existing `frontier`
   preset. Add `--loop-config .agent/loop.yaml` to test your project's recipe.
-- `coop eval init ./evals/my-suite` creates a custom suite from a working greeting example.
-  Edit `suite.yaml`, `files/greeting/` and the separate `verifiers/greeting/verify.sh`. The
-  verifier's README explains grading. `suite.yaml` includes a commented example for a loop.
+- For a [custom suite](#try-a-bug-from-your-own-project), the generated verifier's README
+  explains grading. Its `suite.yaml` includes an example for a loop.
 - [`examples/evals/maintenance/`](../examples/evals/maintenance/) is an example of a custom
   comparison, with three independent maintenance loops for shell, Python and Node. It isn't an
   official benchmark score, and `coop eval ls` doesn't list it as a starter.

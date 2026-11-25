@@ -36,7 +36,7 @@ type docsPage struct {
 // pages generated from Markdown. Prose stays in the sources; a new page needs an entry here.
 var docsPages = []docsPage{
 	{Group: "Get started", Slug: "docs", Label: "Overview"},
-	{Group: "Get started", Slug: "install", Label: "Install", Source: "docs/install.md", Description: "Install co:op, keep it up to date, and verify a download yourself."},
+	{Group: "Get started", Slug: "install", Label: "Install", Source: "docs/install.md", Description: "Install co:op on macOS or Linux, check your Docker setup, and verify the release before you run a coding agent."},
 	{Group: "Get started", Slug: "sandbox-guide", Label: "First sandbox run"},
 	{Group: "Get started", Slug: "claude-code-sandbox", Label: "Claude Code", Parent: "sandbox-guide"},
 	{Group: "Get started", Slug: "codex-sandbox", Label: "Codex CLI", Parent: "sandbox-guide"},
@@ -44,16 +44,17 @@ var docsPages = []docsPage{
 	{Group: "Get started", Slug: "grok-cli-sandbox", Label: "Grok CLI", Parent: "sandbox-guide"},
 	{Group: "Get started", Slug: "overnight-guide", Label: "First overnight run"},
 	{Group: "Sandbox", Slug: "box", Label: "Files, images and services", Source: "docs/box.md", Description: "Control visible files, prepare a project image, and run databases and development servers beside your agent."},
-	{Group: "Sandbox", Slug: "networking", Label: "Networking", Source: "docs/networking.md", Description: "Choose which network destinations an agent can reach, and review access before a run.", Keywords: "allowlist whitelist firewall"},
-	{Group: "Agents", Slug: "agents", Label: "Accounts, models, presets", Source: "docs/agents.md", Description: "Sign in, choose models and accounts, and configure presets, teammates and instructions."},
-	{Group: "Agents", Slug: "integrations", Label: "Editors and MCP", Source: "docs/integrations.md", Description: "Connect an editor or MCP server and check which actions run on your computer or in the container."},
-	{Group: "Agents", Slug: "usage-reports", Label: "Usage and billing", Source: "docs/usage-reports.md", Description: "Connect your provider's billing reports and compare reported costs with local usage estimates."},
-	{Group: "Hand off work", Slug: "loop", Label: "Task queues and loops", Source: "docs/loop.md", Description: "Set up a task queue for an agent to work through on its own, with decisions and a final review."},
-	{Group: "Hand off work", Slug: "forks", Label: "Forks and review", Source: "docs/forks.md", Description: "Work in a separate copy of your project. Review the changes and checks before merging them."},
-	{Group: "Hand off work", Slug: "evals", Label: "Evaluations", Source: "docs/evals.md", Description: "Run repeatable checks to compare changes to models, presets and loops. Keep the results for review."},
-	{Group: "Reference", Slug: "cli", Label: "Commands", Source: "docs/cli.md", Description: "Look up co:op commands and options, with examples of how to use them."},
-	{Group: "Reference", Slug: "configuration", Label: "Configuration", Source: "docs/configuration.md", Description: "Find project settings, environment variables, configuration files and exit codes."},
-	{Group: "Reference", Slug: "session-api", Label: "Worker API", Source: "docs/session-api.md", Description: "Connect a worker and manage sessions, turns, evidence and publication through the worker API."},
+	{Group: "Sandbox", Slug: "networking", Label: "Networking", Source: "docs/networking.md", Description: "Choose which sites your coding agent can reach. Check a network rule before starting a session and see which connections co:op blocked.", Keywords: "allowlist whitelist firewall"},
+	{Group: "Sandbox", Slug: "coding-agent-sandboxes", Label: "Compare agent sandboxes", Source: "docs/coding-agent-sandboxes.md", Description: "Compare the native sandboxes in Claude Code, Codex, Gemini CLI and Grok. See how co:op protects your files and controls network access across all four."},
+	{Group: "Agents", Slug: "agents", Label: "Accounts, models, presets", Source: "docs/agents.md", Description: "Choose the provider, account and model for a co:op session. Save your usual settings as a preset or give teammates their own instructions."},
+	{Group: "Agents", Slug: "integrations", Label: "Editors and MCP", Source: "docs/integrations.md", Description: "Run an agent from your editor and connect it to MCP servers. See which tools run on your computer and which run inside the sandbox."},
+	{Group: "Agents", Slug: "usage-reports", Label: "Usage and billing", Source: "docs/usage-reports.md", Description: "Compare co:op’s local usage estimates with your provider’s billing reports. See which numbers come from the provider and which co:op estimates."},
+	{Group: "Hand off work", Slug: "loop", Label: "Task queues and loops", Source: "docs/loop.md", Description: "Give a coding agent a queue of tasks to run on its own. See when co:op pauses for a decision and how to review the finished work."},
+	{Group: "Hand off work", Slug: "forks", Label: "Forks and review", Source: "docs/forks.md", Description: "Let a coding agent work in a separate copy of your project. Review its diff, run the project checks and merge the changes you want."},
+	{Group: "Hand off work", Slug: "evals", Label: "Evaluations", Source: "docs/evals.md", Description: "Give each coding agent the same bug report and grade its fix with a test it can’t change. See how a CLI regression slipped past four passing tests."},
+	{Group: "Reference", Slug: "cli", Label: "Commands", Source: "docs/cli.md", Description: "Find the co:op command for starting a sandbox, checking network access, reviewing a fork or running an agent through a task queue."},
+	{Group: "Reference", Slug: "configuration", Label: "Configuration", Source: "docs/configuration.md", Description: "Find the settings for your co:op project, see which environment variables override them, and look up an exit code when a command fails."},
+	{Group: "Reference", Slug: "session-api", Label: "Worker API", Source: "docs/session-api.md", Description: "Connect a worker to co:op, start an agent session and follow its turns. Use the worker API to collect results and publish completed work."},
 	{Group: "Reference", Slug: "migrating", Label: "Upgrading", Source: "MIGRATING.md", Description: "What to change when you upgrade co:op, newest version first. Follow the steps for each version since yours."},
 }
 
@@ -316,6 +317,9 @@ func renderReference(ref docsPage, source string) (title, content, toc string, e
 				setDOMAttr(node, "href", referenceLink(ref.Source, href))
 			}
 		}
+		if node.Data == "blockquote" {
+			foldTestNotes(node)
+		}
 		if node.Data == "table" {
 			columns := 0
 			walkDOM(node, func(child *dom.Node) {
@@ -327,6 +331,12 @@ func renderReference(ref docsPage, source string) (title, content, toc string, e
 			if columns > 2 {
 				class += " ref-wide"
 			}
+			if ref.Slug == "coding-agent-sandboxes" {
+				class += " comparison-table"
+				if styleComparisonTable(node) {
+					class += " comparison-narrative"
+				}
+			}
 			setDOMAttr(node, "class", class)
 			frame := elementNode("div", "class", "reference-table")
 			wrapper := elementNode("div", "class", "table-scroll", "role", "region", "tabindex", "0", "aria-label", heading+" table")
@@ -335,7 +345,7 @@ func renderReference(ref docsPage, source string) (title, content, toc string, e
 			frame.AppendChild(wrapper)
 			wrapper.AppendChild(node)
 		}
-		if node.Data == "th" {
+		if node.Data == "th" && domAttr(node, "scope") == "" {
 			setDOMAttr(node, "scope", "col")
 		}
 		if node.Data == "pre" {
@@ -553,6 +563,76 @@ func siteMap(pages map[string]string) string {
 	}
 	b.WriteString("</urlset>\n")
 	return b.String()
+}
+
+// A quoted "How we tested it" note stays readable in the Markdown guide.
+func foldTestNotes(quote *dom.Node) {
+	var label *dom.Node
+	for child := quote.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == dom.ElementNode {
+			label = child
+			break
+		}
+	}
+	if label == nil || label.Data != "p" || nodeText(label) != "How we tested it" {
+		return
+	}
+	quote.Data, quote.DataAtom = "details", atom.Details
+	setDOMAttr(quote, "class", "guide-detail")
+	label.Data, label.DataAtom = "summary", atom.Summary
+	body := elementNode("div")
+	for child := label.NextSibling; child != nil; child = label.NextSibling {
+		quote.RemoveChild(child)
+		body.AppendChild(child)
+	}
+	quote.AppendChild(body)
+}
+
+// Narrative comparisons stack on phones. Keep the native table relationships
+// and give each stacked value its column label in the visual layout.
+func styleComparisonTable(table *dom.Node) bool {
+	var headings []string
+	column := 0
+	walkDOM(table, func(n *dom.Node) {
+		if n.Type != dom.ElementNode {
+			return
+		}
+		switch n.Data {
+		case "table", "tbody", "thead", "tr":
+			role := n.Data
+			if role == "thead" || role == "tbody" {
+				role = "rowgroup"
+			}
+			if role == "tr" {
+				role = "row"
+				column = 0
+			}
+			setDOMAttr(n, "role", role)
+		case "th":
+			headings = append(headings, nodeText(n))
+			setDOMAttr(n, "role", "columnheader")
+			if nodeText(n) == "With co:op" {
+				setDOMAttr(n, "class", "comparison-coop")
+			}
+		case "td":
+			if column == 0 {
+				n.Data, n.DataAtom = "th", atom.Th
+				setDOMAttr(n, "scope", "row")
+				setDOMAttr(n, "role", "rowheader")
+				if strings.HasPrefix(nodeText(n), "co:op") {
+					setDOMAttr(n.Parent, "class", "comparison-coop")
+				}
+			} else if column < len(headings) {
+				setDOMAttr(n, "role", "cell")
+				setDOMAttr(n, "data-label", headings[column])
+				if headings[column] == "With co:op" {
+					setDOMAttr(n, "class", "comparison-coop")
+				}
+			}
+			column++
+		}
+	})
+	return len(headings) > 0 && headings[0] == "Agent"
 }
 
 func elementNode(tag string, attrs ...string) *dom.Node {

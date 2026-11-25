@@ -6,14 +6,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#0e1014">
-  <title>Evaluations · co:op</title>
-  <meta name="description" content="Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.">
+  <title>Evaluate a coding agent on a bug from your project · co:op</title>
+  <meta name="description" content="Give each coding agent the same bug report and grade its fix with a test it can’t change. See how a CLI regression slipped past four passing tests.">
   <link rel="canonical" href="https://coop.dryga.com/evals.html">
   <meta property="og:type" content="article">
   <meta property="og:site_name" content="co:op">
   <meta property="og:url" content="https://coop.dryga.com/evals.html">
-  <meta property="og:title" content="Evaluations">
-  <meta property="og:description" content="Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.">
+  <meta property="og:title" content="Evaluate a coding agent on a bug from your project">
+  <meta property="og:description" content="Give each coding agent the same bug report and grade its fix with a test it can’t change. See how a CLI regression slipped past four passing tests.">
   <meta property="og:image" content="https://coop.dryga.com/assets/img/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
-  <script src="assets/js/site.js?v=66031b5921" defer></script>
-  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=f24d1b7acc">
+  <script src="assets/js/site.js?v=f24d1b7acc" defer></script>
+  <script src="assets/js/analytics.js?v=f24d1b7acc" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -63,6 +63,7 @@
 <ul role="list">
 <li><a href="box.html">Files, images and services</a></li>
 <li><a href="networking.html">Networking</a></li>
+<li><a href="coding-agent-sandboxes.html">Compare agent sandboxes</a></li>
 </ul>
 <p class="docs-nav-group">Agents</p>
 <ul role="list">
@@ -96,14 +97,16 @@
     <header class="guide-hero">
       <div class="guide-intro">
         <p class="guide-eyebrow"><a href="docs.html">Documentation</a> / Hand off work</p>
-        <h1>Evaluations</h1>
-        <p class="guide-lead">Run repeatable checks to compare changes to models, presets and loops. Keep the results for review.</p>
+        <h1>Evaluate a coding agent on a bug from your project</h1>
+        <p class="guide-lead">Give each coding agent the same bug report and grade its fix with a test it can’t change. See how a CLI regression slipped past four passing tests.</p>
       </div>
     </header>
     <div class="docs guide-body">
       <details class="docs-side" open>
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
+<li><a href="#catch-a-regression-the-project-tests-miss">Catch a regression the project tests miss</a></li>
+<li><a href="#try-a-bug-from-your-own-project">Try a bug from your own project</a></li>
 <li><a href="#try-it">Try it</a></li>
 <li><a href="#choose-what-to-evaluate">Choose what to evaluate</a></li>
 <li><a href="#runtime-profiles-for-custom-agent-cases">Runtime profiles for custom agent cases</a></li>
@@ -112,9 +115,20 @@
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
         <section class="doc-section reference-section" id="overview"><h2 class="sr-only">Overview</h2>
-<p><code>coop eval</code> runs the same tasks repeatedly, then an independent verifier grades the finished work.
-Use it to check whether changing a model, preset, loop recipe or co:op build improves the result.
-The <a href="https://coop.dryga.com/docs.html#evals">website guide</a> walks through a first run.</p>
+<p>Pick a bug you’ve already fixed. Give the agent the broken code and the original bug report. Keep the regression test in a separate folder so the agent can’t read or change the answer. <code>coop eval</code> runs that test against the patch the agent leaves behind.</p>
+</section><section class="doc-section reference-section" id="catch-a-regression-the-project-tests-miss"><h2>Catch a regression the project tests miss</h2>
+<p>Our example CSV importer stores amounts in cents. Its <code>summary</code> command prints <code>2 130</code> for two entries totaling $1.30. A script that reads that output expects an integer in the second column.</p>
+<p>We changed one line in the reference implementation to print dollars instead. The output became <code>2 1.30</code>. All four project tests still passed because they check the stored entries. The independent grader also calls the CLI. It rejected the change with <code>ledger: summary regressed</code>. <a href="https://github.com/AndrewDryga/coop/tree/main/examples/evals/maintenance/verifiers/ledger/oracle" target="_blank" rel="nofollow noopener">Importer and tests</a> · <a href="https://github.com/AndrewDryga/coop/blob/main/examples/evals/maintenance/verifiers/ledger/verify.py" target="_blank" rel="nofollow noopener">Independent grader</a></p>
+<p>Use a check like that when choosing between two patches. Start with the behavior someone relies on: the output a script parses, the rows left after a failed import, or the result of retrying a request. Check that the broken version fails and the known fix passes before spending any model credits.</p>
+</section><section class="doc-section reference-section" id="try-a-bug-from-your-own-project"><h2>Try a bug from your own project</h2>
+<p>Create a starter suite:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Try a bug from your own project code example" tabindex="0"><code class="language-sh">coop eval init ./evals/my-suite
+</code></pre></div>
+<p>Copy the broken code and sample input into <code>files/greeting/</code> in the new suite. In <code>suite.yaml</code>, replace the sample instruction with the bug report. Put the regression check in <code>verifiers/greeting/verify.sh</code>. The agent receives the files and the instruction. Only the grader receives the verifier.</p>
+<p>To compare Claude Code and Codex, preview the same case for both:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Try a bug from your own project code example" tabindex="0"><code class="language-sh">coop eval run ./evals/my-suite/suite.yaml claude codex --repeat 3 --timeout 1h --dry-run
+</code></pre></div>
+<p>For one case, that’s six attempts. The preview shows the plan and starts nothing. To run it, sign in to both providers, choose the model you intend to use with each, and remove <code>--dry-run</code>. Review the patches that pass. If both solve the bug consistently, try the next failure your team actually sees before switching agents.</p>
 </section><section class="doc-section reference-section" id="try-it"><h2>Try it</h2>
 <ol>
 <li>
@@ -176,9 +190,8 @@ misses. Choose a provider target such as <code>codex:gpt-6.1-sol/xhigh</code>.</
 compare presets or loop recipes. Each trial works through its tasks in order and can take
 hours. For example, <code>coop eval run queue frontier --timeout 2h</code> uses your existing <code>frontier</code>
 preset. Add <code>--loop-config .agent/loop.yaml</code> to test your project&#39;s recipe.</li>
-<li><code>coop eval init ./evals/my-suite</code> creates a custom suite from a working greeting example.
-Edit <code>suite.yaml</code>, <code>files/greeting/</code> and the separate <code>verifiers/greeting/verify.sh</code>. The
-verifier&#39;s README explains grading. <code>suite.yaml</code> includes a commented example for a loop.</li>
+<li>For a <a href="#try-a-bug-from-your-own-project">custom suite</a>, the generated verifier&#39;s README
+explains grading. Its <code>suite.yaml</code> includes an example for a loop.</li>
 <li><a href="https://github.com/AndrewDryga/coop/tree/main/examples/evals/maintenance" target="_blank" rel="nofollow noopener"><code>examples/evals/maintenance/</code></a> is an example of a custom
 comparison, with three independent maintenance loops for shell, Python and Node. It isn&#39;t an
 official benchmark score, and <code>coop eval ls</code> doesn&#39;t list it as a starter.</li>

@@ -24,9 +24,9 @@
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png?v=contained-entrance">
   <link rel="manifest" href="site.webmanifest?v=contained-entrance">
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/css/site.css?v=66031b5921">
-  <script src="assets/js/site.js?v=66031b5921" defer></script>
-  <script src="assets/js/analytics.js?v=66031b5921" defer></script>
+  <link rel="stylesheet" href="assets/css/site.css?v=f24d1b7acc">
+  <script src="assets/js/site.js?v=f24d1b7acc" defer></script>
+  <script src="assets/js/analytics.js?v=f24d1b7acc" defer></script>
   <noscript><style>.copy { display: none; }</style></noscript>
 </head>
 <body>
@@ -63,6 +63,7 @@
 <ul role="list">
 <li><a href="box.html" aria-current="page">Files, images and services</a></li>
 <li><a href="networking.html">Networking</a></li>
+<li><a href="coding-agent-sandboxes.html">Compare agent sandboxes</a></li>
 </ul>
 <p class="docs-nav-group">Agents</p>
 <ul role="list">
@@ -117,7 +118,7 @@
 <li class="reference-subsection"><a href="#the-box-contract">The box contract</a></li>
 <li class="reference-subsection"><a href="#inherit-coops-base">Inherit co:op&#39;s base</a></li>
 <li class="reference-subsection"><a href="#reusing-a-devcontainer">Reusing a devcontainer</a></li>
-<li class="reference-subsection"><a href="#other-ways-to-run-claude-code">Other ways to run Claude Code</a></li>
+<li class="reference-subsection"><a href="#what-claude-code-can-read-on-your-mac">What Claude Code can read on your Mac</a></li>
 <li><a href="#project-services">Project services</a></li>
 <li class="reference-subsection"><a href="#development-and-loop-stacks">Development and loop stacks</a></li>
 <li class="reference-subsection"><a href="#starting-and-stopping">Starting and stopping</a></li>
@@ -526,14 +527,45 @@ You can <a href="https://code.visualstudio.com/remote/advancedcontainers/change-
 That lets tools in the container use a loaded key while the key file stays on your computer.
 With co:op, the <a href="#ssh-keys-and-agent-forwarding">SSH agent stays outside by default</a> and
 <a href="#hiding-secrets">common secret files are hidden</a>.</p>
-<h3 id="other-ways-to-run-claude-code">Other ways to run Claude Code</h3>
-<p>Claude Code’s <a href="https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox" target="_blank" rel="nofollow noopener">built-in sandbox</a>
-restricts its shell commands. Its file tools have separate permission rules.
-To put the Claude Code process itself inside a container, you can use a devcontainer or co:op.
-<a href="https://docs.docker.com/ai/sandboxes/" target="_blank" rel="nofollow noopener">Docker Sandboxes</a> also offers a local microVM for running coding agents.</p>
-<p>Whichever setup you choose, try it on a disposable checkout. The
-<a href="https://coop.dryga.com/claude-code-sandbox.html#shadow-secret">Claude Code walkthrough</a> includes
-a fake secret and a README you can use to check which files the agent can actually read.</p>
+<h3 id="what-claude-code-can-read-on-your-mac">What Claude Code can read on your Mac</h3>
+<p>On our Mac, Claude’s Bash tool could read the README in both sandboxes. It could also read <code>.env.coop-demo</code> in Claude’s native sandbox until we added a rule to block it. co:op hid the secret file by default.</p>
+<div class="reference-table"><div class="table-scroll" role="region" tabindex="0" aria-label="What Claude Code can read on your Mac table"><table class="ref ref-wide">
+<thead>
+<tr>
+<th scope="col">From Claude’s Bash tool</th>
+<th scope="col">Built-in sandbox</th>
+<th scope="col">co:op with filtered networking</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read the README</td>
+<td>21 bytes</td>
+<td>21 bytes</td>
+</tr>
+<tr>
+<td>Read <code>.env.coop-demo</code></td>
+<td>20 bytes</td>
+<td>Permission denied</td>
+</tr>
+<tr>
+<td>Reach example.com</td>
+<td>Blocked</td>
+<td>Blocked</td>
+</tr>
+<tr>
+<td>Connect to the Mac’s SSH agent</td>
+<td>Permission denied</td>
+<td>No SSH agent socket</td>
+</tr>
+</tbody>
+</table></div></div>
+<details class="guide-detail">
+<summary><strong>How we tested it</strong></summary><div>
+<p>We asked Claude’s Bash tool to count the bytes in both files, connect to <code>example.com</code>, and try the socket of an empty SSH agent. Neither sandbox had a rule allowing the website. For the second file check, we added <code>.env.coop-demo</code> to Claude’s <code>sandbox.filesystem.denyRead</code> setting.</p>
+<p>Both runs used the same Mac. The <a href="https://github.com/AndrewDryga/coop/blob/main/examples/sandbox/2026-11-24-shell-checks.txt" target="_blank" rel="nofollow noopener">commands, versions and output</a> include the settings for each sandbox. Claude’s built-in <code>Read</code> tool has <a href="https://code.claude.com/docs/en/sandboxing#what-runs-outside-the-sandbox" target="_blank" rel="nofollow noopener">its own permissions</a>.</p>
+</div></details>
+<p><a href="https://coop.dryga.com/claude-code-sandbox.html#shadow-secret">Try the file check with Claude Code</a> or <a href="coding-agent-sandboxes.html">see the results for the other agents</a>.</p>
 </section><section class="doc-section reference-section" id="project-services"><h2>Project services</h2>
 <p>Services such as databases run in separate containers alongside the box. None are added by
 default. <code>coop init</code> asks which ones you want, or you can pass <code>--services postgres,redis</code>, and it

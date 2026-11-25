@@ -1,0 +1,80 @@
+Claude Code shell checks, November 24, 2026
+macOS 15.6.1 on Apple silicon
+
+Both Git projects started with these two files:
+printf '%s\n' '# co:op sandbox demo' > README.md
+printf '%s\n' 'DEMO_SECRET=pretend' > .env.coop-demo
+
+The checks ran through the Claude Code Bash tool using Claude Haiku 5.5.
+An empty, temporary SSH agent supplied the host socket. The socket check
+opened and closed a connection. The agent held no keys.
+
+Host Claude Code 2.1.312 settings:
+{
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "network": {
+      "allowedDomains": []
+    }
+  }
+}
+
+co:op build v15.3.1-3-g5421f2f0 ran Claude Code 2.1.330 in a filtered
+Docker container. The project had no rule for example.com.
+
+Host Bash sandbox
+
+$ wc -c README.md .env.coop-demo
+      21 README.md
+      20 .env.coop-demo
+      41 total
+
+$ curl -fsSI --connect-timeout 5 --max-time 8 https://example.com/ -o /dev/null -w "HTTP %{http_code}\n"
+Exit code 22
+curl: (22) The requested URL returned error: 403
+HTTP 000
+
+<sandbox_violations>
+deny network-outbound example.com:443 (user denied)
+</sandbox_violations>
+
+
+co:op container
+
+$ wc -c README.md .env.coop-demo
+Exit code 1
+21 README.md
+wc: .env.coop-demo: Operation not permitted
+21 total
+
+$ curl -fsSI --connect-timeout 5 --max-time 8 https://example.com/ -o /dev/null -w "HTTP %{http_code}\n"
+Exit code 22
+curl: (22) The requested URL returned error: 403
+HTTP 000
+
+
+Host Bash sandbox with the test file added to sandbox.filesystem.denyRead
+
+$ wc -c README.md .env.coop-demo
+Exit code 1
+wc: .env.coop-demo: open: Operation not permitted
+      21 README.md
+      21 total
+
+
+Host Bash sandbox with an empty SSH agent
+
+$ node -e 'const path = process.env.SSH_AUTH_SOCK; if (!path) console.log("No SSH agent socket"); else { const s = require("net").connect(path); s.on("connect", () => { console.log("Connected to empty agent"); s.end(); }); s.on("error", e => console.log(e.code)); }'
+EPERM
+
+
+co:op container with the same empty SSH agent on the host
+
+$ node -e 'const path = process.env.SSH_AUTH_SOCK; if (!path) console.log("No SSH agent socket"); else { const s = require("net").connect(path); s.on("connect", () => { console.log("Connected to empty agent"); s.end(); }); s.on("error", e => console.log(e.code)); }'
+No SSH agent socket
+
+co:op network receipt for the website check:
+example.com:443 was blocked
+No approved rule allowed this TLS connection.

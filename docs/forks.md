@@ -1,4 +1,4 @@
-# Forks
+# Review and merge agent forks
 
 A fork is a temporary local clone of your repo where an agent can work. You review its changes
 and decide whether to merge them. The [forks guide](https://coop.dryga.com/docs.html#forks) has a
