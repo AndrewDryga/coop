@@ -3,7 +3,7 @@ name: in-box-task-channel
 description: a loop work box or an interactive agent box reaches its task queue through a coop-owned MCP server over a helper-container unix socket, never a host-created one and never HTTP
 subsystem: box
 sources: [.github/workflows/task-channel.yml, internal/taskmcp/taskmcp.go, internal/taskmcp/tools.go, internal/taskchannel/mux.go, internal/taskchannel/mux.js, internal/runtime/runtime.go, internal/box/taskchannel.go, internal/box/open_broker.go, internal/box/run.go, internal/box/filtered_mounts.go, internal/mcp/mcp.go, internal/loop/prompts.go, internal/cli/doctor.go, internal/tasks/channel.go, internal/tasks/completion_record.go, internal/tasks/pin.go, internal/tasks/dir.go, internal/tasks/clutter.go, internal/tasks/cmd.go, internal/tasks/template.go, internal/tasks/proposal.go, internal/tasks/projection.go, internal/loop/loop.go, internal/loop/review.go, internal/box/taskchannel_live_test.go, Makefile, internal/tasks/audit.go, internal/tasks/wait.go, internal/tasks/session_claim.go, internal/cli/session_tasks.go, internal/cli/commands.go, internal/cli/acp_cmd.go, internal/cli/boxsweep.go, internal/box/sweep.go, internal/loop/iteration.go, internal/box/supervisor/main.go]
-updated: 2026-11-17
+updated: 2026-11-25
 ---
 
 A loop work box is told to change task state through the `coop-tasks` MCP server (nine tools:
@@ -15,7 +15,7 @@ internal/loop/review.go). The host catches a hand move after the run instead: a 
 moved to done without holding its lease goes back to `10_in_progress/`
 (`rejectUnownedCompletions` in internal/tasks/audit.go). The coop binary is still absent from the
 box (doctor still asserts it) — the server is the ONLY host control surface a box gets, and it
-exposes nine verbs (ten in an interactive session, below), nothing shell/exec/file.
+exposes nine verbs (eleven in an interactive session, below), nothing shell/exec/file.
 
 **Interactive sessions get the same server, with nothing assigned.** An editor's `coop acp` inner
 child and a `coop <agent>` box in a plain checkout whose project has a task queue set `TaskTools`
@@ -23,8 +23,8 @@ from `sessionTaskTools` (internal/cli/session_tasks.go). `Authority.Session` nam
 the session's claims bind to: the ACP supervisor (the inner child's parent under
 `COOP_ACP_SUPERVISOR`; its start token survives the exec a reload does, so claims outlive provider
 switches, refreshes and child restarts) or the `coop <agent>` process. Fork sessions, controller
-jobs, sign-in, `coop run -- <cmd>` and `coop shell` get nothing. A session server adds `tasks_claim`
-and `tasks_release` and drops the loop-only `tasks_wait` — a loop box lists exactly the nine,
+jobs, sign-in, `coop run -- <cmd>` and `coop shell` get nothing. A session server adds `tasks_claim`,
+`tasks_unblock` and `tasks_release` and drops the loop-only `tasks_wait` — a loop box lists exactly the nine,
 doctor's contract — and its initialize instructions say the coop CLI is absent and these tools are
 how task state changes; the box briefing gains a `# Tasks` note whenever a box serves task tools.
 
@@ -44,6 +44,10 @@ how task state changes; the box briefing gains a `# Tasks` note whenever a box s
   blocked and done tasks, a leased task, and a task halfway through a person's unblock (an
   `UnblockPending` audit record, on which no lease could start). `tasks_list`/`tasks_get` show a
   session who holds each live task (`claim`: `yours` or the owner's label).
+- `tasks_unblock` records the user's one-line answer in decision.md and returns the task to Todo.
+  It shares the ordinary unblock operation with preflight, holding the lease authority and owner
+  lock while it checks the task and moves it. Fork decisions, audit reopenings and committed
+  blocks require the host CLI, which can resume the fork or authorize closing over a prior commit.
 - The loop re-reads a candidate's claim once it holds the lease (`releaseClaimedLease` in
   internal/tasks/audit.go; `beforeCandidateLease` is the test seam into that window), so a claim
   that lands while the loop is choosing wins. An owner record the loop cannot read is skipped with
@@ -124,8 +128,8 @@ another live process leases is refused at the call (`tasks.TryTaskLease` / `ErrT
 legible "held by another live process" message — the assigned task runs under the launching
 iteration's own lease and never leases twice. `tasks_complete`/`tasks_block` on another task use the
 host's trusted completion/block (its own lease + receipt). `tasks_complete` refuses a blocked task,
-the box's own included, as `coop tasks claim` does: only the host's `coop tasks unblock` returns it to
-work. `tasks_block` replaces decision.md through
+the box's own included, as `coop tasks claim` does. The user's answer returns it to work through
+the host CLI or the interactive session's `tasks_unblock`. `tasks_block` replaces decision.md through
 `tasks.ReplaceDecision`: a decision the human already answered goes into log.md first, and the
 result tells the agent it had been answered. In a fork, `tasks_propose` writes the
 validated proposal into `Authority.ProposalOutbox` (the same file `tasks.ImportForkProposals` reads at
@@ -242,6 +246,7 @@ an empty folder so the repository's own Dockerfile is not picked, then runs the 
 chose daily over every push, since the image takes minutes and many downloads to build.
 
 ## Changelog
+- 2026-11-25 — interactive sessions can apply a user's answer to an ordinary blocked task.
 - 2026-11-17 — tools that name a task look it up by id (`tasks.FindTaskByID`) instead of reading every queue whole on each call (audit FC-17).
 - 2026-11-17 — the descendant drain is the Go supervisor's procFS.drain, not image.go's removed live_jobs(); added loop/iteration.go and supervisor/main.go to sources (audit K2-4, K2-6; checked internal/box/supervisor/main.go).
 - 2026-11-17 — the tool count says nine (ten in a session) everywhere; it said eight in two places.

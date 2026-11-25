@@ -1,7 +1,7 @@
 // Package taskmcp is the coop-owned MCP server an in-box agent reaches its task queue through.
 // It speaks newline-delimited JSON-RPC 2.0 (initialize, tools/list, tools/call) over any
 // io.ReadWriter — hand-rolled like internal/acpproxy, no SDK — and exposes nine typed task tools
-// (ten in an interactive session) over internal/tasks, so the box never needs the coop binary, a
+// (eleven in an interactive session) over internal/tasks, so the box never needs the coop binary, a
 // docker socket, or a network route to change task state.
 //
 // The server is built host-side from an explicit Authority — never ambient config — and every
@@ -370,7 +370,7 @@ func (s *Server) instructions() string {
 // in a loop box and in an interactive session.
 const (
 	serverInstructions  = "coop's task queue for this box. tasks_list / tasks_get read any task; tasks_update_state, tasks_append_log, tasks_set_subtasks keep the assigned task's files current; tasks_complete and tasks_block move it out of 10_in_progress, and tasks_wait returns it to 00_todo until another task is done; tasks_propose files newly discovered work. A mutation on a task another live process holds or claims is refused."
-	sessionInstructions = "coop's task queue for this session. The coop CLI is not installed in this box: change task state through these tools, never by moving task folders. tasks_list / tasks_get read any task. tasks_claim a task before you work on it — it moves to 10_in_progress, owned by this session, so a coop loop leaves it alone. Keep its files current with tasks_update_state, tasks_append_log and tasks_set_subtasks; finish with tasks_complete, park a human decision with tasks_block, or hand it back with tasks_release. tasks_propose files newly discovered work. A change to a task someone else holds or claims is refused."
+	sessionInstructions = "coop's task queue for this session. The coop CLI is not installed in this box: change task state through these tools, never by moving task folders. tasks_list / tasks_get read any task. tasks_claim a task before you work on it — it moves to 10_in_progress, owned by this session, so a coop loop leaves it alone. Keep its files current with tasks_update_state, tasks_append_log and tasks_set_subtasks; finish with tasks_complete, park a human decision with tasks_block, or hand it back with tasks_release. When the user answers a blocked task, call tasks_unblock with that answer to return it to Todo. tasks_propose files newly discovered work. A change to a task someone else holds or claims is refused."
 )
 
 // toolResult is the MCP tools/call result shape: text content, flagged as an error when the tool

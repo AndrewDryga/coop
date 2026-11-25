@@ -60,13 +60,13 @@ func TestNewRefusesASessionMixedWithLoopAuthority(t *testing.T) {
 	}
 }
 
-// A session is told it has no coop CLI and is offered the claim/release pair; a loop box is not.
-func TestSessionAddsClaimAndReleaseOnlyForAnInteractiveSession(t *testing.T) {
+// Only interactive sessions are offered the tools for choosing and resuming their own work.
+func TestInteractiveSessionToolSet(t *testing.T) {
 	root := queue(t, map[string]string{"t1": tasks.StateTodo})
 	sess := newSession(t, newSessionServer(t, root, sessionActor(t, "claude", os.Getpid())))
 	result := sess.request("initialize", map[string]any{"protocolVersion": protocolVersion})["result"].(map[string]any)
 	instructions, _ := result["instructions"].(string)
-	for _, want := range []string{"not installed", "tasks_claim", "tasks_release", "never by moving task folders"} {
+	for _, want := range []string{"not installed", "tasks_claim", "tasks_release", "tasks_unblock", "never by moving task folders"} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("session instructions lack %q: %s", want, instructions)
 		}
@@ -75,7 +75,7 @@ func TestSessionAddsClaimAndReleaseOnlyForAnInteractiveSession(t *testing.T) {
 	for _, tool := range sess.request("tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		listed = append(listed, tool.(map[string]any)["name"].(string))
 	}
-	want := []string{"tasks_list", "tasks_get", "tasks_claim", "tasks_update_state", "tasks_append_log", "tasks_complete", "tasks_block", "tasks_release", "tasks_set_subtasks", "tasks_propose"}
+	want := []string{"tasks_list", "tasks_get", "tasks_claim", "tasks_update_state", "tasks_append_log", "tasks_complete", "tasks_block", "tasks_unblock", "tasks_release", "tasks_set_subtasks", "tasks_propose"}
 	if !slices.Equal(listed, want) {
 		t.Fatalf("session tools/list = %v, want %v", listed, want)
 	}
@@ -84,12 +84,36 @@ func TestSessionAddsClaimAndReleaseOnlyForAnInteractiveSession(t *testing.T) {
 	if instructions := loop.request("initialize", nil)["result"].(map[string]any)["instructions"].(string); strings.Contains(instructions, "tasks_claim") {
 		t.Fatalf("a loop box must not be told to claim: %s", instructions)
 	}
-	for _, name := range []string{"tasks_claim", "tasks_release"} {
+	for _, name := range []string{"tasks_claim", "tasks_release", "tasks_unblock"} {
 		reply := loop.request("tools/call", map[string]any{"name": name, "arguments": map[string]any{"id": "mine"}})
 		if code := rpcErrorCode(t, reply); code != codeInvalidParams {
 			t.Fatalf("%s on a loop box = %v, want unknown tool", name, reply)
 		}
 	}
+}
+
+// A decision answered in chat travels with the task when the interactive agent returns it to Todo.
+func TestInteractiveSessionAppliesAnAnswerToABlockedTask(t *testing.T) {
+	root := queue(t, map[string]string{"picked": tasks.StateTodo})
+	sess := newSession(t, newSessionServer(t, root, sessionActor(t, "codex", os.Getpid())))
+	id := map[string]any{"id": "picked"}
+	sess.mustCall("tasks_claim", id)
+	sess.mustCall("tasks_block", map[string]any{"id": "picked", "question": "Which store?", "why": "The choice changes persistence.", "options": []string{"SQLite", "Postgres"}, "recommendation": "SQLite"})
+	for _, answer := range []string{"", "pending owner direction", "one\ntwo"} {
+		sess.mustRefuse("tasks_unblock", map[string]any{"id": "picked", "answer": answer})
+	}
+	answer := map[string]any{"id": "picked", "answer": "Use SQLite."}
+	sess.mustCall("tasks_unblock", answer)
+	sess.mustCall("tasks_unblock", answer)
+	sess.mustRefuse("tasks_unblock", map[string]any{"id": "picked", "answer": "Use Postgres."})
+	dir := filepath.Join(root, tasks.StateTodo, "picked")
+	for _, file := range []string{"decision.md", "log.md"} {
+		data, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil || strings.Count(string(data), "Use SQLite.") != 1 || strings.Contains(string(data), "Use Postgres.") {
+			t.Fatalf("%s = %q, %v", file, data, err)
+		}
+	}
+	sess.mustCall("tasks_claim", id)
 }
 
 // The whole interactive cycle runs through the tools: claim a todo task, work it, complete it.
@@ -155,6 +179,7 @@ func TestSessionClaimAndReleaseRefuseWhatTheSessionDoesNotOwn(t *testing.T) {
 	// Another live session's claim keeps every write off its task, not just a second claim.
 	for name, args := range map[string]map[string]any{
 		"tasks_append_log":   {"id": "theirs", "entry": "x"},
+		"tasks_unblock":      {"id": "theirs", "answer": "Go ahead."},
 		"tasks_update_state": {"id": "theirs", "status": "s"},
 		"tasks_set_subtasks": {"id": "theirs", "subtasks": []map[string]any{{"text": "x"}}},
 		"tasks_complete":     {"id": "theirs", "unrun_checks": []string{}},
@@ -170,6 +195,9 @@ func TestSessionClaimAndReleaseRefuseWhatTheSessionDoesNotOwn(t *testing.T) {
 		if text := sess.mustRefuse("tasks_claim", map[string]any{"id": id}); !strings.Contains(text, want) {
 			t.Fatalf("claim %s refusal = %s, want it to say %q", id, text, want)
 		}
+	}
+	if text := sess.mustRefuse("tasks_unblock", map[string]any{"id": "held", "answer": "Continue."}); !strings.Contains(text, "held by another live process") {
+		t.Fatalf("unblocking a leased task = %s", text)
 	}
 	if text := sess.mustRefuse("tasks_release", map[string]any{"id": "theirs"}); !strings.Contains(text, "claimed by codex") {
 		t.Fatalf("releasing another session's claim = %s", text)

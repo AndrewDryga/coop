@@ -400,3 +400,83 @@ func TestSessionClaimWaitsForAPendingUnblock(t *testing.T) {
 		t.Fatal("a refused claim recorded an owner")
 	}
 }
+
+func TestSessionUnblockLeavesHostDecisionsIntact(t *testing.T) {
+	const answer = "Retry the existing work."
+	refused := func(t *testing.T, root string, task Item, reason string) {
+		t.Helper()
+		decision := filepath.Join(task.Dir, "decision.md")
+		before := readFileString(decision)
+		err := UnblockSessionTask(root, task, selfActor(t, "codex"), answer)
+		if err == nil || !strings.Contains(err.Error(), reason) {
+			t.Fatalf("unblock = %v, want %q", err, reason)
+		}
+		if current := mustTask(t, root, task.ID); current.State != task.State || readFileString(decision) != before {
+			t.Fatalf("refused unblock changed the task or its decision: %+v", current)
+		}
+	}
+	t.Run("fork", func(t *testing.T) {
+		_, root, _ := acceptedForkDecision(t, "session-unblock", false)
+		refused(t, root, mustTask(t, root, "assigned"), "coop tasks unblock")
+	})
+	t.Run("committed before blocking", func(t *testing.T) {
+		f := newCommittedBlockFixture(t)
+		lease, base := f.lease(t)
+		f.commit(t, "a.txt", "A\n", "A implementation\n\nCoop-Task: "+f.id)
+		f.blockAttempt(t, lease, base)
+		refused(t, f.root, mustTask(t, f.root, f.id), "coop tasks unblock")
+		if !f.noted(t) || f.granted(t) {
+			t.Fatal("a refused unblock changed the committed-block authority")
+		}
+	})
+	for _, state := range []string{StateBlocked, StateTodo} {
+		t.Run("audit in "+state, func(t *testing.T) {
+			root := t.TempDir()
+			task := taskForLease(t, root, state, "review")
+			// A matching answer in Todo must not confirm success midway through a host unblock.
+			writeTaskFile(t, filepath.Join(task.Dir, "decision.md"), withResolution("", answer))
+			record := testAuditReopenRecord(task.ID, "review-generation")
+			if state == StateTodo {
+				record.Version, record.UnblockPending = auditReopenPendingVersion, true
+			}
+			if err := WriteAuditReopenRecord(root, record); err != nil {
+				t.Fatal(err)
+			}
+			refused(t, root, task, "coop tasks unblock")
+			if after, ok, err := ReadAuditReopenRecord(root, task.ID); err != nil || !ok || !sameAuditReopenRecord(after, record) {
+				t.Fatalf("a refused unblock changed audit authority: %+v, %v", after, err)
+			}
+		})
+	}
+}
+
+func TestSessionUnblockPreservesASavedAnswerAndFinishesClaimCleanup(t *testing.T) {
+	root := t.TempDir()
+	task := taskForLease(t, root, StateBlocked, "answered")
+	me := selfActor(t, "codex")
+	const answer = "Keep the current format."
+	writeTaskFile(t, filepath.Join(task.Dir, "decision.md"), withResolution("", answer))
+	if err := UnblockSessionTask(root, task, me, "Replace it."); err == nil {
+		t.Fatal("overwrote a different answer before the host could move the task")
+	}
+	if got, err := TaskResolution(task.Dir); err != nil || got != answer {
+		t.Fatalf("saved answer = %q, %v", got, err)
+	}
+	claim, err := humanClaimRecord(root, task, me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTaskOwnerRecord(root, claim); err != nil {
+		t.Fatal(err)
+	}
+	// Reconstruct a crash after the rename and before owner cleanup.
+	if err := MoveTaskDir(root, task, StateTodo); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnblockSessionTask(root, mustTask(t, root, task.ID), me, answer); err != nil {
+		t.Fatal(err)
+	}
+	if _, owned := taskOwned(t, root, task.ID); owned {
+		t.Fatal("the retried unblock stranded a claim in Todo")
+	}
+}

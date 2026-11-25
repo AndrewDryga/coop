@@ -184,6 +184,9 @@ A task goes to `50_blocked/` when it hits a choice that's expensive to undo and 
 `coop tasks block <id>` creates this file; the agent fills the question, why it is blocked, the
 options, and a recommendation; **the human resolves it — write the Resolution and run `coop tasks unblock <id>`,
 or do both at once with `coop tasks unblock <id> "<answer>"`.**
+In an interactive box, give the agent your answer. It calls `tasks_unblock` with the task ID and
+your answer, saves it in this file, and returns the task to Todo. The tool names the host command
+when a fork assignment, audit reopening, or existing task commit needs it.
 `coop tasks decisions` lists every open one with its recommendation.
 To answer "not now", run `coop tasks park <id> ["<reason>"]`: the task moves to the backlog with
 its decision still open, so no preflight re-queues it, and `coop backlog promote <id>` brings it back.

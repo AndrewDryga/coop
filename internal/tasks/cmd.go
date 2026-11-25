@@ -1881,7 +1881,13 @@ func unblockRetryError(id string, hasAnswer bool, err error) error {
 func resolveAndUnblock(project, root string, t Item, answer string) (string, error) {
 	if answer != "" {
 		decision := filepath.Join(t.Dir, "decision.md")
-		if err := recordResolution(decision, answer); err != nil {
+		// An interactive unblock holds the owner lock while it saves its answer and moves
+		// the folder. Keep this write on the blocked side of that same move.
+		owner, err := lockTaskOwner(root, t.ID)
+		if err == nil {
+			err = errors.Join(recordResolution(decision, answer), owner.Close())
+		}
+		if err != nil {
 			return "", &unblockStageError{stage: "decision write", artifact: decision, state: StateBlocked, err: err}
 		}
 	}

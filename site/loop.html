@@ -149,7 +149,10 @@ task. A rate limit doesn&#39;t count as a failed task attempt.</p>
 <p>Add <code>--preflight</code> to check the queue before work starts. This pass unblocks tasks in
 <code>50_blocked/</code> when their <code>decision.md</code> has an answer, and releases claims held by processes that
 have exited. It leaves backlog tasks parked with <code>coop tasks park</code> alone, does no task work and
-makes no commits. Preflight is off by default.
+makes no commits. Preflight is off by default.</p>
+<p>You can also answer a blocked task in an interactive editor or terminal session. The agent calls
+<code>tasks_unblock</code> with the task ID and your answer. Coop saves it in <code>decision.md</code> and returns the
+task to Todo immediately. Fork assignments and tasks reopened by review use the host unblock command.
 A task its worker committed before blocking it waits for your answer to
 <code>coop tasks unblock &lt;id&gt; &#34;&lt;answer&gt;&#34;</code>, which names that commit and lets the next worker close the
 task without a new commit.</p>

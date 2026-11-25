@@ -13,7 +13,7 @@ import (
 )
 
 // The host-side face of the in-box task channel (internal/taskmcp). Every mutation a box can
-// request through its task tools (nine in a loop box, ten in a session) lands here, on the same
+// request through its task tools (nine in a loop box, eleven in a session) lands here, on the same
 // validation, file discipline, and collision rules the CLI uses, so a call from the box can never
 // write a queue the host would not have written itself.
 //

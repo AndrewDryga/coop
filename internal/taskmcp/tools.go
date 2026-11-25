@@ -126,6 +126,13 @@ var toolTable = []tool{
 		loop: true,
 	},
 	{
+		name:        "tasks_unblock",
+		description: "Apply the user's answer to an ordinary blocked task and return it to Todo. Give the answer the user supplied for this task, never an agent's proposed answer. The host keeps decisions involving fork assignments, review reopenings or work committed before blocking.",
+		schema:      object(map[string]any{"id": idProp(), "answer": textProp("The user's resolution on one line.", false, lineLimit)}, "id", "answer"),
+		run:         (*Server).unblock,
+		session:     true,
+	},
+	{
 		name:        "tasks_release",
 		description: "Hand back a task you claimed and will not finish in this session: it returns to 00_todo/ with its notes, so a coop loop or another session can take it. Refused when another live process holds or claims the task.",
 		schema:      object(map[string]any{"id": idProp()}, "id"),
@@ -223,7 +230,7 @@ func withMinProperties(schema map[string]any, count int) map[string]any {
 func ToolNames() []string { return names(offeredTools(false)) }
 
 // offeredTools is the tool set a server offers, in presentation order: the loop's nine, or for an
-// interactive session the shared ones plus the claim and release pair it works its own tasks with.
+// interactive session the shared tools plus claim, unblock and release.
 func offeredTools(session bool) []tool {
 	out := make([]tool, 0, len(toolTable))
 	for _, t := range toolTable {
@@ -827,9 +834,11 @@ func (s *Server) complete(_ context.Context, args json.RawMessage) *toolResult {
 		}
 		return textResult(fmt.Sprintf("%s is already done", loc.item.ID) + completionEvidenceHandoff + s.bulkNote(loc.item.Dir))
 	}
-	// The same rule as `coop tasks claim`: a blocked task's decision belongs to a human, and only the
-	// host's unblock returns it to work, so the box can finish neither its own blocked task nor another.
+	// Completion waits for the human's answer even on the iteration's own task.
 	if loc.item.State == tasks.StateBlocked {
+		if s.authority.Session != nil {
+			return refusal(fmt.Sprintf("%s is blocked. Use tasks_unblock with the user's answer before claiming it again", loc.item.ID))
+		}
 		return refusal(fmt.Sprintf("%s is blocked on a decision for a human, who returns it to todo with `coop tasks unblock %s` — leave it alone", loc.item.ID, loc.item.ID))
 	}
 	if loc.item.ID != s.authority.Assigned {
@@ -1064,6 +1073,27 @@ func (s *Server) claim(_ context.Context, args json.RawMessage) *toolResult {
 	return textResult(result)
 }
 
+func (s *Server) unblock(_ context.Context, args json.RawMessage) *toolResult {
+	var in struct {
+		ID     string `json:"id"`
+		Answer string `json:"answer"`
+	}
+	if r := decodeArgs(args, &in); r != nil {
+		return r
+	}
+	loc, r := s.locate(in.ID)
+	if r != nil {
+		return r
+	}
+	if err := tasks.UnblockSessionTask(loc.root, loc.item, *s.authority.Session, in.Answer); err != nil {
+		if errors.Is(err, tasks.ErrTaskLeased) {
+			return heldRefusal(loc.item.ID, "unblock", "leased")
+		}
+		return refusal(fmt.Sprintf("unblock %s: %v", loc.item.ID, err))
+	}
+	return textResult(fmt.Sprintf("%s is in %s/ with the user's answer in decision.md", loc.item.ID, tasks.StateTodo))
+}
+
 func (s *Server) release(_ context.Context, args json.RawMessage) *toolResult {
 	var in struct {
 		ID string `json:"id"`
@@ -1085,7 +1115,7 @@ func (s *Server) release(_ context.Context, args json.RawMessage) *toolResult {
 		}
 	case tasks.StateInProgress:
 	case tasks.StateBlocked:
-		return refusal(fmt.Sprintf("%s is blocked on a decision only a human can answer; nothing to release", loc.item.ID))
+		return refusal(fmt.Sprintf("%s is blocked on a decision only a human can answer; use tasks_unblock when they answer", loc.item.ID))
 	default:
 		return refusal(fmt.Sprintf("%s is done; completed work stays in the archive", loc.item.ID))
 	}

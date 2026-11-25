@@ -4,6 +4,8 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- You can answer a blocked task in an interactive session. The agent saves your answer and
+  returns the task to Todo through `tasks_unblock`.
 - Codex editor sessions register each shared MCP server once. Zed now shows genuine startup
   errors without a failed card for each server already configured by Coop.
 

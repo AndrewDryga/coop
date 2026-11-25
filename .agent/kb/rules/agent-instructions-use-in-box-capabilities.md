@@ -4,7 +4,7 @@ description: "agent-facing instructions name in-box capabilities, never host-sid
 scope: agent-workflow
 sources: [AGENTS.md, internal/scaffold/templates/AGENTS.md, internal/scaffold/scaffold.go, .agent/skills/review-board/SKILL.md, .agent/skills/work/SKILL.md, .agent/skills/sweep/SKILL.md, internal/scaffold/templates/skills/review-board/SKILL.md, internal/scaffold/templates/skills/work/SKILL.md, internal/scaffold/templates/skills/sweep/SKILL.md]
 check: "none"
-updated: 2026-11-17
+updated: 2026-11-25
 ---
 
 # Agent-facing instructions use in-box capabilities only
@@ -31,7 +31,8 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   capabilities, not mentioning them as bans — a ban wastes no turns.
 - A box that serves coop's task tools (a loop work box, an interactive `coop acp` or `coop <agent>`
   box) changes task state through them: name `tasks_claim`/`tasks_complete`/`tasks_block`/
-  `tasks_release` first, then `coop` on `PATH`, then the folder move for a box with neither.
+  `tasks_release` first, then `coop` on `PATH`, then the folder move for a box with neither. When the user answers a blocked task in an
+  interactive session, use `tasks_unblock` with their answer.
 - If a native capability may not exist, phrase it as "if your runtime has it" and require
   the closest safe fallback instead of inventing slash commands or APIs.
 - A workflow skill that can run on the host or in a box uses an explicitly supplied proposal route
@@ -39,6 +40,8 @@ human/operator layer; the boxed agent should use only its runtime's native tools
   falls back to the self-contained task-folder operation available in the box.
 
 ## Changelog
+- 2026-11-25 — checked task instructions in AGENTS.md, the task README and their scaffold copies.
+  All four now tell interactive agents how to apply a user's decision.
 - 2026-11-17 — follow-up sweep: the 2026-11-03 pass missed the filing lines. AGENTS.md and its
   scaffold copy now name `tasks_propose` (kind task or backlog) beside every `coop tasks add` and
   `coop backlog add`.

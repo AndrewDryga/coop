@@ -4744,38 +4744,10 @@ func UnblockResolved(hosts []string) ([]string, error) {
 			if !resolved {
 				continue
 			}
-			_, hasAuthority, err := ReadAuditReopenRecord(host, t.ID)
-			if err != nil {
-				ui.Warn("pre-flight: could not inspect host audit authority for %s: %v — task remains blocked; repair the host authority registry, then retry: coop tasks unblock %s", t.ID, err, t.ID)
-				continue
-			}
-			if hasAuthority {
-				ui.Warn("pre-flight: %s has host audit-reopen authority — unblock it explicitly: coop tasks unblock %s", t.ID, t.ID)
-				continue
-			}
-			// Only a person's answer to coop tasks unblock may turn the note into re-close authority,
-			// and a box can write the Resolution this pass reads.
-			if _, committed, err := readCommittedBlock(host, t.ID); err != nil {
-				ui.Warn("pre-flight: could not inspect host records for %s: %v — task remains blocked; repair the host authority registry, then retry: coop tasks unblock %s", t.ID, err, t.ID)
-				continue
-			} else if committed {
-				ui.Warn("pre-flight: %s was committed before it blocked — give your answer so the next worker can close it: coop tasks unblock %s \"<answer>\"", t.ID, t.ID)
-				continue
-			}
-			// A fork's task resumes only through coop tasks unblock, which also hands the answer to
-			// the fork's copy; moving the folder here would leave it in todo that nobody works.
-			if owner, owned, err := readTaskOwnerRecordOf(host, t); err != nil {
-				ui.Warn("pre-flight: could not inspect the owner of %s: %v — task remains blocked; unblock it explicitly: coop tasks unblock %s", t.ID, err, t.ID)
-				continue
-			} else if owned && owner.Kind == TaskOwnerFork {
-				ui.Warn("pre-flight: %s belongs to a fork — unblock it explicitly: coop tasks unblock %s", t.ID, t.ID)
-				continue
-			}
-			if err := MoveTaskDir(host, t, StateTodo); err != nil {
+			if err := unblockOrdinaryTask(host, t, ClaimActor{}, ""); err != nil {
 				ui.Warn("pre-flight: could not unblock %s: %v", t.ID, err)
 				continue
 			}
-			appendTaskLog(filepath.Join(host, StateTodo, t.ID), "preflight: resolution filled in — unblocked")
 			ids = append(ids, t.ID)
 		}
 	}
