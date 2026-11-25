@@ -2,11 +2,12 @@
      release skill rewrites this file in each finalize commit, and the release workflow publishes
      its section as is (tools/releasenotes). CHANGELOG.md keeps every change. -->
 
-## 15.4.1
+## 15.5.0
 
-- **Claude editor sessions can start when managed policy blocks the supplied MCP servers.** Claude skips those servers and reports which ones it skipped.
-- **Updated the bundled editor adapters.** Claude ACP moves to 0.111.0, and Codex ACP 2.11.0 brings editor protocol and terminal-output fixes.
+**Answer blocked tasks in chat.** After updating, start a new interactive Coop session and give
+the agent your decision. It can record your answer and move the task back to Todo.
 
-If Coop reports a stale custom project image, run `coop build`.
+**Fewer false startup errors in Zed.** Codex now recognizes MCP servers that Coop already
+configured. Zed still shows an error when a server actually fails to start.
 
-[Full changelog](https://github.com/AndrewDryga/coop/compare/v15.4.0...v15.4.1)
+[Full changelog](https://github.com/AndrewDryga/coop/compare/v15.4.1...v15.5.0)

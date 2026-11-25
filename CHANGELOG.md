@@ -1,13 +1,12 @@
 # Changelog
 
-## Unreleased
+## 15.5.0
 
-<!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
-
-- You can answer a blocked task in an interactive session. The agent saves your answer and
-  returns the task to Todo through `tasks_unblock`.
-- Codex editor sessions register each shared MCP server once. Zed now shows genuine startup
-  errors without a failed card for each server already configured by Coop.
+- **Unblock a task from an interactive session.** Give the agent your answer and it can use
+  `tasks_unblock` to save the decision and return the task to Todo. Fork assignments, tasks
+  reopened by review, and tasks committed before blocking still use `coop tasks unblock` on the host.
+- **Codex editor sessions register each shared MCP server once.** Zed no longer shows a startup
+  failure for a server Coop has already configured. It still reports servers that fail to start.
 
 ## 15.4.1
 
