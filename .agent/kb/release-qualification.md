@@ -3,7 +3,7 @@ name: release-qualification
 description: "tagged releases reuse exact-commit CI, validate finalized notes and preserve tag identity"
 subsystem: release
 sources: [Makefile, .github/workflows/ci.yml, .github/workflows/release.yml, .goreleaser.yaml, tools/releasenotes/main.go, .github/release-notes.md, release_test.go, internal/cli/help.go, internal/cli/selfupdate.go]
-updated: 2026-11-17
+updated: 2026-11-25
 ---
 
 Release `ci` locally calls ci.yml from the event commit; its Make-owned broad checks, Docker
@@ -47,13 +47,16 @@ Before tagging, check that the addresses the binary prints or fetches resolve: t
 the release API `coop update` asks and the installer its errors name. A broken one ships in every
 install, and a binary cannot repair its own release source. This exits non-zero on any failure:
 
-    grep -ohE 'https://[A-Za-z0-9._~:/?#@%+=&-]+' internal/cli/help.go internal/cli/selfupdate.go |
+    grep -hvE '"--certificate-(identity|oidc-issuer)"' internal/cli/help.go internal/cli/selfupdate.go |
+      grep -oE 'https://[A-Za-z0-9._~:/?#@%+=&-]+' |
       grep -vE 'example|/releases/download/$' | sort -u |
       xargs -n1 curl -fsSL -o /dev/null --max-time 20 -w '%{http_code} %{url}\n'
 
 A repository's first release has no `releases/latest` until it is published; check it again then.
 
 ## Changelog
+- 2026-11-25 — the address check skips cosign's certificate identity and issuer arguments.
+  Cosign compares these strings with the signing certificate when verifying an update.
 - 2026-11-17 — the release also waits on the image-vuln job (audit K4-3; checked the check job's needs in ci.yml and release.yml).
 - 2026-11-03 — added the pre-tag address check after `coop update --check` met a 404 from a moved
   release source; all 5 addresses on main answered 200, and a missing repository fails it.
