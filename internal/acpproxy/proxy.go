@@ -123,6 +123,11 @@ type Hooks struct {
 	// synthesized model set translated to session/set_model). handled=false with a non-nil resp writes
 	// resp to the editor before the line goes anywhere, so it is the first the editor hears of that request.
 	FromEditor func(line []byte) (handled bool, resp []byte, toAdapter []byte, restart bool)
+	// SwitchSetting sees an editor session/set_config_option that arrives while a switch has no box.
+	// A non-nil answer goes to the editor and the request goes nowhere else: the owner keeps the
+	// choice and applies it through SessionReady once the replacement is up. nil leaves the request
+	// to the normal path, which asks the editor to retry after the switch. Runs under controlMu.
+	SwitchSetting func(line []byte) []byte
 	// PromptForwarded observes a session/prompt only after it has cleared target-setting gating and
 	// reload admission and entered pending bookkeeping. synthetic distinguishes a replay resume from
 	// a real editor prompt. It is the safe point for request correlation and assistant-turn ownership.
@@ -1040,6 +1045,20 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 	}
 	if p.gatePrompt(line, origin) {
 		return
+	}
+	if origin == originEditor && original.Method == "session/set_config_option" && original.isRequest() &&
+		p.hooks != nil && p.hooks.SwitchSetting != nil {
+		// controlMu orders this before the replacement's SessionReady, which reads the kept choice.
+		p.mu.Lock()
+		switching := p.child == nil && p.restarting
+		p.mu.Unlock()
+		if switching {
+			if answer := p.hooks.SwitchSetting(line); len(answer) > 0 {
+				traceLine("box→editor(coop)", answer)
+				_, _ = p.out.Write(answer)
+				return
+			}
+		}
 	}
 	// coop's control layer gets first look: it may handle an editor request itself (a coop-owned
 	// config option like the credential/preset selector) — not forwarding it to the adapter, replying
@@ -2238,6 +2257,7 @@ func (p *proxy) writeControllerResponse(line []byte) {
 		out, restart = p.hooks.ToEditor(line)
 	}
 	if len(out) > 0 {
+		traceLine("box→editor(coop)", out)
 		_, _ = p.out.Write(out)
 	}
 	if restart {

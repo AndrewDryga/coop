@@ -2,8 +2,8 @@
 name: acp-replay-publication
 description: ACP replacement sessions become authoritative as one generation before held editor work is released
 subsystem: acp
-sources: [internal/acpproxy/proxy.go, internal/acpproxy/proxy_test.go, internal/acpproxy/cancel.go, internal/acpproxy/cancel_test.go, internal/acpproxy/factory.go, internal/acpproxy/factory_test.go, internal/acpctl/cancel.go, internal/acpctl/cancel_test.go]
-updated: 2026-11-04
+sources: [internal/acpproxy/proxy.go, internal/acpproxy/proxy_test.go, internal/acpproxy/cancel.go, internal/acpproxy/cancel_test.go, internal/acpproxy/factory.go, internal/acpproxy/factory_test.go, internal/acpctl/cancel.go, internal/acpctl/cancel_test.go, internal/acpctl/control.go, internal/acpctl/switch_setting_test.go]
+updated: 2026-11-26
 ---
 
 Across SIGHUP, the proxy serializes exactly one initialize request plus explicit editor, adapter,
@@ -33,6 +33,12 @@ is retired and `restarting` is true, setup requests are refused with switching/w
 not permanent thread-unavailability advice. The existing native binding remains intact; retrying
 `session/load` after replacement config publication uses that same binding.
 
+A model or effort picked in that window goes to `Hooks.SwitchSetting` instead of the retry error,
+because Zed does not show that error: its dropdown just snaps back. The controller keeps a value the
+session's cached toolbar offered for the provider coming up as the plain target, answers the editor
+at once, and the replacement's `SessionReady` applies it. A preset, another provider's toolbar, an
+unoffered value or any other option keeps the retry error (`switchSetting` in `internal/acpctl/control.go`).
+
 Cancellation shares the admission/publication control mutex. A prompt held for replay or target
 settings is locally completed as cancelled; a prompt admitted to the current child remains the
 adapter's responsibility. Reserved replay IDs are not wire-active prompts. The controller clears
@@ -60,6 +66,7 @@ request can hold controlMu while blocked writing to a child, so `beginReload` st
 it answers, and `snapshot` waits for those answers so none is lost to the re-exec.
 
 ## Changelog
+- 2026-11-26 - model/effort picks during a switch are kept and applied by the replacement, not refused
 - 2026-11-04 - proxy-owned failures reach the controller; reload stops children first and the snapshot waits
 - 2026-10-28 - cleared restored remaps on failed initial resume; the timeout recovery regression now
   reuses the old native ID and verifies its new response/update identity under the race detector.

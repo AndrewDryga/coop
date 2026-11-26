@@ -239,6 +239,7 @@ func (c *Control) Hooks() *acpproxy.Hooks {
 		ChildReset:            c.childReset,
 		Initialized:           c.initialized,
 		FromEditor:            c.fromEditor,
+		SwitchSetting:         c.switchSetting,
 		PromptForwarded:       c.promptForwarded,
 		PromptHeld:            c.promptHeld,
 		PromptCancelled:       c.promptCancelled,
@@ -2966,6 +2967,95 @@ func (c *Control) fromEditor(line []byte) (handled bool, resp []byte, toAdapter 
 		}
 	}
 	return true, response, nil, changed
+}
+
+// switchSetting keeps a model or effort the editor picks while a switch has no box. The pick becomes
+// the plain target, so the replacement's sessionReady applies it to every session, and the editor gets
+// its answer now instead of a retry error that would snap the dropdown back. It accepts only a value
+// the session's toolbar offered for the provider that is coming up; anything else returns nil and
+// keeps the normal "wait for the switch" answer.
+func (c *Control) switchSetting(line []byte) []byte {
+	var h struct {
+		ID     json.RawMessage `json:"id"`
+		Params struct {
+			SessionID string `json:"sessionId"`
+			ConfigID  string `json:"configId"`
+			Value     string `json:"value"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(line, &h) != nil || len(h.ID) == 0 || h.Params.SessionID == "" || h.Params.Value == "" {
+		return nil
+	}
+	field := ""
+	switch h.Params.ConfigID {
+	case "model":
+		field = "model"
+	case "effort", "reasoning_effort":
+		field = "effort"
+	default:
+		return nil
+	}
+	c.mu.Lock()
+	native := c.nativeCache[h.Params.SessionID]
+	if c.sel.Preset != "" || c.lead == "" || native.Provider != c.lead || c.target.Provider != c.lead ||
+		!native.offers(h.Params.ConfigID, h.Params.Value) {
+		c.mu.Unlock()
+		return nil
+	}
+	pref, target := c.plainTargets[c.lead], c.target
+	if field == "model" {
+		pref.Model, target.Model = h.Params.Value, h.Params.Value
+	} else {
+		pref.Effort, target.Effort = h.Params.Value, h.Params.Value
+	}
+	// Keep only what sessionReady will send (a launch-only model, like Grok's, would show but never
+	// apply) and a model/effort pair the next launch accepts.
+	if a, ok := agents.Get(c.lead); !ok || agents.ValidateEffort(a, target.Model, target.Effort) != nil ||
+		!slices.ContainsFunc(a.ACPSessionSettings(target), func(s agents.ACPSessionSetting) bool {
+			return s.ConfigID == h.Params.ConfigID || field == "model" && s.Method == agents.ACPSetModel
+		}) {
+		c.mu.Unlock()
+		return nil
+	}
+	c.plainTargets[c.lead], c.target, c.model = pref, target, target.Model
+	c.mu.Unlock()
+	// The rebuilt toolbar shows the model coop keeps; retargetSettings does the same for effort.
+	result := map[string]json.RawMessage{}
+	if options := c.retargetSettings(c.refreshSetup(h.Params.SessionID)); len(options) > 0 {
+		result["configOptions"] = visibleConfigOptions(options)
+	}
+	encoded, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": h.ID, "result": result})
+	return append(encoded, '\n')
+}
+
+// offers reports whether the cached toolbar lists value for configID, either as a native option or,
+// for the model, in the adapter's models field.
+func (n nativeOptionCache) offers(configID, value string) bool {
+	var options []struct {
+		ID      string   `json:"id"`
+		Options []Option `json:"options"`
+	}
+	_ = json.Unmarshal(n.Options, &options)
+	for _, option := range options {
+		if option.ID == configID {
+			return optionHasValue(option.Options, value)
+		}
+	}
+	if configID != "model" {
+		return false
+	}
+	var models struct {
+		AvailableModels []struct {
+			ModelID string `json:"modelId"`
+		} `json:"availableModels"`
+	}
+	_ = json.Unmarshal(n.Models, &models)
+	for _, model := range models.AvailableModels {
+		if model.ModelID == value {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Control) authenticationTarget() (provider, account string) {

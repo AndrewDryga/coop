@@ -1908,6 +1908,45 @@ func TestFailAllPendingClearsSessionReqs(t *testing.T) {
 	}
 }
 
+// A setting the editor picks while a switch has no box goes to SwitchSetting, whose answer the editor
+// gets instead of the retry error; once a box runs, the same request takes the normal path again.
+func TestProxySettingDuringSwitchGoesToSwitchSetting(t *testing.T) {
+	var output bytes.Buffer
+	var kept [][]byte
+	p := &proxy{
+		out: &output, restarting: true, pending: map[string]bool{},
+		sessions: map[string]*sess{"S1": {adapterID: "S1", provider: "claude"}},
+		hooks: &Hooks{SwitchSetting: func(line []byte) []byte {
+			kept = append(kept, line)
+			return []byte(`{"jsonrpc":"2.0","id":5,"result":{}}` + "\n")
+		}},
+	}
+	set := []byte(`{"jsonrpc":"2.0","id":5,"method":"session/set_config_option","params":{"sessionId":"S1","configId":"model","value":"sonnet"}}` + "\n")
+	p.forwardClient(set, originEditor)
+	if response := parse(output.Bytes()); len(kept) != 1 || string(response.ID) != "5" || len(response.Error) != 0 {
+		t.Fatalf("a setting during the switch was not answered by SwitchSetting: kept=%d out=%s", len(kept), output.Bytes())
+	}
+	if len(p.pending) != 0 {
+		t.Fatalf("a kept setting must not wait for a box answer: %v", p.pending)
+	}
+
+	// A refused setting keeps the retry answer.
+	output.Reset()
+	p.hooks.SwitchSetting = func([]byte) []byte { return nil }
+	p.forwardClient(set, originEditor)
+	if response := parse(output.Bytes()); string(response.ID) != "5" || !strings.Contains(string(response.Error), "switching") {
+		t.Fatalf("a refused setting must get the switching error, got %s", output.Bytes())
+	}
+
+	input := &recordingWriteCloser{}
+	p.child, p.restarting, kept = &Child{In: input, Provider: "claude"}, false, nil
+	p.hooks.SwitchSetting = func(line []byte) []byte { kept = append(kept, line); return line }
+	p.forwardClient(set, originEditor)
+	if len(kept) != 0 || !bytes.Contains(input.Bytes(), []byte(`"value":"sonnet"`)) {
+		t.Fatalf("with a box running the setting must reach it: kept=%d box=%s", len(kept), input.Bytes())
+	}
+}
+
 func TestFailAllPendingFailsRestartHeldPrompts(t *testing.T) {
 	var out bytes.Buffer
 	p := &proxy{
