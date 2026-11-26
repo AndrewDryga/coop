@@ -578,6 +578,9 @@ type Agent interface {
 	// action nor reads a credential, and an unsupported tuple fails rather than
 	// warning. Optional features stay explicit operator requests.
 	NetworkBundle(NetworkBundleInput) (egress.Bundle, error)
+	// ACPMissingTranscript recognizes this adapter's internal-error detail when loading
+	// a bound session whose native transcript does not exist.
+	ACPMissingTranscript(nativeID, detail string) bool
 	// ACPRateLimitSignals are the STRUCTURED markers this agent's ACP adapter embeds in
 	// a JSON-RPC error to signal a rate/usage limit — proof the ACP controller rotates
 	// on without parsing prose. The output-token axis (finishReason/stopReason =

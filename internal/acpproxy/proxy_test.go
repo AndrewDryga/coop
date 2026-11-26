@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	agents "github.com/AndrewDryga/coop/internal/agent"
 	"github.com/AndrewDryga/coop/internal/mcp"
 )
 
@@ -66,6 +67,9 @@ func newFakeChild() *fakeChild {
 
 func (f *fakeChild) child() *Child {
 	child := &Child{In: f.inW, Out: f.outR, Provider: f.provider, HoldPrompts: f.holdPrompts, Launched: f.launched, WaitsForLock: f.waitsForLock, Stop: func() { f.outW.Close(); f.inR.Close() }}
+	if ag, ok := agents.Get(f.provider); ok {
+		child.MissingTranscript = ag.ACPMissingTranscript
+	}
 	if f.mcp != "" {
 		marker := f.mcp
 		child.MCPServers = func() (mcp.SessionServers, error) {

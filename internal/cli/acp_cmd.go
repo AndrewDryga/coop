@@ -1506,6 +1506,9 @@ func (a *app) spawnBox(ctx context.Context, self string, inner []string, superID
 		_ = forkspace.UpdateExecutionRoleByPID(activityRepo, pid, role)
 	}
 	child := &acpproxy.Child{ServeBinds: serveBinds, In: inW, Out: outR, Stop: stop, SetActive: setActive, Provider: provider, Account: account, Policy: policy, WaitDone: waitDone, HoldPrompts: holdPrompts, Launched: launched}
+	if ag, ok := agents.Get(provider); ok {
+		child.MissingTranscript = ag.ACPMissingTranscript
+	}
 	if waitR != nil {
 		a.acpBoxWait.follow(child, waitR)
 		child.WaitsForLock = func() bool { return a.acpBoxWait.waitsForLock(child) }

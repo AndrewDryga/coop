@@ -60,6 +60,8 @@ type Child struct {
 	// MCPServers returns this child's final shared tool projection, after initialize. The caller
 	// owns credential rendering; the proxy adds it only to wire-bound session setup, never snapshots.
 	MCPServers func() (mcp.SessionServers, error)
+	// MissingTranscript recognizes the adapter's internal-error detail for a missing native session.
+	MissingTranscript func(nativeID, detail string) bool
 	// Launched reports whether this child's box has started, for watchFirstAnswer. Nil if it cannot tell.
 	Launched func() bool
 	// WaitsForLock reports that this child says it waits for the project's service launch lock. Nil if
@@ -547,13 +549,15 @@ type sess struct {
 // durable until the active child returns success; otherwise a failed load/prompt/close can create a
 // phantom replay candidate or delete a still-live one.
 type sessionRequest struct {
-	method     string
-	editorID   string
-	adapterID  string
-	provider   string
-	params     json.RawMessage
-	generation uint64
-	admitted   bool // prompt reached this generation's forwarding path, not merely reserved for replay
+	method      string
+	editorID    string
+	adapterID   string
+	provider    string
+	params      json.RawMessage
+	generation  uint64
+	boundReopen bool  // load admitted for a saved binding or a closed, unprompted session
+	prior       *sess // session at load admission; a close or delete can race its reply
+	admitted    bool  // prompt reached this generation's forwarding path, not merely reserved for replay
 }
 
 // setupRequest stages provider-owned handshake state behind the child response. Initialize is
@@ -1294,7 +1298,7 @@ func (p *proxy) forwardClientControlled(line []byte, origin clientOrigin, contro
 				}
 				p.sessionReqs[string(h.ID)] = sessionRequest{
 					method: h.Method, editorID: sid, adapterID: adapterID, provider: provider, params: h.Params,
-					generation: p.generation,
+					generation: p.generation, boundReopen: coldLoad || (s != nil && s.closed && !s.turned), prior: s,
 				}
 				if coldLoad && adapterID != sid {
 					rewriteTo = adapterID
@@ -1527,24 +1531,18 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 				p.sessions[op.editorID] == nil && p.byAdapter[op.adapterID] == op.editorID {
 				delete(p.byAdapter, op.adapterID) // the provisional cold-load remap: nothing was bound
 			}
-			var reloadID string
 			var reload []byte
-			if wasSession && op.method == "session/load" && op.generation == generation && p.sessions[op.editorID] == nil &&
-				errorCode(h.Error) == resourceNotFound {
-				reloadID, reload = p.reloadAsNewLocked(op, h.ID, line, generation)
+			if wasSession && op.method == "session/load" && op.generation == generation &&
+				p.canRecreateLocked(op.editorID, op.prior) &&
+				op.missingTranscript(child, h.Error) {
+				reload = p.reloadAsNewLocked(op, h.ID, line)
 			}
 			p.mu.Unlock()
 			p.flushBindings()
 			if reload != nil {
-				// A session with no turn has no transcript to load (Claude's adapter answers "Resource
-				// not found"), so the thread starts afresh on a new native session, as replay does.
 				Trace("session/load of %s found no transcript; starting it afresh", op.editorID)
-				if _, err := child.In.Write(reload); err == nil {
-					return nil
-				}
-				p.mu.Lock()
-				delete(p.reloads, reloadID)
-				p.mu.Unlock()
+				p.writeReload(child, reload)
+				return nil
 			}
 			if heldLifecycle != "" {
 				p.failHeldPromptsForLifecycle(held, heldLifecycle)
@@ -1611,44 +1609,74 @@ func (p *proxy) pumpChild(child *Child, br *bufio.Reader) {
 	p.sendHeldText()
 }
 
-// resourceNotFound is the JSON-RPC code an adapter answers a session/load with when it has no
-// transcript under that id.
-const resourceNotFound = -32002
+// Some adapters report an internal error for an unprompted thread. Recognize only
+// their missing-transcript diagnostics for a thread we actually bound.
+func (op sessionRequest) missingTranscript(child *Child, raw json.RawMessage) bool {
+	var e struct {
+		Code int
+		Data json.RawMessage
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return false
+	}
+	if e.Code == -32002 {
+		// The standard resource-not-found fallback also covers older threads with no binding.
+		return op.boundReopen || op.prior == nil
+	}
+	if e.Code != -32603 || !op.boundReopen || child.MissingTranscript == nil {
+		return false
+	}
+	var data struct{ Details string }
+	return json.Unmarshal(e.Data, &data) == nil && child.MissingTranscript(op.adapterID, data.Details)
+}
+
+// Only an absent session or a still-closed unprompted session may be rebound.
+func (p *proxy) canRecreateLocked(editorID string, prior *sess) bool {
+	return p.sessions[editorID] == prior && (prior == nil || prior.closed && !prior.turned)
+}
 
 // reloadAsNew is an editor's session/load the proxy answers with a fresh native session instead.
 type reloadAsNew struct {
-	editorID, provider string
-	request            json.RawMessage // the editor's request id
-	params             json.RawMessage // session/new params: the load's, without its sessionId
-	failure            []byte          // the adapter's own answer, sent if the fresh session fails too
-	generation         uint64
+	editorID   string
+	prior      *sess
+	request    json.RawMessage // the editor's request id
+	params     json.RawMessage // original editor parameters; newRequest removes sessionId
+	failure    []byte          // the adapter's own answer, sent if the fresh session fails too
+	generation uint64
 }
 
 // reloadAsNewLocked registers and returns a session/new standing in for a load that found no
 // transcript. p.mu must be held.
-func (p *proxy) reloadAsNewLocked(op sessionRequest, request json.RawMessage, failure []byte, generation uint64) (string, []byte) {
-	var params map[string]json.RawMessage
-	if json.Unmarshal(op.params, &params) != nil {
-		return "", nil
-	}
-	delete(params, "sessionId")
-	stripped, err := json.Marshal(params)
-	if err != nil {
-		return "", nil
-	}
-	id := fmt.Sprintf("%sreload-%d-%s", InjectPrefix, generation, trimQuotes(request))
-	msg, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session/new", "params": json.RawMessage(stripped)})
-	if err != nil {
-		return "", nil
-	}
+func (p *proxy) reloadAsNewLocked(op sessionRequest, request json.RawMessage, failure []byte) []byte {
+	id := fmt.Sprintf("%sreload-%d-%s", InjectPrefix, op.generation, trimQuotes(request))
+	msg := newRequest(id, op.params)
 	if p.reloads == nil {
 		p.reloads = map[string]reloadAsNew{}
 	}
 	p.reloads[id] = reloadAsNew{
-		editorID: op.editorID, provider: op.provider, request: clone(request), params: stripped,
-		failure: clone(failure), generation: generation,
+		editorID: op.editorID, prior: op.prior, request: clone(request), params: op.params,
+		failure: clone(failure), generation: op.generation,
 	}
-	return id, append(msg, '\n')
+	return msg
+}
+
+// writeReload applies the receiving child's shared tools to the original editor
+// parameters, just as for session/new. controlMu is held. A broken pipe leaves
+// the request pending for the replacement child or the final shutdown response.
+func (p *proxy) writeReload(child *Child, msg []byte) {
+	line, err := projectSessionMCP(child, msg)
+	if err == nil {
+		_, _ = child.In.Write(line)
+		return
+	}
+	id := string(trimQuotes(parse(msg).ID))
+	p.mu.Lock()
+	r, pending := p.reloads[id]
+	delete(p.reloads, id)
+	p.mu.Unlock()
+	if pending {
+		p.writeControllerResponse(sessionMCPErrorResponse(r.request, err))
+	}
 }
 
 // reissueReloadsLocked moves every load still waiting on its fresh session to child generation, which
@@ -1662,13 +1690,10 @@ func (p *proxy) reissueReloadsLocked(generation uint64) [][]byte {
 		}
 		delete(p.reloads, id)
 		next := fmt.Sprintf("%sreload-%d-%s", InjectPrefix, generation, trimQuotes(r.request))
-		msg, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": next, "method": "session/new", "params": json.RawMessage(r.params)})
-		if err != nil {
-			continue
-		}
+		msg := newRequest(next, r.params)
 		r.generation = generation
 		p.reloads[next] = r
-		writes = append(writes, append(msg, '\n'))
+		writes = append(writes, msg)
 	}
 	return writes
 }
@@ -1694,9 +1719,9 @@ func (p *proxy) finishReload(child *Child, generation uint64, r reloadAsNew, h h
 	}
 	p.mu.Lock()
 	ok := fresh != "" && child != nil && p.child == child && p.generation == generation && r.generation == generation &&
-		p.sessions[r.editorID] == nil && !p.freshSessionIDCollidesLocked(fresh)
+		p.canRecreateLocked(r.editorID, r.prior) && !p.freshSessionIDCollidesLocked(fresh)
 	if ok {
-		p.bindSessionLocked(r.editorID, fresh, r.provider, r.params, false)
+		p.bindSessionLocked(r.editorID, fresh, child.Provider, r.params, false)
 	}
 	p.mu.Unlock()
 	if !ok {
@@ -1713,15 +1738,6 @@ func (p *proxy) finishReload(child *Child, generation uint64, r reloadAsNew, h h
 	if p.hooks != nil && p.hooks.SessionRecreated != nil {
 		p.hooks.SessionRecreated(r.editorID)
 	}
-}
-
-// errorCode is a JSON-RPC error's code, or 0.
-func errorCode(raw json.RawMessage) int {
-	var e struct {
-		Code int `json:"code"`
-	}
-	_ = json.Unmarshal(raw, &e)
-	return e.Code
 }
 
 // controlMu is held through gate installation and release.
@@ -2970,7 +2986,7 @@ func (p *proxy) swapChildAt(
 		// A load that became session/new on the child that died gets its fresh session here. If the write
 		// fails, this child is dying too, and the next replacement or the give-up answers the load.
 		for _, msg := range reloadWrites {
-			_, _ = c.In.Write(msg)
+			p.writeReload(c, msg)
 		}
 		for _, msg := range forceWrites {
 			p.writeForce(c, msg)

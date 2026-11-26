@@ -217,19 +217,126 @@ func TestProxyLoadWithNoTranscriptStartsAfresh(t *testing.T) {
 	h.shutdown()
 }
 
+// An unprompted thread can lack a transcript. Zed can reopen before that first turn,
+// including after a switch gave the editor thread a different native ID.
+func TestProxyReopenUnpromptedThread(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, native, detail string
+		closed                         bool
+	}{
+		{"cold Codex", "codex", "N1", "no rollout found for thread id N1", false},
+		{"closed Codex", "codex", "S1", "no rollout found for thread id S1", true},
+		{"missing Gemini ID", "gemini", "N1", "Invalid session identifier \"N1\".\n  Searched for sessions in /w/chats.", false},
+		{"empty Gemini project", "gemini", "N1", "No previous sessions found for this project.", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMemBindings(map[string]SessionBinding{"S1": {Provider: tc.provider, AdapterID: tc.native}})
+			h := newProxyHarnessWith(t, 1, nil, RunOpts{Bindings: store}, tc.provider)
+			h.initialize(0)
+			if tc.closed {
+				h.newSession(0, tc.native)
+				writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/close","params":{"sessionId":"S1"}}`)
+				readLine(t, h.childIn[0])
+				writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":3,"result":{}}`)
+				readLine(t, h.clientOut)
+			}
+			writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/load","params":{"cwd":"/w","sessionId":"S1"}}`)
+			load := parse(readLine(t, h.childIn[0]))
+			if load.Method != "session/load" || sessionID(load.Params) != tc.native {
+				t.Fatalf("expected to load %s first, got %s %s", tc.native, load.Method, load.Params)
+			}
+			detail, _ := json.Marshal(tc.detail)
+			writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":4,"error":{"code":-32603,"message":"Internal error","data":{"details":`+string(detail)+`}}}`)
+			fresh := parse(readLine(t, h.childIn[0]))
+			if fresh.Method != "session/new" || sessionID(fresh.Params) != "" {
+				t.Fatalf("expected a fresh session, got %s %s", fresh.Method, fresh.Params)
+			}
+			writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":`+string(fresh.ID)+`,"result":{"sessionId":"N2"}}`)
+			if answer := parse(readLine(t, h.clientOut)); string(answer.ID) != "4" || !responseSucceeded(answer) {
+				t.Fatalf("load failed: %+v", answer)
+			}
+			writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":5,"method":"session/prompt","params":{"sessionId":"S1","prompt":[]}}`)
+			if prompt := parse(readLine(t, h.childIn[0])); prompt.Method != "session/prompt" || sessionID(prompt.Params) != "N2" {
+				t.Fatalf("prompt missed new session: %+v", prompt)
+			}
+			writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":5,"result":{"stopReason":"end_turn"}}`)
+			readLine(t, h.clientOut)
+			if binding, ok := store.Lookup("S1"); !ok || binding.AdapterID != "N2" || binding.Provider != tc.provider {
+				t.Fatalf("wrong replacement binding: %+v", binding)
+			}
+			h.shutdown()
+		})
+	}
+}
+
+// The same JSON-RPC code covers many adapter failures. A foreign session or an
+// internal error about anything else must reach the editor without a rebind.
+func TestProxyLoadRefusesUnrelatedFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, detail string
+		bound                  bool
+	}{
+		{"unknown thread", "codex", "no rollout found for thread id S1", false},
+		{"wrong native ID", "codex", "no rollout found for thread id S1", true},
+		{"storage failure", "codex", "permission denied", true},
+		{"unknown Gemini project", "gemini", "No previous sessions found for this project.", false},
+		{"wrong Gemini ID", "gemini", `Invalid session identifier "S1".`, true},
+		{"other provider", "claude", "no rollout found for thread id N1", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newMemBindings(nil)
+			if tc.bound {
+				store.Save("S1", SessionBinding{Provider: tc.provider, AdapterID: "N1"})
+			}
+			h := newProxyHarnessWith(t, 1, nil, RunOpts{Bindings: store}, tc.provider)
+			h.initialize(0)
+			writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"sessionId":"S1","cwd":"/w"}}`)
+			readLine(t, h.childIn[0])
+			detail, _ := json.Marshal(tc.detail)
+			failure := `{"jsonrpc":"2.0","id":2,"error":{"code":-32603,"message":"Internal error","data":{"details":` + string(detail) + `}}}`
+			writeLine(t, h.children[0].outW, failure)
+			if answer := strings.TrimSpace(string(readLine(t, h.clientOut))); answer != failure {
+				t.Fatalf("wrong load response: %s", answer)
+			}
+			h.shutdown()
+		})
+	}
+}
+
+func TestProxyLateLoadFailureLeavesSessionClosed(t *testing.T) {
+	h := newProxyHarnessWith(t, 1, nil, RunOpts{}, "codex")
+	h.initialize(0)
+	h.newSession(0, "S1")
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":3,"method":"session/load","params":{"sessionId":"S1","cwd":"/w"}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":4,"method":"session/close","params":{"sessionId":"S1"}}`)
+	readLine(t, h.childIn[0])
+	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":4,"result":{}}`)
+	readLine(t, h.clientOut)
+	failure := `{"jsonrpc":"2.0","id":3,"error":{"code":-32603,"data":{"details":"no rollout found for thread id S1"}}}`
+	writeLine(t, h.children[0].outW, failure)
+	if answer := strings.TrimSpace(string(readLine(t, h.clientOut))); answer != failure {
+		t.Fatalf("load pending before close got %s", answer)
+	}
+	h.shutdown()
+}
+
 // The child dies after it found no transcript and before it answered the session/new standing in for
 // the load. The editor's load stays pending: the replacement child gets the session/new, and its answer
 // is the load's answer.
 func TestProxyLoadWithNoTranscriptSurvivesTheChildDying(t *testing.T) {
 	store := newMemBindings(map[string]SessionBinding{"S1": {Provider: "claude", AdapterID: "S1"}})
-	h := newProxyHarnessWith(t, 2, nil, RunOpts{Bindings: store}, "claude", "claude")
+	first, second := newFakeChild(), newFakeChild()
+	first.provider, second.provider = "claude", "claude"
+	first.mcp, second.mcp = "first-tools", "replacement-tools"
+	h := newProxyHarnessChildren(t, []*fakeChild{first, second}, nil, RunOpts{Bindings: store})
 	h.initialize(0)
 
 	writeLine(t, h.clientIn, `{"jsonrpc":"2.0","id":2,"method":"session/load","params":{"cwd":"/w","mcpServers":[],"sessionId":"S1"}}`)
 	readLine(t, h.childIn[0])
 	writeLine(t, h.children[0].outW, `{"jsonrpc":"2.0","id":2,"error":{"code":-32002,"message":"Resource not found: S1"}}`)
-	if fresh := parse(readLine(t, h.childIn[0])); fresh.Method != "session/new" {
-		t.Fatalf("after a missing transcript the box got %q, want session/new", fresh.Method)
+	if fresh := parse(readLine(t, h.childIn[0])); fresh.Method != "session/new" || !strings.Contains(string(fresh.Params), "first-tools") {
+		t.Fatalf("expected a fresh session with this child's shared tools, got %s %s", fresh.Method, fresh.Params)
 	}
 	h.children[0].outW.Close()
 
@@ -245,7 +352,7 @@ func TestProxyLoadWithNoTranscriptSurvivesTheChildDying(t *testing.T) {
 			t.Fatalf("the replacement got %q before the load's session/new", frame.Method)
 		}
 	}
-	if sessionID(fresh.Params) != "" || !strings.Contains(string(fresh.Params), `"cwd":"/w"`) {
+	if sessionID(fresh.Params) != "" || !strings.Contains(string(fresh.Params), "replacement-tools") || strings.Contains(string(fresh.Params), "first-tools") || !strings.Contains(string(fresh.Params), `"cwd":"/w"`) {
 		t.Fatalf("the replacement's session/new = %s, want the load's params without its id", fresh.Params)
 	}
 	writeLine(t, h.children[1].outW, `{"jsonrpc":"2.0","id":`+string(fresh.ID)+`,"result":{"sessionId":"N3"}}`)

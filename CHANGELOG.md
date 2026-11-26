@@ -4,6 +4,8 @@
 
 <!-- Add entries here as you ship; this heading is renamed to the version on the next release. -->
 
+- Reopening an empty Codex or Gemini thread in Zed now starts a fresh session under the same thread ID.
+
 ## 15.5.0
 
 - **Unblock a task from an interactive session.** Give the agent your answer and it can use

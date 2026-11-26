@@ -805,6 +805,10 @@ func (codexAgent) ACPProgressChunk(meta json.RawMessage) bool {
 	return codexACPPhase(meta) == "commentary"
 }
 
+func (codexAgent) ACPMissingTranscript(nativeID, detail string) bool {
+	return detail == "no rollout found for thread id "+nativeID
+}
+
 // PresetSessionID is false: codex has no flag to start a session under a caller-chosen id (it mints
 // its own UUIDv7), so coop records the uniquely new native ID after the run and validates it on resume.
 func (codexAgent) PresetSessionID() bool { return false }

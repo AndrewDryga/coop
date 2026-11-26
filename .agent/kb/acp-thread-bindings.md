@@ -3,7 +3,7 @@ name: acp-thread-bindings
 description: an editor thread's native session moves with every provider/account switch; the binding is persisted per thread so a fresh coop acp reopens the transcript the conversation actually continued on
 subsystem: acp
 sources: [internal/acpproxy/bindings.go, internal/acpproxy/proxy.go, internal/acpctl/bindings.go, internal/acpctl/control.go, internal/cli/acp_cmd.go, internal/box/history.go]
-updated: 2026-11-04
+updated: 2026-11-26
 ---
 
 The editor knows a thread by one stable session id for its whole life. The box does not: every
@@ -28,6 +28,13 @@ in `restartHeld`, and `releaseRestartHeld` re-forwards loads unconditionally onc
 published — the second pass resolves on the now-active provider. A store miss is byte-identical to
 the pre-binding behaviour.
 
+A binding can exist before the provider writes a transcript. On `session/load`, Codex reports an
+unprompted thread as JSON-RPC -32603 with `data.details` naming the missing rollout's native ID.
+Gemini uses the same code with an invalid-session message naming the native ID, or a message that
+there are no previous sessions in the project. That same code also covers storage and other internal failures. The proxy checks the provider-specific detail and the load binding. A match follows the existing resource-not-found recovery path.
+The fresh session receives the current child's shared tools, including if that child is replaced
+during recovery. The editor keeps its ID across the rebind.
+
 The store is `acpctl.ThreadBindings` (`internal/acpctl/bindings.go`): one 0600 JSON file per thread
 under `<ConfigDir>/acp-threads/<repository key>/bindings/` — inside the private config tree no box
 mounts — named by a SHA-256 of the editor id (the adapter mints that id inside the box; it is never a
@@ -44,6 +51,7 @@ Not covered: stitching the earlier transcripts into the reopened thread. Coop on
 NEWEST native session comes back; the older fragments stay on disk under their own ids.
 
 ## Changelog
+- 2026-11-26 — traced an unprompted Claude-to-Codex switch across two Zed connections and verified cold and same-process reopen paths.
 - 2026-11-04 — removed the pre-v11 binding import (`Migrate`, `LegacyThreadBindings`,
   `MigrateACPThreadBindings`) and the `.forgotten` tombstones that only guarded it; Forget now just
   removes the file.

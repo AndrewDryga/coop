@@ -167,6 +167,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [usage-history-covers-requested-window](usage-history-covers-requested-window.md) — lifetime scan budgets must not omit recent token use; caches preserve request accounting
 - [replacements-remove-old-paths](replacements-remove-old-paths.md) — simplification removes obsolete configuration, adapters and callers in the same change
 - [model-is-the-rotation-axis](model-is-the-rotation-axis.md) — every rotation and fallback surface uses the same target grammar; accounts are part of a target, never a second axis
+- [acp-empty-thread-reopen](acp-empty-thread-reopen.md) — a missing transcript for a known empty editor thread starts a session under the same editor ID
 - [loop-failover-profiles](loop-failover-profiles.md) — loop, editor ACP, and remote sessions share target rotation but keep distinct continuation semantics
 - [agents-are-one-file](agents-are-one-file.md) — a coding agent is one self-registering file in `internal/agent`, never a switch elsewhere
 - [internal-import-dag](internal-import-dag.md) — a new internal import edge is an architecture decision — the allowlist test and this card move in the same commit
