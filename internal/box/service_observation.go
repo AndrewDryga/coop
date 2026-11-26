@@ -146,17 +146,24 @@ func openSessionServicesRunning(ctx context.Context, rt runtime.Runtime, spec Ru
 	if spec.SupervisorID == "" || owner == "" || spec.IsolatedParent != "" || spec.Review {
 		return startedServices{}, false
 	}
+	return stackRunning(ctx, rt, spec.Repo, file, owner, spec.RepoReadOnly, exposedRoots...)
+}
+
+// stackRunning reports whether owner's Compose project in repo already runs every service file
+// declares, so `up` would have nothing to do. A session's own project (owner set) must also carry the
+// definition label its start wrote; the checkout's own, which `coop up` starts, has none to match.
+func stackRunning(ctx context.Context, rt runtime.Runtime, repo, file, owner string, repoReadOnly bool, exposedRoots ...string) (startedServices, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	bound, err := rt.FreezeCompose(ctx)
 	if err != nil {
 		return startedServices{}, false
 	}
-	data, err := readValidatedCompose(file, spec.Repo, spec.RepoReadOnly)
-	if err != nil || refuseRunningServiceWriters(ctx, bound, spec.Repo) != nil {
+	data, err := readValidatedCompose(file, repo, repoReadOnly)
+	if err != nil || refuseRunningServiceWriters(ctx, bound, repo) != nil {
 		return startedServices{}, false
 	}
-	args, cleanup, _, err := snapshotComposeArgsForStartData(spec.Repo, file, owner, data, true, exposedRoots...)
+	args, cleanup, _, err := snapshotComposeArgsForStartData(repo, file, owner, data, true, exposedRoots...)
 	if err != nil {
 		return startedServices{}, false
 	}
@@ -169,7 +176,7 @@ func openSessionServicesRunning(ctx context.Context, rt runtime.Runtime, spec Ru
 	if err != nil {
 		return startedServices{}, false
 	}
-	ports, err := parseServicePortsChecked(config, servicePortScope(spec.Repo, owner))
+	ports, err := parseServicePortsChecked(config, servicePortScope(repo, owner))
 	if err != nil {
 		return startedServices{}, false
 	}
@@ -181,15 +188,17 @@ func openSessionServicesRunning(ctx context.Context, rt runtime.Runtime, spec Ru
 	if err != nil {
 		return startedServices{}, false
 	}
-	definition := sessionServiceDefinition(data, services)
+	labels := map[string]string{
+		composeProjectLabel:    ComposeProjectFor(repo, owner),
+		composeWorkingDirLabel: filepath.Clean(filepath.Dir(abs)),
+		composeOneoffLabel:     "False",
+	}
+	if owner != "" {
+		labels[serviceDefinitionLabel] = sessionServiceDefinition(data, services)
+	}
 	for _, service := range services {
-		container, found, err := bound.ObserveServiceContainer(ctx, map[string]string{
-			composeProjectLabel:    ComposeProjectFor(spec.Repo, owner),
-			composeWorkingDirLabel: filepath.Clean(filepath.Dir(abs)),
-			composeServiceLabel:    service,
-			composeOneoffLabel:     "False",
-			serviceDefinitionLabel: definition,
-		})
+		labels[composeServiceLabel] = service
+		container, found, err := bound.ObserveServiceContainer(ctx, labels)
 		if err != nil || !found {
 			return startedServices{}, false
 		}

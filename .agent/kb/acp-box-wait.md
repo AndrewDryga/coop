@@ -2,8 +2,8 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go, internal/cli/net_approve.go, internal/box/services.go]
-updated: 2026-11-17
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go, internal/cli/net_approve.go, internal/box/services.go, internal/box/services_already_up.go, internal/cli/services_cmd.go]
+updated: 2026-11-26
 ---
 
 A filtered `coop acp` no longer exits when its project box cannot start. Admission runs with
@@ -146,6 +146,15 @@ it waits for. The terminal and loop side of this is `box.lockServiceLaunch`: try
 it waits for, wait, say it ended. Every caller goes through it, and `forkspace.LockServiceLaunch` is only
 for code nobody is waiting on.
 
+Host `coop up` asks `box.ServicesUpBehindBoxes` before it waits: when boxes hold the lock and the
+checkout's own Compose project already runs every service the file declares, with its published ports or as
+a finished one-shot step (`stackRunning`, the check an open session's later box makes, without the session
+definition label `coop up` never writes), it says the services already run, names the boxes, and exits 0
+without `compose up`, so no bind source is opened outside the barrier. Anything else (a free lock, only a
+command holding it, a service `up` would start) waits as before. A changed image or environment on a service
+that runs is not seen; the message says to close the boxes and run `coop up` again to apply changes. Without
+it, emisar's `./run serve` waited with no limit behind a Zed thread.
+
 A services refusal comes in parts (`box.ServicesNeedRules`), since a thread cannot show the terminal's text
 whole: Zed does not wrap a code block. `acpBoxWaitText` shows the reason as text and only `coop approve` as a
 block, and the terminal and the agent log keep `Error()`. `coop approve` has nothing to approve in that state, so
@@ -241,6 +250,7 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-26 — `coop up` no longer waits behind open boxes for a stack that already runs (`ServicesUpBehindBoxes`).
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 - 2026-11-06 — a `/build` Coop refuses while saving the files for review is remembered as a host build's refusal is, and
   its answer names the reason; a Dockerfile that is a link reads "is a symbolic link" there as in `coop build`.

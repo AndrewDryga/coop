@@ -57,6 +57,20 @@ func (a *app) cmdUp(args []string) (int, error) {
 		return 1, composeRefusal("Could not start services from "+rel, rel, err, "coop up")
 	}
 	// A running box holds the shared side of the mount-launch barrier, so this can wait, and says so.
+	// That wait has no limit, and a stack that already runs has nothing to start: say so and stop.
+	if boxes, running, ok := box.ServicesUpBehindBoxes(context.Background(), a.rt, repo, file, box.ConfigExposureRoots(a.cfg)...); ok {
+		ui.OK("Services already running: %s", ui.SafeInline(strings.Join(running.Names, ", ")))
+		for _, port := range running.Ports {
+			ui.Note("    %s://localhost:%d → %s port %d", port.Scheme, port.HostPort, ui.SafeInline(port.Service), port.ContainerPort)
+		}
+		them := "it"
+		if len(boxes) > 1 {
+			them = "them"
+		}
+		ui.Note("Running now: %s.", strings.Join(boxes, ", "))
+		ui.Note("To apply changes to %s, close %s and run coop up again.", rel, them)
+		return 0, nil
+	}
 	unlockLaunch, err := box.LockServiceLaunch(context.Background(), repo)
 	if err != nil {
 		return 1, reported("Could not start services", sentence(firstLine(err)), "Run coop up again.")

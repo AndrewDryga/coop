@@ -1,0 +1,3 @@
+✓ Services already running: db, redis
+Running now: an editor session.
+To apply changes to .agent/compose.yml, close it and run coop up again.

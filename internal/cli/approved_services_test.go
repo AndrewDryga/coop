@@ -11,6 +11,7 @@ import (
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
+	"github.com/AndrewDryga/coop/internal/forkspace"
 	"github.com/AndrewDryga/coop/internal/runtime"
 	"github.com/AndrewDryga/coop/internal/testutil/dockersock"
 )
@@ -114,6 +115,18 @@ func (s composeShim) build(t *testing.T) runtime.Runtime {
 	return runtime.Runtime{Name: path}
 }
 
+// runningStackArms answers the per-service container lookups as a running stack: each service has one
+// running container, whose labels are the ones coop asked for.
+func runningStackArms(dir string) string {
+	return `  *"ps -q -a --no-trunc --filter label=com.docker.compose.oneoff=False"*)
+    case "$*" in *service=db*) id=` + strings.Repeat("a", 64) + ` ;; *) id=` + strings.Repeat("b", 64) + ` ;; esac
+    labels=; for arg in "$@"; do case "$arg" in label=*) kv=${arg#label=}; labels="$labels\"${kv%%=*}\":\"${kv#*=}\","; esac; done
+    printf '{"ID":"%s","Labels":{%s"x":"y"},"Status":"running","ExitCode":0,"Running":true,"Paused":false,"Healthcheck":false,"Health":"","Ports":{},"Networks":{}}' "$id" "$labels" > ` + strconv.Quote(dir) + `/inspect-$id
+    echo "$id" ;;
+  *"inspect --format"*) for last; do :; done; cat ` + strconv.Quote(dir) + `/inspect-"$last" ;;
+`
+}
+
 // says is the runtime's own diagnostic on the failure paths whose transcript pins the cause it
 // reported — an unhealthy service, a port already taken.
 func says(line string) string {
@@ -186,6 +199,40 @@ func TestApprovedServiceStart(t *testing.T) {
 			t.Fatalf("second start = %d:\n%s", code, out)
 		}
 		assertApprovedOutput(t, "28b-services-already-running", out)
+	})
+
+	// An open box holds the launch lock for its whole life, so a start would wait with no limit. A
+	// stack that already runs has nothing to start: coop says so at once and runs no Compose.
+	t.Run("28f-services-running-behind-an-open-box", func(t *testing.T) {
+		repo := serviceProject(t)
+		dir := t.TempDir()
+		log := filepath.Join(dir, "docker.log")
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeShim{services: []string{"db", "redis"}, log: log,
+			configJSON: `{"services":{"db":{},"redis":{}}}`, arms: runningStackArms(dir)}.build(t), rtSet: true}
+		editor, err := forkspace.BeginExecution(repo, forkspace.ExecutionSpec{Kind: forkspace.ExecutionACP, Workspace: repo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = forkspace.EndExecution(repo, editor) })
+		unlock, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(unlock)
+		t.Cleanup(forkspace.NoteServiceLaunchHeld(repo, editor.ID))
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+		if code != 0 {
+			t.Fatalf("cmdUp = %d, want success:\n%s", code, out)
+		}
+		assertApprovedOutput(t, "28f-services-running-behind-an-open-box", out)
+		calls, _ := os.ReadFile(log)
+		if strings.Contains(string(calls), " up ") {
+			t.Fatalf("a running stack behind an open box ran Compose up:\n%s", calls)
+		}
+		if !strings.Contains(string(calls), "label=com.docker.compose.project="+box.ComposeProject(repo)) {
+			t.Fatalf("the check did not ask about the checkout's own project:\n%s", calls)
+		}
 	})
 
 	// The configured Compose path is the one named, and a service that really publishes a port
