@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/AndrewDryga/coop/internal/box"
 	"github.com/AndrewDryga/coop/internal/config"
@@ -232,6 +235,46 @@ func TestApprovedServiceStart(t *testing.T) {
 		}
 		if !strings.Contains(string(calls), "label=com.docker.compose.project="+box.ComposeProject(repo)) {
 			t.Fatalf("the check did not ask about the checkout's own project:\n%s", calls)
+		}
+	})
+
+	// At a terminal, a start that only an editor session keeps waiting asks once whether to restart it.
+	// A yes restarts them and starts the services; a no leaves the ordinary wait, here cut short.
+	for name, answer := range map[string]string{"28t-restart-the-editor-session-it-waits-for": "y", "28u-keep-waiting-for-the-editor-session": "n"} {
+		t.Run(name, func(t *testing.T) {
+			repo := serviceProject(t)
+			a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeShim{services: []string{"db", "redis"}}.build(t), rtSet: true}
+			release := sync.OnceFunc(holdLaunchForTest(t, repo))
+			t.Cleanup(release)
+			stopped := fakeLaunchHolders(t, release)
+			if answer == "n" {
+				time.AfterFunc(100*time.Millisecond, release) // the box closed by itself
+			}
+			typedAnswers(t, answer)
+			var code int
+			out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+			if code != 0 {
+				t.Fatalf("cmdUp = %d, want success:\n%s", code, out)
+			}
+			if *stopped != (answer == "y") {
+				t.Fatalf("answer %q stopped the session: %v", answer, *stopped)
+			}
+			assertApprovedOutput(t, name, out)
+		})
+	}
+
+	// Nobody at a terminal is never asked: a script's start waits, as before.
+	t.Run("28v-no-question-without-a-terminal", func(t *testing.T) {
+		repo := serviceProject(t)
+		a := &app{cfg: &config.Config{RepoOverride: repo}, rt: composeShim{services: []string{"db", "redis"}}.build(t), rtSet: true}
+		release := sync.OnceFunc(holdLaunchForTest(t, repo))
+		t.Cleanup(release)
+		stopped := fakeLaunchHolders(t, release)
+		time.AfterFunc(100*time.Millisecond, release)
+		var code int
+		out := captureTerminal(t, func() { code, _ = a.cmdUp(nil) })
+		if code != 0 || *stopped || strings.Contains(out, "Restart it now") {
+			t.Fatalf("a start with no terminal = %d, stopped %v:\n%s", code, *stopped, out)
 		}
 	})
 
@@ -636,4 +679,30 @@ func normalizeProject(t *testing.T, repo, out string) string {
 func composeProjectName(t *testing.T, repo string) string {
 	t.Helper()
 	return box.ComposeProject(repo)
+}
+
+// holdLaunchForTest holds repo's service launch lock as a running box does, until the returned call.
+func holdLaunchForTest(t *testing.T, repo string) func() {
+	t.Helper()
+	unlock, err := forkspace.LockServiceLaunch(t.Context(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return unlock
+}
+
+// fakeLaunchHolders offers an editor session to restart; a restart calls release, as its boxes going
+// would. The offer carries no session, so it names one.
+func fakeLaunchHolders(t *testing.T, release func()) (restarted *bool) {
+	t.Helper()
+	restarted = new(bool)
+	find, restart := findRestartableLaunch, restartLaunch
+	findRestartableLaunch = func(string) (box.RestartableLaunch, bool) { return box.RestartableLaunch{}, true }
+	restartLaunch = func(context.Context, box.RestartableLaunch) error {
+		*restarted = true
+		release()
+		return nil
+	}
+	t.Cleanup(func() { findRestartableLaunch, restartLaunch = find, restart })
+	return restarted
 }

@@ -71,12 +71,15 @@ func (a *app) cmdUp(args []string) (int, error) {
 		ui.Note("To apply changes to %s, close %s and run coop up again.", rel, them)
 		return 0, nil
 	}
+	ask, atTerminal := askTerminal()
+	if atTerminal {
+		offerToRestartEditorSessions(repo, ask)
+	}
 	unlockLaunch, err := box.LockServiceLaunch(context.Background(), repo)
 	if err != nil {
 		return 1, reported("Could not start services", sentence(firstLine(err)), "Run coop up again.")
 	}
 	defer unlockLaunch()
-	ask, atTerminal := askTerminal()
 	// Keep the review, saved decisions, and start under one mount-launch barrier. A writable box
 	// cannot replace the Compose or bind sources while the host waits for an answer.
 	review, err := box.ReviewServiceStart(repo, file, a.rt, atTerminal)
@@ -173,6 +176,49 @@ func failedServicesReason(failed []runtime.FailedService) string {
 		}
 	}
 	return b.String()
+}
+
+// launchRestartWait bounds how long coop up waits for the editor sessions a person chose to restart.
+// One that takes longer is waited for the ordinary way, which names it.
+var launchRestartWait = time.Minute
+
+// findRestartableLaunch and restartLaunch are box's, unless a test replaced them: a real editor box is
+// a child of a real supervisor, which no test of this command has.
+var (
+	findRestartableLaunch = box.RestartableLaunchHolders
+	restartLaunch         = func(ctx context.Context, sessions box.RestartableLaunch) error { return sessions.Restart(ctx) }
+)
+
+// offerToRestartEditorSessions asks a person at a terminal whether to restart the editor sessions that
+// would keep this start waiting with no limit. A session's threads stay open, and its new boxes join
+// the services this start brings up. Anything else holding the lock, or a No, leaves the ordinary wait.
+func offerToRestartEditorSessions(repo string, ask *bufio.Scanner) {
+	sessions, ok := findRestartableLaunch(repo)
+	if !ok {
+		return
+	}
+	// The wait itself names what it waits for if the answer is No, so this says only what a Yes does.
+	what, named, them, their := "an editor session", "the editor session", "it", "its"
+	if n := sessions.Sessions(); n > 1 {
+		what, named, them, their = fmt.Sprintf("%d editor sessions", n), fmt.Sprintf("the %d editor sessions", n), "them", "their"
+	}
+	ui.Note("Coop has to wait for %s before it starts services.", what)
+	ui.Note("Restarting %s keeps %s threads open; a reply in progress stops.", them, their)
+	answer, _ := askOneOK(ask, "Restart "+them+" now so Coop can go on? [y/N]: ")
+	if !ui.ConfirmationResponse(answer, false) {
+		ui.Note("")
+		return
+	}
+	ui.Note("Restarting %s.", named)
+	ctx, cancel := context.WithTimeout(context.Background(), launchRestartWait)
+	defer cancel()
+	switch err := restartLaunch(ctx, sessions); {
+	case errors.Is(err, context.DeadlineExceeded):
+		ui.Warn("%s", sentence(named+" did not restart within a minute"))
+	case err != nil:
+		ui.Warn("Could not restart %s: %s", named, sentence(firstLine(err)))
+	}
+	ui.Note("")
 }
 
 func askServiceVolumes(review *box.ServiceStartReview, rel string, ask *bufio.Scanner, atTerminal, save bool) (int, error) {

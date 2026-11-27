@@ -1,0 +1,11 @@
+Coop has to wait for an editor session before it starts services.
+Restarting it keeps its threads open; a reply in progress stops.
+Restart it now so Coop can go on? [y/N]: y
+Restarting the editor session.
+
+Starting services from .agent/compose.yml
+  Waiting for services to be ready.
+
+[Compose output]
+
+✓ Services ready: db, redis

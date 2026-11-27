@@ -2,7 +2,7 @@
 name: acp-box-wait
 description: how an editor session stays connected while its project box cannot start, and why no turn runs meanwhile
 subsystem: acp
-sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go, internal/cli/net_approve.go, internal/box/services.go, internal/box/services_already_up.go, internal/cli/services_cmd.go]
+sources: [internal/box/service_launch_wait.go, internal/box/filtered_services.go, internal/box/service_observation.go, internal/runtime/service_observation.go, internal/cli/acp_box_wait.go, internal/cli/acp_build_command.go, internal/cli/acp_cmd.go, internal/cli/acp_refresh.go, internal/cli/fork_acp.go, internal/acpproxy/proxy.go, internal/acpproxy/first_answer.go, internal/acpproxy/restarter.go, internal/acpctl/start_notice.go, internal/box/project_preparation.go, internal/box/run.go, internal/box/network_admission.go, internal/box/filtered.go, internal/box/filtered_launch.go, internal/box/authority_mounts.go, internal/cli/acp_serve.go, internal/cli/cli.go, internal/forkspace/execution.go, internal/forkspace/launch_wait.go, internal/forkctl/status.go, internal/cli/net_approve.go, internal/box/services.go, internal/box/services_already_up.go, internal/box/launch_holders_restart.go, internal/cli/services_cmd.go]
 updated: 2026-11-26
 ---
 
@@ -155,6 +155,17 @@ command holding it, a service `up` would start) waits as before. A changed image
 that runs is not seen; the message says to close the boxes and run `coop up` again to apply changes. Without
 it, emisar's `./run serve` waited with no limit behind a Zed thread.
 
+Before that wait, at a terminal, `coop up` asks once whether to restart the editor sessions holding the
+lock, when `box.RestartableLaunchHolders` finds only `coop acp` boxes there (any other holder: no
+question). A session's parked boxes hold the lock too and never stop by themselves, so closing one editor
+thread never ended the wait. A yes sends the session's supervisor SIGHUP, its existing reload: the
+threads stay, its old boxes stop, and the new ones usually queue behind this start (flock promises no
+order). The supervisor is the verified box process's parent, only when it runs the same program; both
+are checked again right before the signal. Not offered, on purpose: a fork's editor supervisor
+(`superviseForkACP` has no SIGHUP reload, so the signal kills it), a box in a terminal (an unfiltered
+one has no SIGTERM teardown, so its container outlives the process the lock waits on) and a loop's
+`--debug-on-fail` shell, which is recorded as an interactive box with the loop as its process.
+
 A services refusal comes in parts (`box.ServicesNeedRules`), since a thread cannot show the terminal's text
 whole: Zed does not wrap a code block. `acpBoxWaitText` shows the reason as text and only `coop approve` as a
 block, and the terminal and the agent log keep `Error()`. `coop approve` has nothing to approve in that state, so
@@ -250,6 +261,7 @@ to keep this rather than start the adapter with hooks off. It reaches a project 
 a file that no longer loads too, since nothing can read that request.
 
 ## Changelog
+- 2026-11-26 — at a terminal, `coop up` offers to restart the editor sessions it waits for (`RestartableLaunchHolders`).
 - 2026-11-26 — `coop up` no longer waits behind open boxes for a stack that already runs (`ServicesUpBehindBoxes`).
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K1-5; checked with grep).
 - 2026-11-06 — a `/build` Coop refuses while saving the files for review is remembered as a host build's refusal is, and

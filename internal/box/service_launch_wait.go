@@ -209,15 +209,23 @@ func (e *ServiceLaunchBusy) Say() (title string, details []string) {
 // sessions wait on each other. Of a session's own boxes only a parked one counts. own reports that parked
 // boxes of its own session are all there is. An unreadable record names nobody; the wait is still real.
 func serviceLaunchHolders(repo string, project bool, except, source string) (busy *ServiceLaunchBusy, own bool) {
-	authority, _, err := forkspace.ResolveProjectBinding(repo)
+	others, own, err := launchHolderBoxes(repo, project, except, source)
 	if err != nil {
 		return &ServiceLaunchBusy{}, false
+	}
+	return &ServiceLaunchBusy{Boxes: liveBoxNames(others)}, own && len(others) == 0
+}
+
+// launchHolderBoxes is serviceLaunchHolders' list of the boxes themselves, for a caller that acts on them.
+func launchHolderBoxes(repo string, project bool, except, source string) (others []forkspace.ExecutionObservation, own bool, err error) {
+	authority, _, err := forkspace.ResolveProjectBinding(repo)
+	if err != nil {
+		return nil, false, err
 	}
 	live, err := LiveBoxes(authority, except)
 	if err != nil {
-		return &ServiceLaunchBusy{}, false
+		return nil, false, err
 	}
-	var others []forkspace.ExecutionObservation
 	for _, observation := range live {
 		switch record := observation.Record; {
 		case !forkspace.ServiceLaunchHeldBy(authority, record.ID):
@@ -228,7 +236,7 @@ func serviceLaunchHolders(repo string, project bool, except, source string) (bus
 			others = append(others, observation)
 		}
 	}
-	return &ServiceLaunchBusy{Boxes: liveBoxNames(others)}, own && len(others) == 0
+	return others, own, nil
 }
 
 // EditorServiceLaunchBusy asks whether a box of this editor session (spec.SupervisorID) that has to start

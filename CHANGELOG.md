@@ -7,6 +7,8 @@
 - Reopening an empty Codex or Gemini thread in Zed now starts a fresh session under the same thread ID.
 - `coop up` no longer waits for an open editor session or loop when this checkout's services
   already run. It says they are running and how to apply Compose changes.
+- When only editor sessions keep `coop up` waiting, it asks at a terminal whether to restart them.
+  Their threads stay open, and their new boxes join the services it starts.
 
 ## 15.5.0
 
