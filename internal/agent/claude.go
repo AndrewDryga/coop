@@ -1234,7 +1234,7 @@ func (claudeAgent) fastMode() {}
 func (claudeAgent) ACPSessionSettings(target Target) []ACPSessionSetting {
 	settings := []ACPSessionSetting{{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"}}
 	if target.Model != "" {
-		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "model", Value: target.Model})
+		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "model", Value: target.Model, ResolvesAlias: true})
 	}
 	if target.Effort != "" {
 		settings = append(settings, ACPSessionSetting{Method: ACPSetConfigOption, ConfigID: "effort", Value: target.Effort})

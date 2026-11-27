@@ -64,8 +64,22 @@ func TestReplayedHistoryIsNotChargedToTheTurnTranscript(t *testing.T) {
 	}
 }
 
+func TestSessionTurnRunnerRefusesUnselectedModelBeforePrompt(t *testing.T) {
+	fixture := newSessionACPFixture(t, "ignore-target", "codex:gpt-6.1-sol/xhigh@work")
+	turn := fixture.submit(t, "verify")
+	result, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, turn)
+	if err == nil || result.State != session.TurnFailed || result.ErrorCode != sessionACPProtocolError ||
+		result.ErrorDetail != "the adapter did not select the requested model" {
+		t.Fatalf("unconfirmed model = %s, %s %q, err=%v", result.State, result.ErrorCode, result.ErrorDetail, err)
+	}
+	methods := readSessionACPLog(t, fixture.childLog)
+	if countStrings(methods, "session/set_config_option") == 0 || countStrings(methods, "session/prompt") != 0 {
+		t.Fatalf("unconfirmed target sent methods %v", methods)
+	}
+}
+
 func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
-	fixture := newSessionACPFixture(t, "normal")
+	fixture := newSessionACPFixture(t, "require-target", "codex:gpt-6.1-sol/xhigh@work")
 	first := fixture.submitWithTools(t, "first prompt")
 	firstResult, err := fixture.runner.Run(contextWithTurnDeadline(t), fixture.session, first)
 	if err != nil {
@@ -112,7 +126,7 @@ func TestSessionTurnRunnerNewThenExactLoadAndPrivateProjection(t *testing.T) {
 		t.Fatalf("load history leaked into assistant message: %q", secondResult.AssistantMessage)
 	}
 	methods := readSessionACPLog(t, fixture.childLog)
-	want := []string{"initialize", "session/new", "session/prompt", "initialize", "session/load", "session/prompt"}
+	want := []string{"initialize", "session/new", "session/set_config_option", "session/set_config_option", "session/prompt", "initialize", "session/load", "session/set_config_option", "session/set_config_option", "session/prompt"}
 	if fmt.Sprint(methods) != fmt.Sprint(want) {
 		t.Fatalf("ACP methods = %v, want %v", methods, want)
 	}
@@ -1650,7 +1664,7 @@ func TestSessionTurnRunnerRotatesOnlyOnAProvenRateLimit(t *testing.T) {
 }
 
 func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
-	fixture := newSessionACPFixture(t, "normal")
+	fixture := newSessionACPFixture(t, "require-target", "codex:gpt-6.1-sol/xhigh@work")
 	warmContext := func() context.Context {
 		return context.WithValue(contextWithTurnDeadline(t), sessionWarmIdleTimeoutContextKey{}, time.Minute)
 	}
@@ -1677,7 +1691,7 @@ func TestSessionTurnRunnerReusesWarmACPProcessAcrossTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, want := readSessionACPLog(t, fixture.childLog), []string{
-		"initialize", "session/new", "session/prompt", "session/prompt",
+		"initialize", "session/new", "session/set_config_option", "session/set_config_option", "session/prompt", "session/prompt",
 	}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("warm ACP methods = %v, want %v", got, want)
 	}
@@ -3773,6 +3787,7 @@ func TestSessionACPChildHelper(t *testing.T) {
 	var promptID json.RawMessage
 	promptCount := 0
 	var cwd string
+	var selectedModel string
 	for reader.Scan() {
 		line := reader.Bytes()
 		_, _ = log.Write(append(append([]byte(nil), line...), '\n'))
@@ -3782,6 +3797,8 @@ func TestSessionACPChildHelper(t *testing.T) {
 			Params struct {
 				SessionID string `json:"sessionId"`
 				CWD       string `json:"cwd"`
+				ConfigID  string `json:"configId"`
+				Value     string `json:"value"`
 			} `json:"params"`
 		}
 		if json.Unmarshal(line, &frame) != nil {
@@ -3811,6 +3828,27 @@ func TestSessionACPChildHelper(t *testing.T) {
 					},
 				})
 			}
+		case "session/set_config_option":
+			value := frame.Params.Value
+			if scenario == "require-target" {
+				switch {
+				case frame.Params.SessionID != "native-1":
+					value = "unknown session"
+				case frame.Params.ConfigID == "model" && value == "gpt-6.1-sol":
+					selectedModel = value
+				case frame.Params.ConfigID == "reasoning_effort" && value == "xhigh" && selectedModel == "gpt-6.1-sol":
+				default:
+					value = "unexpected setting or order"
+				}
+			}
+			if scenario == "ignore-target" {
+				value = "adapter-default"
+			}
+			send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{
+				"configOptions": []map[string]string{{"id": frame.Params.ConfigID, "currentValue": value}},
+			}})
+		case "session/set_model":
+			send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{}})
 		case "session/new":
 			cwd = frame.Params.CWD
 			send(map[string]any{"jsonrpc": "2.0", "id": frame.ID, "result": map[string]any{"sessionId": "native-1"}})

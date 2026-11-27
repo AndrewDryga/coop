@@ -2459,6 +2459,49 @@ func RunIDFromEnv() string {
 	return ""
 }
 
+func configureSessionTarget(settings []agents.ACPSessionSetting, sessionID string, request func(string, any, string) (json.RawMessage, error)) error {
+	for _, setting := range settings {
+		if setting.Method == agents.ACPSetModel {
+			_, err := request("session/set_model", map[string]string{"sessionId": sessionID, "modelId": setting.Value}, sessionID)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		// Permission handling belongs to the session runner. Only apply the
+		// model, effort and service options selected by the target.
+		if setting.ConfigID == "mode" {
+			continue
+		}
+		reply, err := request("session/set_config_option", map[string]string{
+			"sessionId": sessionID, "configId": setting.ConfigID, "value": setting.Value,
+		}, sessionID)
+		if err != nil {
+			return err
+		}
+		var result struct {
+			Options []struct {
+				ID    string `json:"id"`
+				Value any    `json:"currentValue"`
+			} `json:"configOptions"`
+		}
+		confirmed := false
+		if json.Unmarshal(reply, &result) == nil {
+			for _, option := range result.Options {
+				value, ok := option.Value.(string)
+				if option.ID == setting.ConfigID && ok && value != "" && (value == setting.Value || setting.ResolvesAlias) {
+					confirmed = true
+					break
+				}
+			}
+		}
+		if !confirmed {
+			return acpFailure(sessionACPProtocolError, "the adapter did not select the requested "+setting.ConfigID)
+		}
+	}
+	return nil
+}
+
 type sessionACPProcess struct {
 	cmd       *exec.Cmd
 	stdin     io.WriteCloser
@@ -3144,6 +3187,13 @@ func (r *sessionTurnRunner) runACP(
 			return "", nil, session.Usage{}, "", acpFailure(sessionACPProtocolError, "stored native session id is invalid")
 		} else if _, err := request("session/load", map[string]any{"sessionId": nativeID, "cwd": process.cwd, "mcpServers": mcpServers}, nativeID); err != nil {
 			return "", nil, session.Usage{}, "", err
+		}
+		// Daemon children run the adapter directly. A fresh or restored native
+		// thread starts with its own model until it acknowledges this target.
+		if rungAgent != nil {
+			if err := configureSessionTarget(rungAgent.ACPSessionSettings(limitTarget), nativeID, request); err != nil {
+				return "", nil, session.Usage{}, "", err
+			}
 		}
 		process.nativeSessionID = nativeID
 		process.initialized = true

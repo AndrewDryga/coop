@@ -218,9 +218,10 @@ const (
 // ACPSessionSetting is one provider-owned, ordered setting Coop applies after every
 // session new/load/recreate. Order is significant when one setting resets another.
 type ACPSessionSetting struct {
-	Method   ACPSettingMethod
-	ConfigID string
-	Value    string
+	Method        ACPSettingMethod
+	ConfigID      string
+	Value         string
+	ResolvesAlias bool // A successful set returns the account catalog’s canonical value.
 }
 
 // NativeSubagent is the provider-neutral role material an adapter may render into its own native

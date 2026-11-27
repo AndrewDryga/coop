@@ -1644,7 +1644,7 @@ func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 	target := Target{Model: "model-x", Effort: "xhigh"}
 	if got := claude.ACPSessionSettings(target); !slices.Equal(got, []ACPSessionSetting{
 		{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"},
-		{Method: ACPSetConfigOption, ConfigID: "model", Value: "model-x"},
+		{Method: ACPSetConfigOption, ConfigID: "model", Value: "model-x", ResolvesAlias: true},
 		{Method: ACPSetConfigOption, ConfigID: "effort", Value: "xhigh"},
 	}) {
 		t.Errorf("claude ACPSessionSettings = %v", got)
@@ -1671,7 +1671,7 @@ func TestACPSessionSettingsAndBoxEnv(t *testing.T) {
 	fast := Target{Model: "model-x", Effort: "xhigh", Fast: true}
 	if got := claude.ACPSessionSettings(fast); !slices.Equal(got, []ACPSessionSetting{
 		{Method: ACPSetConfigOption, ConfigID: "mode", Value: "bypassPermissions"},
-		{Method: ACPSetConfigOption, ConfigID: "model", Value: "model-x"},
+		{Method: ACPSetConfigOption, ConfigID: "model", Value: "model-x", ResolvesAlias: true},
 		{Method: ACPSetConfigOption, ConfigID: "effort", Value: "xhigh"},
 		{Method: ACPSetConfigOption, ConfigID: "fast", Value: "on"},
 	}) {
