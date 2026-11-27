@@ -328,7 +328,7 @@ func (a *app) cmdACP(args []string) (int, error) {
 			ports = pj.Serve.Ports
 		}
 		serve := editorServePorts(egress.Mode(a.cfg.Egress), repo, ports)
-		// The session holds the stable ports itself, whichever of its boxes is live.
+		// The session forwards the stable ports to whichever of its boxes is live, while that box serves.
 		a.acpServe = nil
 		if (len(serve) > 0 || connectedBroken) && a.acpSupervise == nil {
 			a.acpServe = startACPServeRouter(serve)

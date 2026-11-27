@@ -2,8 +2,8 @@
 name: box-host-port-window-is-contended
 description: coop's deterministic serve host ports sit inside the OS ephemeral range, so any process can be holding one — publishing is best-effort, and a test must never claim one for real
 subsystem: box
-sources: [internal/project/project.go, internal/box/run.go, internal/box/services_note.go, internal/box/filtered_services.go, internal/box/publish_test.go]
-updated: 2026-11-17
+sources: [internal/project/project.go, internal/cli/acp_serve.go, internal/cli/acp_serve_watch.go, internal/box/run.go, internal/box/services_note.go, internal/box/filtered_services.go, internal/box/publish_test.go]
+updated: 2026-11-27
 ---
 
 `project.HostPortFor` hashes repo+key into `[hostPortBase, hostPortBase+hostPortSpan)` = **[20000,
@@ -34,15 +34,20 @@ covered on an OS-assigned `:0` port. A test that binds `project.HostPort(repo, �
 cross-package flake waiting to happen — and its "port busy → skip" guard is worse than the flake,
 because then the check quietly stops running.
 
-An editor session does not race its own boxes for these ports. Its supervisor holds each stable port
-and forwards it to the live box (`internal/cli/acp_serve.go`), and every box publishes on a private
-port the supervisor picks (`RunSpec.ServeBinds`), so a warm box holds nothing a person could reach and
-a switch keeps the same URL. Something else on the port is said in the thread with no link.
-The supervisor also runs one watcher in the live box over `docker exec -i`, reading `/proc/net/tcp`
-(`internal/cli/acp_serve_watch.go`), so the thread hears when a server comes up. It never probes the
-port, because a dev server would log that.
+An editor session does not race its own boxes for these ports. Its supervisor forwards each stable
+port to the live box (`internal/cli/acp_serve.go`), and every box publishes on a private port the
+supervisor picks (`RunSpec.ServeBinds`), so a warm box holds nothing a person could reach and a switch
+keeps the same URL. The supervisor runs one watcher in the live box over `docker exec -i`, reading
+`/proc/net/tcp` (`internal/cli/acp_serve_watch.go`), and listens on a stable port only between that
+watcher's `up` and `down` for it (`served`); `follow` gives every port back when the thread moves to
+another box. So an idle session never blocks a host server on the same port (emisar's `./run serve`
+binds its portal URL there). Something else on the port when the box server starts is said in the
+thread with no link, and the 5 s retry runs only while the box still serves. The watcher never connects
+to the box port, because a dev server would log that.
 
 ## Changelog
+- 2026-11-27 — an editor session takes a stable port only while its live box serves it, so an idle
+  session no longer blocks a host server on that port.
 - 2026-11-17 — the filtered note is now actually written (it was only reached from tests), and the
   consult lead's file gets it too.
 - 2026-11-03 — an editor session now owns its stable ports and forwards them to its live box.

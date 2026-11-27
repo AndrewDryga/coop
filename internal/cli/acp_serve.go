@@ -19,14 +19,17 @@ import (
 // acpServeBindsEnv tells an inner ACP child which private host port each serve port publishes on.
 const acpServeBindsEnv = "COOP_ACP_SERVE_BINDS"
 
-// acpServeRetry is how often a session asks again for a stable port something else holds.
+// acpServeRetry is how often a session asks again for a stable port something else holds while its
+// box serves.
 var acpServeRetry = 5 * time.Second
 
 // acpServeRouter owns an editor session's stable serve ports. A running container cannot gain a
 // published port, and a session's boxes change under one thread: warm boxes, a switch of provider or
 // account, a refresh after coop approve. So each box publishes on private ports of its own, parked
 // boxes hold nothing a person could reach, and this forwards each stable port to the box the thread is
-// using now. It is plain TCP on the host's loopback, so it carries HTTP and websockets alike.
+// using now. It listens on a stable port only while a server in that box listens on the box port, so
+// an idle box leaves the port to a server on the host or in another session. It is plain TCP on the
+// host's loopback, so it carries HTTP and websockets alike.
 type acpServeRouter struct {
 	report  func(ports []acpctl.ServePort, freed []acpctl.ServePort)
 	notify  func(string)
@@ -36,56 +39,31 @@ type acpServeRouter struct {
 
 	mu        sync.Mutex
 	ports     []acpctl.ServePort
-	live      map[int]int // box port → the live box's private host port
-	listeners []net.Listener
-	conns     map[net.Conn]struct{}
+	live      map[int]int          // box port → the live box's private host port
+	listeners map[int]net.Listener // box port → its stable port, while the watched box serves it
+	conns     map[net.Conn]int     // → the box port it came in on
 	stopWatch context.CancelFunc
 	closed    bool
 }
 
-// startACPServeRouter takes the stable ports it can, and keeps asking for the rest: a program on the
-// host, or another session in this checkout, may hold one for now.
+// startACPServeRouter listens on nothing yet: a stable port is taken once the live box serves it.
 func startACPServeRouter(ports []acpctl.ServePort) *acpServeRouter {
-	r := &acpServeRouter{stop: make(chan struct{}), live: map[int]int{}, conns: map[net.Conn]struct{}{}}
-	r.take(ports)
+	r := &acpServeRouter{stop: make(chan struct{}), ports: slices.Clone(ports), live: map[int]int{}, listeners: map[int]net.Listener{}, conns: map[net.Conn]int{}}
+	r.wg.Add(1)
+	go r.retry()
 	return r
 }
 
 // add gives a router started with no ports its first, for a session that connected while its project's
-// file did not load. A thread already open hears the links that work, since its start message could not
-// name them.
+// file did not load. Later threads' start messages list them.
 func (r *acpServeRouter) add(ports []acpctl.ServePort) {
 	if r == nil || len(ports) == 0 {
 		return
 	}
-	r.take(ports)
-	r.mu.Lock()
-	report := r.report
-	r.mu.Unlock()
-	if report != nil {
-		current := r.Ports()
-		report(current, slices.DeleteFunc(slices.Clone(current), func(p acpctl.ServePort) bool { return p.Taken }))
-	}
-}
-
-// take listens on the router's first ports, and keeps asking for any it cannot have yet.
-func (r *acpServeRouter) take(ports []acpctl.ServePort) {
 	r.mu.Lock()
 	r.ports = slices.Clone(ports)
 	r.mu.Unlock()
-	taken := false
-	for i := range ports {
-		if !r.listen(i) {
-			r.mu.Lock()
-			r.ports[i].Taken = true
-			r.mu.Unlock()
-			taken = true
-		}
-	}
-	if taken {
-		r.wg.Add(1)
-		go r.retry()
-	}
+	r.publish(nil)
 }
 
 // reportTo keeps the editor told: later threads' start messages show the current state, and a thread
@@ -105,6 +83,15 @@ func (r *acpServeRouter) reportTo(ctrl *acpctl.Control) {
 	r.mu.Unlock()
 }
 
+func (r *acpServeRouter) publish(freed []acpctl.ServePort) {
+	r.mu.Lock()
+	report := r.report
+	r.mu.Unlock()
+	if report != nil {
+		report(r.Ports(), freed)
+	}
+}
+
 // Ports is each stable port's state now.
 func (r *acpServeRouter) Ports() []acpctl.ServePort {
 	r.mu.Lock()
@@ -112,27 +99,66 @@ func (r *acpServeRouter) Ports() []acpctl.ServePort {
 	return slices.Clone(r.ports)
 }
 
-func (r *acpServeRouter) listen(index int) bool {
+// served follows one watcher event of the box watch belongs to: a server reachable on a box port takes
+// its stable port, or marks it taken while something else holds it; a server that stops gives it back.
+// A server on the box's 127.0.0.1 is no reason to hold it, since no published port reaches it.
+func (r *acpServeRouter) served(watch context.Context, event serveEvent) {
 	r.mu.Lock()
-	port := r.ports[index]
+	i := slices.IndexFunc(r.ports, func(p acpctl.ServePort) bool { return p.Box == event.port })
+	if watch.Err() != nil || r.closed || i < 0 || event.up && event.loopback { // watch ends under r.mu once the thread leaves its box
+		r.mu.Unlock()
+		return
+	}
+	if event.up {
+		r.ports[i].Taken = !r.listen(i)
+	} else {
+		r.release(event.port)
+	}
 	r.mu.Unlock()
+	r.publish(nil)
+}
+
+// listen takes a stable port, under r.mu.
+func (r *acpServeRouter) listen(index int) bool {
+	port := r.ports[index]
+	if r.listeners[port.Box] != nil {
+		return true
+	}
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port.Host)))
 	if err != nil {
 		return false
 	}
-	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
-		_ = listener.Close()
-		return false
-	}
-	r.listeners = append(r.listeners, listener)
-	r.mu.Unlock()
+	r.listeners[port.Box] = listener
 	r.wg.Add(1)
 	go r.accept(listener, port.Box)
 	return true
 }
 
+// release gives a stable port back and ends its connections, under r.mu.
+func (r *acpServeRouter) release(boxPort int) {
+	if listener := r.listeners[boxPort]; listener != nil {
+		_ = listener.Close()
+		delete(r.listeners, boxPort)
+	}
+	for conn, port := range r.conns {
+		if port == boxPort {
+			_ = conn.Close()
+		}
+	}
+	for i := range r.ports {
+		if r.ports[i].Box == boxPort {
+			r.ports[i].Taken = false // taken means a box server waits for it, and none does now
+		}
+	}
+}
+
+func (r *acpServeRouter) releaseAll() {
+	for _, p := range r.ports {
+		r.release(p.Box)
+	}
+}
+
+// retry asks again for each stable port the box serves while something else holds it.
 func (r *acpServeRouter) retry() {
 	defer r.wg.Done()
 	ticker := time.NewTicker(acpServeRetry)
@@ -144,31 +170,16 @@ func (r *acpServeRouter) retry() {
 		case <-ticker.C:
 		}
 		var freed []acpctl.ServePort
-		waiting := false
-		for i := range r.Ports() {
-			r.mu.Lock()
-			taken := r.ports[i].Taken
-			r.mu.Unlock()
-			if !taken {
-				continue
-			}
-			if !r.listen(i) {
-				waiting = true
-				continue
-			}
-			r.mu.Lock()
-			r.ports[i].Taken = false
-			freed = append(freed, r.ports[i])
-			r.mu.Unlock()
-		}
 		r.mu.Lock()
-		report := r.report
-		r.mu.Unlock()
-		if len(freed) > 0 && report != nil {
-			report(r.Ports(), freed)
+		for i := range r.ports {
+			if r.ports[i].Taken && !r.closed && r.listen(i) {
+				r.ports[i].Taken = false
+				freed = append(freed, r.ports[i])
+			}
 		}
-		if !waiting {
-			return
+		r.mu.Unlock()
+		if len(freed) > 0 {
+			r.publish(freed)
 		}
 	}
 }
@@ -189,22 +200,22 @@ func (r *acpServeRouter) accept(listener net.Listener, boxPort int) {
 			continue
 		}
 		r.wg.Add(1)
-		go r.forward(client, boxPort)
+		go r.forward(client, listener, boxPort)
 	}
 }
 
 // forward joins one connection to the live box. With no live box, or nothing listening in it, the
 // connection simply ends, as it would for a box's own published port.
-func (r *acpServeRouter) forward(client net.Conn, boxPort int) {
+func (r *acpServeRouter) forward(client net.Conn, listener net.Listener, boxPort int) {
 	defer r.wg.Done()
 	defer client.Close()
 	r.mu.Lock()
 	private := r.live[boxPort]
-	if private == 0 || r.closed {
+	if private == 0 || r.closed || r.listeners[boxPort] != listener { // released while it was accepted
 		r.mu.Unlock()
 		return
 	}
-	r.conns[client] = struct{}{}
+	r.conns[client] = boxPort
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
@@ -261,21 +272,29 @@ func (r *acpServeRouter) setLive(binds map[int]int) {
 // allocate picks a private host port for each serve port of a box about to start. Docker binds it a
 // moment later; a port lost in that moment is the same skipped-port warning any publish can meet.
 // The second result is what the box's inner process is told, which also says which stable ports
-// something else holds.
+// a program on the host holds now: the session takes a free one only once the box serves it.
 func (r *acpServeRouter) allocate() (map[int]int, string, error) {
 	if r == nil {
 		return nil, "", nil
 	}
-	ports := r.Ports()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ports := slices.Clone(r.ports)
 	binds := make(map[int]int, len(ports))
 	// Held together until all are picked, so no two ports of this box get the same one.
-	for _, port := range ports {
+	for i, port := range ports {
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return nil, "", fmt.Errorf("pick a private host port: %w", err)
 		}
 		defer listener.Close()
 		binds[port.Box] = listener.Addr().(*net.TCPAddr).Port
+		if r.listeners[port.Box] == nil {
+			stable, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port.Host)))
+			if ports[i].Taken = err != nil; err == nil {
+				_ = stable.Close()
+			}
+		}
 	}
 	return binds, encodeServeBinds(binds, ports), nil
 }

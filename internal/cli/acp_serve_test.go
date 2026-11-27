@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -64,30 +65,109 @@ func readLink(t *testing.T, port int) string {
 	return string(buf[:n])
 }
 
+// ended says the router closed conn: a read meets its end, not the deadline.
+func ended(conn net.Conn) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err := conn.Read(make([]byte, 8))
+	var timeout net.Error
+	return err != nil && !(errors.As(err, &timeout) && timeout.Timeout())
+}
+
+// serves tells the router what its watcher would of the live box: a server starts or stops on port.
+func serves(r *acpServeRouter, port int, up bool) {
+	r.served(context.Background(), serveEvent{port: port, up: up})
+}
+
+// hostCanBind is what a server on the host meets when it starts on port.
+func hostCanBind(t *testing.T, port int) bool {
+	t.Helper()
+	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	_ = listener.Close()
+	return true
+}
+
 // The scenario the router exists for: a warm box and a thread that switches. The same link reaches
-// whichever box the thread uses, at the same address, and a parked box is out of reach.
+// whichever box the thread uses, at the same address, and a parked box is out of reach. A box that
+// serves nothing leaves the port to the host.
 func TestEditorServeLinkFollowsTheLiveBox(t *testing.T) {
 	stable := freeLoopbackPort(t)
 	router := startACPServeRouter([]acpctl.ServePort{{Box: 4000, Host: stable}})
 	defer router.Close()
-	if got := readLink(t, stable); got != "" {
-		t.Fatalf("with no live box the link answered %q", got)
+	if !hostCanBind(t, stable) {
+		t.Fatal("the session held the stable port with no box at all")
 	}
 	claude := map[int]int{4000: fakeBoxPort(t, "claude box")}
 	codex := map[int]int{4000: fakeBoxPort(t, "codex box")}
 	router.setLive(claude)
+	if !hostCanBind(t, stable) {
+		t.Fatal("the session held the stable port while nothing served in its box")
+	}
+	serves(router, 4000, true)
 	if got := readLink(t, stable); got != "claude box" {
 		t.Fatalf("live claude box: link answered %q", got)
 	}
-	// The thread switches to the warm codex box, and a refresh replacement goes the same way.
+	// The thread switches to the warm codex box, and a refresh replacement goes the same way. Each new
+	// box's watcher reports the servers it finds.
 	router.setLive(codex)
+	router.follow(nil)
+	if !hostCanBind(t, stable) {
+		t.Fatal("the stable port stayed held after the thread left the box that served it")
+	}
+	serves(router, 4000, true)
 	if got := readLink(t, stable); got != "codex box" {
 		t.Fatalf("after the switch: link answered %q", got)
 	}
 	replacement := map[int]int{4000: fakeBoxPort(t, "replacement box")}
 	router.setLive(replacement)
+	router.follow(nil)
+	serves(router, 4000, true)
 	if got := readLink(t, stable); got != "replacement box" {
 		t.Fatalf("after the refresh: link answered %q", got)
+	}
+}
+
+// A server that stops gives the port back, and its open connections end. A server only on the box's
+// 127.0.0.1 is unreachable through any published port, so it takes nothing either.
+func TestEditorServeReleasesThePortWhenTheBoxServerStops(t *testing.T) {
+	stable := freeLoopbackPort(t)
+	router := startACPServeRouter([]acpctl.ServePort{{Box: 4000, Host: stable}})
+	defer router.Close()
+	router.setLive(map[int]int{4000: fakeBoxPort(t, "box")})
+	router.served(context.Background(), serveEvent{port: 4000, up: true, loopback: true})
+	if !hostCanBind(t, stable) {
+		t.Fatal("a server on the box's loopback took the stable port")
+	}
+	serves(router, 9999, true) // not a serve port
+	serves(router, 4000, true)
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(stable)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	buf := make([]byte, 3)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != "box" {
+		t.Fatalf("first read = %q, %v", buf, err)
+	}
+	if hostCanBind(t, stable) {
+		t.Fatal("the session did not take the port its box serves")
+	}
+	serves(router, 4000, false)
+	if !hostCanBind(t, stable) {
+		t.Fatal("the stable port stayed held after the box server stopped")
+	}
+	if !ended(conn) {
+		t.Fatal("a connection stayed open after the box server stopped")
+	}
+	// A watcher of a box the thread has left says nothing that counts.
+	left, cancel := context.WithCancel(context.Background())
+	cancel()
+	router.served(left, serveEvent{port: 4000, up: true})
+	if !hostCanBind(t, stable) {
+		t.Fatal("a box the thread left took the stable port")
 	}
 }
 
@@ -97,6 +177,7 @@ func TestEditorServeSwitchEndsConnectionsToTheOldBox(t *testing.T) {
 	router := startACPServeRouter([]acpctl.ServePort{{Box: 4000, Host: stable}})
 	defer router.Close()
 	router.setLive(map[int]int{4000: fakeBoxPort(t, "old")})
+	serves(router, 4000, true)
 	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(stable)))
 	if err != nil {
 		t.Fatal(err)
@@ -108,14 +189,14 @@ func TestEditorServeSwitchEndsConnectionsToTheOldBox(t *testing.T) {
 		t.Fatalf("first read = %q, %v", buf, err)
 	}
 	router.setLive(map[int]int{4000: fakeBoxPort(t, "new")})
-	if _, err := conn.Read(make([]byte, 8)); err == nil {
+	if !ended(conn) {
 		t.Fatal("the connection to the old box stayed open across the switch")
 	}
 }
 
 // A session that connected while its project's file did not load has no ports, and learns them when the
-// file is fixed. From then on they are like any others: open threads hear the links that work, a box
-// starting now publishes behind them, and one something else holds is said to be taken.
+// file is fixed. From then on they are like any others: later threads list them, a box starting now
+// publishes behind them and hears which one a program on the host holds, and its servers take the rest.
 func TestEditorServeRouterTakesThePortsOfAFixedFile(t *testing.T) {
 	router := startACPServeRouter(nil)
 	defer router.Close()
@@ -140,47 +221,40 @@ func TestEditorServeRouterTakesThePortsOfAFixedFile(t *testing.T) {
 	defer occupant.Close()
 	stable, held := freeLoopbackPort(t), occupant.Addr().(*net.TCPAddr).Port
 	router.add([]acpctl.ServePort{{Box: 4000, Host: stable}, {Box: 5000, Host: held}})
-	if len(reported) != 1 || len(freed) != 1 || len(freed[0]) != 1 || freed[0][0].Box != 4000 {
-		t.Fatalf("reported=%+v freed=%+v, want both ports listed and the one that works told", reported, freed)
+	if len(reported) != 1 || len(reported[0]) != 2 || len(freed[0]) != 0 {
+		t.Fatalf("reported=%+v freed=%+v, want both ports listed and no link said to work yet", reported, freed)
 	}
-	ports := router.Ports()
-	if len(ports) != 2 || ports[0].Taken || !ports[1].Taken {
-		t.Fatalf("ports = %+v", ports)
+	if !hostCanBind(t, stable) {
+		t.Fatal("the session took a fixed file's port with nothing serving")
 	}
 	binds, told, err := router.allocate()
-	if err != nil || binds[4000] == 0 || binds[5000] == 0 || told == "" {
+	if err != nil || binds[4000] == 0 || binds[5000] == 0 {
 		t.Fatalf("binds=%v told=%q err=%v", binds, told, err)
 	}
+	if _, taken, err := decodeServeBinds(told); err != nil || taken[4000] || !taken[5000] {
+		t.Fatalf("told=%q, want only the port the host holds said to be taken", told)
+	}
 	router.setLive(map[int]int{4000: fakeBoxPort(t, "the box")})
+	serves(router, 4000, true)
+	serves(router, 5000, true)
 	if got := readLink(t, stable); got != "the box" {
 		t.Fatalf("the link answered %q", got)
 	}
-}
-
-// The session reads what the fixed file names for it, and nothing of a file still broken.
-func TestAFixedProjectGivesTheSessionItsPorts(t *testing.T) {
-	cfg := &config.Config{ConfigDir: t.TempDir(), RepoOverride: t.TempDir()}
-	cfg.SetEgress("filtered")
-	writeBrokenProjectFile(t, cfg.RepoOverride)
-	a := &app{cfg: cfg, acpServe: startACPServeRouter(nil)}
-	defer a.acpServe.Close()
-	ctrl := acpctl.New(cfg, "claude", "", "", cfg.RepoOverride, acpctl.Selection{}, nil, nil, acpHost())
-	a.acpServe.reportTo(ctrl)
-	a.readFixedProject(ctrl, cfg.RepoOverride, "super")
-	if ports := a.acpServe.Ports(); len(ports) != 0 {
-		t.Fatalf("a file still broken gave the session ports: %+v", ports)
-	}
-	if err := os.WriteFile(filepath.Join(cfg.RepoOverride, ".agent", "project.yaml"), []byte("serve:\n  ports: [4173]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	a.readFixedProject(ctrl, cfg.RepoOverride, "super")
-	if ports := a.acpServe.Ports(); len(ports) != 1 || ports[0].Box != 4173 {
+	if ports := router.Ports(); ports[0].Taken || !ports[1].Taken {
 		t.Fatalf("ports = %+v", ports)
 	}
+	if last := reported[len(reported)-1]; last[0].Taken || !last[1].Taken {
+		t.Fatalf("later threads were told %+v", last)
+	}
+	// While this session listens on a port, the next box hears it free: it reaches whichever box serves.
+	_, told, _ = router.allocate()
+	if _, taken, err := decodeServeBinds(told); err != nil || taken[4000] || !taken[5000] {
+		t.Fatalf("told=%q, want the port this session listens on said to be free", told)
+	}
 }
 
-// Something else holding the port is told, with no link, and the session takes the port once it is
-// free. The thread then hears the link works.
+// Something else holding the port when the box server starts is told, and the session takes the port
+// once it is free, while the box still serves. The thread then hears the link works.
 func TestEditorServePortHeldByAnotherProgram(t *testing.T) {
 	old := acpServeRetry
 	acpServeRetry = 20 * time.Millisecond
@@ -193,14 +267,22 @@ func TestEditorServePortHeldByAnotherProgram(t *testing.T) {
 	stable := occupant.Addr().(*net.TCPAddr).Port
 	router := startACPServeRouter([]acpctl.ServePort{{Box: 4000, Host: stable}})
 	defer router.Close()
-	if ports := router.Ports(); !ports[0].Taken {
-		t.Fatalf("ports = %+v, want the held port marked", ports)
+	if ports := router.Ports(); ports[0].Taken {
+		t.Fatalf("ports = %+v, want nothing taken while nothing serves", ports)
 	}
 	freed := make(chan []acpctl.ServePort, 1)
 	router.mu.Lock()
-	router.report = func(_, list []acpctl.ServePort) { freed <- list }
+	router.report = func(_, list []acpctl.ServePort) {
+		if len(list) > 0 {
+			freed <- list
+		}
+	}
 	router.mu.Unlock()
 	router.setLive(map[int]int{4000: fakeBoxPort(t, "the box")})
+	serves(router, 4000, true)
+	if ports := router.Ports(); !ports[0].Taken {
+		t.Fatalf("ports = %+v, want the held port marked", ports)
+	}
 	_ = occupant.Close()
 	select {
 	case list := <-freed:
@@ -218,15 +300,41 @@ func TestEditorServePortHeldByAnotherProgram(t *testing.T) {
 	}
 }
 
+// A host server that restarts gets its port back: once the box server stops, the session stops asking.
+func TestEditorServeLeavesAFreedPortAloneOnceTheBoxStopsServing(t *testing.T) {
+	old := acpServeRetry
+	acpServeRetry = 20 * time.Millisecond
+	defer func() { acpServeRetry = old }()
+	occupant, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable := occupant.Addr().(*net.TCPAddr).Port
+	router := startACPServeRouter([]acpctl.ServePort{{Box: 4000, Host: stable}})
+	defer router.Close()
+	router.setLive(map[int]int{4000: fakeBoxPort(t, "the box")})
+	serves(router, 4000, true)
+	serves(router, 4000, false)
+	if router.Ports()[0].Taken {
+		t.Fatal("a port no box server waits for still reads as taken")
+	}
+	_ = occupant.Close() // the host server restarts
+	time.Sleep(10 * acpServeRetry)
+	if !hostCanBind(t, stable) {
+		t.Fatal("the session took the port while nothing served in its box")
+	}
+}
+
 func TestEditorServeRouterGivesItsPortsBack(t *testing.T) {
 	stable := freeLoopbackPort(t)
 	router := startACPServeRouter([]acpctl.ServePort{{Box: 4000, Host: stable}})
+	router.setLive(map[int]int{4000: fakeBoxPort(t, "the box")})
+	serves(router, 4000, true)
 	router.Close()
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(stable)))
-	if err != nil {
-		t.Fatalf("the stable port stayed held after the session ended: %v", err)
+	serves(router, 4000, true) // a watcher line racing the end
+	if !hostCanBind(t, stable) {
+		t.Fatal("the stable port stayed held after the session ended")
 	}
-	_ = listener.Close()
 	var none *acpServeRouter
 	none.setLive(map[int]int{1: 2}) // a session with no serve ports has no router
 	none.Close()
@@ -256,7 +364,7 @@ func TestServeBindsRoundTripAndRefuseNonsense(t *testing.T) {
 }
 
 // Each box the session spawns gets its own private ports, carried to its inner process, and they are
-// never the stable port the session holds.
+// never the stable port the session forwards.
 func TestSpawnedBoxesPublishOnPrivatePorts(t *testing.T) {
 	stable := freeLoopbackPort(t)
 	router := startACPServeRouter([]acpctl.ServePort{{Box: 4000, Host: stable}, {Box: 9091, Host: freeLoopbackPort(t)}})

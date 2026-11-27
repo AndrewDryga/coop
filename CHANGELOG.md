@@ -9,6 +9,8 @@
   already run. It says they are running and how to apply Compose changes.
 - When only editor sessions keep `coop up` waiting, it asks at a terminal whether to restart them.
   Their threads stay open, and their new boxes join the services it starts.
+- An editor session takes a serve port only while a server in its box listens on it, so a server on
+  your host can use the same port while the box serves nothing.
 
 ## 15.5.0
 

@@ -788,8 +788,10 @@ when the server is only on localhost.</li>
 <li>Publishing needs networking: <code>filtered</code> (the default), which publishes the port on the run&#39;s
 gateway, or <code>open</code>. See <a href="networking.html">restricted networking</a>.</li>
 <li>co:op skips a host port that is already in use and prints a note. <code>COOP_SERVE_URL_&lt;port&gt;</code> still
-carries the workspace&#39;s assigned URL for configuration and discovery. An editor session says so
-in the thread instead of posting a link, and takes the port when it frees.</li>
+carries the workspace&#39;s assigned URL for configuration and discovery.</li>
+<li>An editor session takes a port only while a server in its box listens on it, so a server on
+your host can use the same port the rest of the time. If the port is in use when the box server
+starts, the thread says so instead of posting a link, and the session takes the port when it frees.</li>
 <li>In an editor session the link always reaches the box the thread is using, including after you
 switch provider or account.</li>
 <li>A box restart (a credential switch, a rebuild) takes the dev server down with the old box. The

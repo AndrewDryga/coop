@@ -128,18 +128,22 @@ func (s *serveAnnouncer) handle(event serveEvent) {
 	s.up[event.port] = true
 }
 
-// follow watches the box the thread now uses, and stops watching the one before it. find names the
-// box's container once it has one; a box that never gets one, such as a holding child, is left alone.
+// follow watches the box the thread now uses, and stops watching the one before it, giving back the
+// stable ports that box served: the new box's watcher takes them again for servers it finds. find names
+// the box's container once it has one; a box that never gets one, such as a holding child, is left
+// alone and serves nothing.
 func (r *acpServeRouter) follow(find func(context.Context) (string, error)) {
 	if r == nil {
 		return
 	}
+	defer r.publish(nil)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stopWatch != nil {
 		r.stopWatch()
 		r.stopWatch = nil
 	}
+	r.releaseAll()
 	if find == nil || r.runtime == nil || r.closed {
 		return
 	}
@@ -152,6 +156,13 @@ func (r *acpServeRouter) follow(find func(context.Context) (string, error)) {
 		if err := r.watchBox(ctx, find); err != nil && ctx.Err() == nil {
 			acpproxy.Trace("serve watch: %v", err)
 		}
+		// The box stopped, or its watcher did: nothing says it still serves.
+		r.mu.Lock()
+		if ctx.Err() == nil {
+			r.releaseAll()
+		}
+		r.mu.Unlock()
+		r.publish(nil)
 	}()
 }
 
@@ -203,6 +214,7 @@ func (r *acpServeRouter) watchBox(ctx context.Context, find func(context.Context
 	lines := bufio.NewScanner(stdout)
 	for lines.Scan() {
 		if event, ok := parseServeEvent(lines.Text()); ok {
+			r.served(ctx, event) // first, so the announcement says whether the port is taken
 			announcer.handle(event)
 		}
 	}

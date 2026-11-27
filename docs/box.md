@@ -758,8 +758,10 @@ port links on stderr.
 - Publishing needs networking: `filtered` (the default), which publishes the port on the run's
   gateway, or `open`. See [restricted networking](networking.md).
 - co:op skips a host port that is already in use and prints a note. `COOP_SERVE_URL_<port>` still
-  carries the workspace's assigned URL for configuration and discovery. An editor session says so
-  in the thread instead of posting a link, and takes the port when it frees.
+  carries the workspace's assigned URL for configuration and discovery.
+- An editor session takes a port only while a server in its box listens on it, so a server on
+  your host can use the same port the rest of the time. If the port is in use when the box server
+  starts, the thread says so instead of posting a link, and the session takes the port when it frees.
 - In an editor session the link always reaches the box the thread is using, including after you
   switch provider or account.
 - A box restart (a credential switch, a rebuild) takes the dev server down with the old box. The
