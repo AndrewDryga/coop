@@ -93,6 +93,11 @@ func ProfileAuthed(cfg *config.Config, agent, profile string) bool {
 // ProfileCredentialReady reports whether an account can run: a canonical record that is ready, or
 // the default account's env-file credential. A login only builds before v11 saved is not ready.
 func ProfileCredentialReady(cfg *config.Config, agent, profile string, now time.Time) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if controlled, err := ControllerModelAccount(ctx, agent, profile); controlled {
+		return err == nil
+	}
 	ag, ok := agents.Get(agent)
 	if !ok {
 		return false

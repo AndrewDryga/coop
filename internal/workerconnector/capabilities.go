@@ -10,6 +10,10 @@ import (
 )
 
 type sessionCapabilities struct {
+	ServiceRelayVersions               []int `json:"service_relay_versions,omitempty"`
+	FleetWorkspaceInputVersions        []int `json:"fleet_workspace_input_versions,omitempty"`
+	ProjectServiceBudgetVersions       []int `json:"project_service_budget_versions,omitempty"`
+	ModelProxyVersions                 []int `json:"model_proxy_versions,omitempty"`
 	JobSpecVersions                    []int `json:"job_spec_versions"`
 	ProjectRuntimeVersions             []int `json:"project_runtime_versions,omitempty"`
 	JobPresetVersions                  []int `json:"job_preset_versions,omitempty"`
@@ -51,6 +55,18 @@ func readCapabilities(ctx context.Context, api API) ([]workerproto.Capability, b
 	var document sessionCapabilities
 	if decoder.Decode(&document) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return result, false
+	}
+	if proves(document.ServiceRelayVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "service-relay", Version: "1"})
+	}
+	if proves(document.FleetWorkspaceInputVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "fleet-workspace-input", Version: "1"})
+	}
+	if proves(document.ModelProxyVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "model-proxy", Version: "1"})
+	}
+	if proves(document.ProjectServiceBudgetVersions, 1) {
+		result = append(result, workerproto.Capability{Name: "project-service-budget", Version: "1"})
 	}
 	if proves(document.ProjectRuntimeVersions, 1) {
 		result = append(result, workerproto.Capability{Name: "project-runtime", Version: "1"})

@@ -72,7 +72,7 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	// repo-scoped, loopback-only container. The specific violation rides out to `coop up` / the
 	// auto-up warning, so a refused file names exactly why.
 	ctx = context.WithValue(ctx, deferServiceShadowsKey{}, rt.IsDocker() && filesystemProfileCandidate(workspace))
-	data, err := readValidatedCompose(file, workspace, repoReadOnly)
+	data, err := serviceComposeDefinition(ctx, file, workspace, repoReadOnly)
 	controller, _ := ctx.Value(controllerServicesKey{}).(*config.Config)
 	if err == nil && controller != nil {
 		err = validateControllerServices(data)
@@ -117,6 +117,9 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 	if err != nil {
 		return started, err
 	}
+	if limit, _ := ctx.Value(controllerServiceBudgetKey{}).(int); limit > 0 && len(services) > limit {
+		return started, fmt.Errorf("project defines %d Compose services but the job reserved %d", len(services), limit)
+	}
 	// A loop's or session's own project names the process whose exit ends it (runServiceLabels).
 	if len(labels) > 0 {
 		if mark, _ := ctx.Value(markServiceDefinitionKey{}).(bool); mark {
@@ -131,7 +134,9 @@ func startServicesFileContext(ctx context.Context, rt runtime.Runtime, workspace
 		args = append(args, "-f", override)
 	}
 	if controller != nil {
-		override, cleanup, err := controllerServiceOverride(controller, services, workspace, exposedRoots...)
+		jobDigest, _ := ctx.Value(controllerServiceJobKey{}).(string)
+		_, daemon := rt.ComposeBinding()
+		override, cleanup, err := controllerServiceOverride(controller, services, workspace, jobDigest, daemon, exposedRoots...)
 		if err != nil {
 			return started, err
 		}

@@ -752,13 +752,18 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if spec.ControllerJob || spec.HandshakeOnly {
 		composeFile = ""
 	}
-	if spec.ControllerRuntime != nil && !spec.HandshakeOnly && !spec.FormatCorrection {
-		composeFile = ComposeFileAt(spec.Repo, spec.ControllerRuntime.Runtime.Compose)
-		if spec.ControllerRuntime.Runtime.Compose == "" {
-			composeFile = ""
-		}
-		if spec.ControllerRuntime.Runtime.Compose != "" && composeFile == "" && !(spec.Review && p.Review.Compose != "") {
-			return -1, errors.New("required project Compose file is missing or empty")
+	var grantedCompose []byte
+	if grant := spec.ControllerRuntime; grant != nil && !spec.HandshakeOnly && !spec.FormatCorrection && !(spec.Review && p.Review.Compose != "") {
+		if name := grant.Runtime.Compose; name != "" {
+			grantedCompose, err = readRepositoryRegularFileNoFollow(grant.Repository, name, maxComposeFileBytes)
+			if err != nil {
+				return -1, fmt.Errorf("read required project Compose file: %w", err)
+			}
+			if len(grantedCompose) == 0 {
+				return -1, errors.New("required project Compose file is empty")
+			}
+			// Compose resolves binds in the job workspace. Only the definition comes from the grant.
+			composeFile = filepath.Join(spec.Repo, name)
 		}
 	}
 	serviceOwner := runServiceOwner(spec)
@@ -1775,6 +1780,10 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 	if serviceCtx == nil {
 		serviceCtx = context.Background()
 	}
+	if grantedCompose != nil {
+		serviceCtx = context.WithValue(serviceCtx, controllerComposeDefinitionKey{}, grantedCompose)
+		serviceCtx = context.WithValue(serviceCtx, controllerServiceJobKey{}, spec.ControllerRuntime.JobDigest)
+	}
 	services := serviceLaunchOutcome{state: servicesNotConfigured}
 	if composeFile != "" {
 		services.state = servicesUnknown
@@ -1821,6 +1830,7 @@ func runWithCompositionArtifacts(cfg *config.Config, rt runtime.Runtime, spec Ru
 				serviceCtx = context.WithValue(serviceCtx, markServiceDefinitionKey{}, spec.SupervisorID != "")
 				if spec.ControllerRuntime != nil {
 					serviceCtx = context.WithValue(serviceCtx, controllerServicesKey{}, cfg)
+					serviceCtx = context.WithValue(serviceCtx, controllerServiceBudgetKey{}, spec.ControllerRuntime.Runtime.MaxServices)
 				}
 				started, err = startServicesFileContext(serviceCtx, rt, spec.Repo, cf, serviceOwner, serviceNetwork, runServiceLabels(spec, serviceOwner), io.Discard, &composeStderr, spec.RepoReadOnly, !sections.loop, nil, nil, privateRoots...)
 				unlock()

@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -23,17 +24,20 @@ import (
 var errAccountAuthorityBusy = errors.New("canonical credential transaction is busy — retry")
 
 type accountAuthority struct {
-	Version   int               `json:"version"`
-	Provider  string            `json:"provider"`
-	Account   string            `json:"account"`
-	Epoch     uint64            `json:"epoch"`
-	Revision  uint64            `json:"revision"`
-	Revoked   bool              `json:"revoked"`
-	Renewal   string            `json:"renewal,omitempty"`
-	Migration string            `json:"migration,omitempty"`
-	Selection string            `json:"selection,omitempty"`
-	Principal string            `json:"principal,omitempty"`
-	Artifacts map[string][]byte `json:"artifacts,omitempty"`
+	Version      int                `json:"version"`
+	Provider     string             `json:"provider"`
+	Account      string             `json:"account"`
+	Epoch        uint64             `json:"epoch"`
+	Revision     uint64             `json:"revision"`
+	PriorImports []string           `json:"prior_imports,omitempty"`
+	Imported     string             `json:"imported,omitempty"`
+	Transfer     *sealedAccountMove `json:"transfer,omitempty"`
+	Revoked      bool               `json:"revoked"`
+	Renewal      string             `json:"renewal,omitempty"`
+	Migration    string             `json:"migration,omitempty"`
+	Selection    string             `json:"selection,omitempty"`
+	Principal    string             `json:"principal,omitempty"`
+	Artifacts    map[string][]byte  `json:"artifacts,omitempty"`
 }
 
 // Adapters provide the complete credential-only inventory and identity validation, and Complete
@@ -225,6 +229,17 @@ func validateAccountAuthority(spec accountAuthoritySpec, account string, record 
 			return errors.New("invalid canonical renewal receipt")
 		}
 	}
+	for _, id := range record.PriorImports {
+		if !transferIDValid(id) {
+			return errors.New("invalid previous account import")
+		}
+	}
+	if record.Imported != "" && (record.Revoked || !transferIDValid(record.Imported)) {
+		return errors.New("invalid account import receipt")
+	}
+	if record.Transfer != nil && (!record.Revoked || !record.Transfer.valid()) {
+		return errors.New("invalid encrypted transfer receipt")
+	}
 	if record.Revoked {
 		if len(record.Artifacts) != 0 || record.Selection != "" || record.Principal != "" {
 			return errors.New("revoked credential retains serving authority")
@@ -315,6 +330,17 @@ func (root *accountAuthorityRoot) publish(spec accountAuthoritySpec, account str
 	if current != nil && next.Epoch == epoch &&
 		(current.Revoked || next.Revoked || current.Principal != next.Principal || current.Selection != next.Selection) {
 		return current, false, errors.New("canonical credential replacement/removal needs a fresh epoch")
+	}
+	// An inbox reservation may have survived a crash immediately before this
+	// account was written. Keep proof of every completed import with the
+	// account, including its tombstone, so the inbox can distinguish the cases.
+	if current != nil {
+		next.PriorImports = current.PriorImports
+		if next.Epoch == current.Epoch {
+			next.Imported = current.Imported
+		} else if current.Imported != "" {
+			next.PriorImports = append(slices.Clone(current.PriorImports), current.Imported)
+		}
 	}
 	next.Version, next.Provider, next.Account, next.Revision = 1, spec.Provider, account, revision+1
 	if err := validateAccountAuthority(spec, account, next); err != nil {

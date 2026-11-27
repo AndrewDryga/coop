@@ -19,21 +19,30 @@ import (
 // returns no context and no stop function, so a caller keeps its own context
 // until it has checked the error.
 func (s *Service) checkpointDiskContext(parent context.Context, workspace string, incoming int64) (context.Context, func(), error) {
+	return checkpointDiskContext(parent, []string{s.stateRoot, workspace}, incoming, func(capacity int64) int64 {
+		s.storage.mu.Lock()
+		defer s.storage.mu.Unlock()
+		return s.storageLimitsLocked(capacity).ReserveBytes
+	})
+}
+
+func defaultCheckpointReserve(capacity int64) int64 {
+	return DefaultStorageLimits(capacity).ReserveBytes
+}
+
+func checkpointDiskContext(parent context.Context, paths []string, incoming int64, reserve func(int64) int64) (context.Context, func(), error) {
 	check := func() error {
-		for _, path := range []string{s.stateRoot, workspace} {
+		for i, path := range paths {
 			volume, err := forkspace.MeasureFilesystem(storageMeasurePath(path))
 			if err != nil {
 				return &session.Error{Code: session.CodeStorageUnavailable, Detail: "cannot measure checkpoint storage"}
 			}
-			s.storage.mu.Lock()
-			reserve := s.storageLimitsLocked(volume.CapacityBytes).ReserveBytes
-			s.storage.mu.Unlock()
-			available := volume.FreeBytes - reserve
+			available := volume.FreeBytes - reserve(volume.CapacityBytes)
 			// Body, extracted members and the immutable recovery artifact. This
 			// is only the known minimum: Git history/checkouts are monitored too.
-			if available < 0 || (path == s.stateRoot && incoming > available/3) {
+			if available < 0 || (i == 0 && incoming > available/3) {
 				return &session.Error{Code: session.CodeStorageUnavailable,
-					Detail: fmt.Sprintf("checkpoint needs more storage; %d bytes available above the worker reserve", max(available, 0))}
+					Detail: fmt.Sprintf("checkpoint needs more storage; %d bytes available above the storage reserve", max(available, 0))}
 			}
 		}
 		return nil

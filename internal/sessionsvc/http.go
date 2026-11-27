@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AndrewDryga/coop/internal/secretscan"
 	"github.com/AndrewDryga/coop/internal/session"
 	"github.com/AndrewDryga/coop/internal/tasks"
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -184,24 +185,25 @@ type SessionParentDivergenceDTO struct {
 }
 
 type SessionChangesDTO struct {
-	BaseCommit         string                     `json:"base_commit"`
-	ForkHead           string                     `json:"fork_head"`
-	ForkTree           string                     `json:"fork_tree"`
-	AdmittedSourceTree string                     `json:"admitted_source_tree,omitempty"`
-	ParentHead         string                     `json:"parent_head"`
-	Committed          []SessionChangeDTO         `json:"committed"`
-	Staged             []SessionChangeDTO         `json:"staged"`
-	Unstaged           []SessionChangeDTO         `json:"unstaged"`
-	Untracked          []SessionChangeDTO         `json:"untracked"`
-	Conflicts          []SessionChangeDTO         `json:"conflicts"`
-	ParentDivergence   SessionParentDivergenceDTO `json:"parent_divergence"`
-	Patch              []byte                     `json:"patch,omitempty"`
-	Truncated          bool                       `json:"truncated"`
-	PatchDigest        string                     `json:"patch_digest,omitempty"`
-	PatchBytes         int64                      `json:"patch_bytes"`
-	PatchOffset        int64                      `json:"patch_offset"`
-	PatchNextOffset    int64                      `json:"patch_next_offset"`
-	PatchHasMore       bool                       `json:"patch_has_more"`
+	BaseCommit          string                     `json:"base_commit"`
+	ForkHead            string                     `json:"fork_head"`
+	ForkTree            string                     `json:"fork_tree"`
+	AdmittedSourceTree  string                     `json:"admitted_source_tree,omitempty"`
+	WorkingSourceDigest string                     `json:"working_source_digest,omitempty"`
+	ParentHead          string                     `json:"parent_head"`
+	Committed           []SessionChangeDTO         `json:"committed"`
+	Staged              []SessionChangeDTO         `json:"staged"`
+	Unstaged            []SessionChangeDTO         `json:"unstaged"`
+	Untracked           []SessionChangeDTO         `json:"untracked"`
+	Conflicts           []SessionChangeDTO         `json:"conflicts"`
+	ParentDivergence    SessionParentDivergenceDTO `json:"parent_divergence"`
+	Patch               []byte                     `json:"patch,omitempty"`
+	Truncated           bool                       `json:"truncated"`
+	PatchDigest         string                     `json:"patch_digest,omitempty"`
+	PatchBytes          int64                      `json:"patch_bytes"`
+	PatchOffset         int64                      `json:"patch_offset"`
+	PatchNextOffset     int64                      `json:"patch_next_offset"`
+	PatchHasMore        bool                       `json:"patch_has_more"`
 }
 
 type SessionReviewDTO struct {
@@ -304,6 +306,10 @@ type sessionReadyDTO struct {
 }
 
 type sessionCapabilitiesDTO struct {
+	ServiceRelayVersions               []int `json:"service_relay_versions,omitempty"`
+	FleetWorkspaceInputVersions        []int `json:"fleet_workspace_input_versions,omitempty"`
+	ProjectServiceBudgetVersions       []int `json:"project_service_budget_versions"`
+	ModelProxyVersions                 []int `json:"model_proxy_versions,omitempty"`
 	JobSpecVersions                    []int `json:"job_spec_versions"`
 	ProjectRuntimeVersions             []int `json:"project_runtime_versions"`
 	JobPresetVersions                  []int `json:"job_preset_versions"`
@@ -350,6 +356,10 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeSessionHTTPError(w, http.StatusInternalServerError, "internal_error", "session service is unavailable")
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/v1/model-access/") {
+		h.modelAccess(w, r)
+		return
+	}
 	switch r.URL.Path {
 	case "/healthz":
 		if !sessionHTTPMethod(w, r, http.MethodGet) {
@@ -380,7 +390,23 @@ func (h *sessionHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !sessionQueryOnly(w, r) {
 			return
 		}
+		var models []int
+		if h.service.supportsControllerModels() {
+			models = []int{1}
+		}
+		var inputs []int
+		if h.service.workspaceInputFetcher != nil {
+			inputs = []int{1}
+		}
+		var relays []int
+		if _, ok := h.service.modelAccess.(serviceRelayTransport); ok && h.service.rt.IsDocker() {
+			relays = []int{1}
+		}
 		writeSessionJSON(w, http.StatusOK, sessionCapabilitiesDTO{
+			ServiceRelayVersions:               relays,
+			FleetWorkspaceInputVersions:        inputs,
+			ProjectServiceBudgetVersions:       []int{1},
+			ModelProxyVersions:                 models,
 			JobSpecVersions:                    []int{2},
 			ProjectRuntimeVersions:             []int{1},
 			JobPresetVersions:                  []int{1},
@@ -558,6 +584,23 @@ func (h *sessionHTTPHandler) serveSessionPath(w http.ResponseWriter, r *http.Req
 	case len(parts) == 2 && parts[1] == "network":
 		if sessionHTTPMethod(w, r, http.MethodGet) {
 			h.getNetwork(w, r, sessionID)
+		}
+	case len(parts) == 2 && parts[1] == "services":
+		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r) {
+			services, err := h.service.ControllerServices(r.Context(), sessionID)
+			if err != nil {
+				writeSessionHTTPError(w, http.StatusConflict, "service_unavailable", "cannot inspect the active job services")
+				return
+			}
+			writeSessionJSON(w, http.StatusOK, map[string]any{"services": services})
+		}
+	case len(parts) == 4 && parts[1] == "services" && parts[3] == "connections":
+		if sessionHTTPMethod(w, r, http.MethodPost) && sessionQueryOnly(w, r) {
+			h.openServiceConnection(w, r, sessionID, parts[2])
+		}
+	case len(parts) == 4 && parts[1] == "services" && parts[3] == "logs":
+		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r, "container", "cursor") {
+			h.serviceLogs(w, r, sessionID, parts[2])
 		}
 	case len(parts) == 2 && parts[1] == "evidence":
 		if sessionHTTPMethod(w, r, http.MethodGet) && sessionQueryOnly(w, r) {
@@ -1191,10 +1234,15 @@ func (h *sessionHTTPHandler) extendBudget(w http.ResponseWriter, r *http.Request
 }
 
 func (h *sessionHTTPHandler) getChanges(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if !sessionQueryOnly(w, r, "patch_offset", "patch_limit") {
+	if !sessionQueryOnly(w, r, "patch_offset", "patch_limit", "verification_turn", "candidate_sha256") {
 		return
 	}
 	query := r.URL.Query()
+	verifyInput := query.Has("verification_turn") || query.Has("candidate_sha256")
+	if verifyInput && (!validSessionHTTPPathID(query.Get("verification_turn")) || len(query.Get("candidate_sha256")) != 64 || len(query) != 2) {
+		writeSessionHTTPError(w, http.StatusBadRequest, "invalid_request", "source verification requires a turn and candidate digest without pagination")
+		return
+	}
 	patchOffset := int64(0)
 	if raw := query.Get("patch_offset"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
@@ -1225,7 +1273,9 @@ func (h *sessionHTTPHandler) getChanges(w http.ResponseWriter, r *http.Request, 
 	}
 	var changes WorkspaceChanges
 	var err error
-	if patchLimit == 0 && patchOffset == 0 {
+	if verifyInput {
+		changes, err = h.service.getVerificationChanges(r.Context(), sessionID, query.Get("verification_turn"), query.Get("candidate_sha256"))
+	} else if patchLimit == 0 && patchOffset == 0 {
 		changes, err = h.service.GetChanges(r.Context(), sessionID)
 	} else if patchLimit == 0 {
 		writeSessionHTTPError(
@@ -1623,6 +1673,25 @@ func sessionCursorQuery(w http.ResponseWriter, r *http.Request) (int64, int, boo
 	return after, limit, true
 }
 
+func (h *sessionHTTPHandler) serviceLogs(w http.ResponseWriter, r *http.Request, id, name string) {
+	project, err := h.service.controllerProject(r.Context(), id)
+	if err == nil && project != nil {
+		query := r.URL.Query()
+		page, err := project.ServiceLogs(r.Context(), h.service.rt, name, query.Get("container"), query.Get("cursor"))
+		if err == nil {
+			for i := range page.Records {
+				text := page.Records[i].Text
+				if matched, scanErr := secretscan.ContainsCredential(strings.NewReader(text)); matched || scanErr != nil || len(secretscan.ScanSecrets(text)) != 0 {
+					page.Records[i].Text = "[credential withheld]"
+				}
+			}
+			writeSessionJSON(w, http.StatusOK, page)
+			return
+		}
+	}
+	writeSessionHTTPError(w, http.StatusConflict, "service_logs_unavailable", "service logs or their continuation are no longer available")
+}
+
 func sessionQueryOnly(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
 	valid := make(map[string]bool, len(allowed))
 	for _, name := range allowed {
@@ -1757,7 +1826,7 @@ func publicChanges(value WorkspaceChanges) SessionChangesDTO {
 	}
 	return SessionChangesDTO{
 		BaseCommit: value.BaseCommit, ForkHead: value.ForkHead, ForkTree: value.ForkTree,
-		AdmittedSourceTree: value.AdmittedSourceTree, ParentHead: value.ParentHead,
+		WorkingSourceDigest: value.WorkingSourceDigest, AdmittedSourceTree: value.AdmittedSourceTree, ParentHead: value.ParentHead,
 		Committed: convert(value.Committed), Staged: convert(value.Staged), Unstaged: convert(value.Unstaged),
 		Untracked: convert(value.Untracked), Conflicts: convert(value.Conflicts),
 		ParentDivergence: SessionParentDivergenceDTO{Ahead: value.ParentDivergence.Ahead, Behind: value.ParentDivergence.Behind, BaseToFork: value.ParentDivergence.BaseToFork, BaseToParent: value.ParentDivergence.BaseToParent, Diverged: value.ParentDivergence.Diverged},

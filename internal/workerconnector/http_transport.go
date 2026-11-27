@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/AndrewDryga/coop/internal/workerproto"
@@ -30,11 +31,12 @@ type HTTPTransportConfig struct {
 }
 
 type HTTPTransport struct {
-	stateRoot string
-	baseURL   *url.URL
-	client    *http.Client
-	endpoint  string
-	identity  *identityManager
+	machineReports atomic.Bool
+	stateRoot      string
+	baseURL        *url.URL
+	client         *http.Client
+	endpoint       string
+	identity       *identityManager
 }
 
 func NewHTTPTransport(config HTTPTransportConfig) (*HTTPTransport, error) {
@@ -100,6 +102,12 @@ func (t *HTTPTransport) Identity(ctx context.Context) (WorkerIdentity, error) {
 }
 
 func (t *HTTPTransport) Poll(ctx context.Context, poll workerproto.Poll) (workerproto.Response, error) {
+	// Controllers deployed before machine reporting decode the v2 hello strictly.
+	// Negotiate on the HTTP response before adding an optional JSON field.
+	hasMachine := poll.Worker.Capacity.Machine != nil
+	if !t.machineReports.Load() {
+		poll.Worker.Capacity.Machine = nil
+	}
 	if err := poll.Validate(); err != nil {
 		return workerproto.Response{}, err
 	}
@@ -116,6 +124,9 @@ func (t *HTTPTransport) Poll(ctx context.Context, poll workerproto.Poll) (worker
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/json")
+	if hasMachine {
+		request.Header.Set("X-Coop-Machine-Report", "1")
+	}
 	client, err := t.clientFor(ctx)
 	if err != nil {
 		return workerproto.Response{}, err
@@ -139,7 +150,11 @@ func (t *HTTPTransport) Poll(ctx context.Context, poll workerproto.Poll) (worker
 	if !strings.EqualFold(mediaType, "application/json") {
 		return workerproto.Response{}, errors.New("controller worker response is not JSON")
 	}
-	return workerproto.DecodeResponse(body)
+	reply, err := workerproto.DecodeResponse(body)
+	if err == nil {
+		t.machineReports.Store(response.Header.Get("X-Coop-Machine-Report") == "1")
+	}
+	return reply, err
 }
 
 // FetchJobSourceGrant obtains an uncached, job-bound Contents:read grant. The response

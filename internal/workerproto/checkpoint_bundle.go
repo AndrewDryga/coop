@@ -58,82 +58,106 @@ func (r *checkpointBundleInput) Read(data []byte) (int, error) {
 func readWorkspaceCheckpointBundle(checkpoint WorkspaceCheckpoint, input io.Reader,
 	visit func(*tar.Header, io.Reader) error,
 ) (WorkspaceCheckpointBundleManifest, error) {
-	limited := &io.LimitedReader{R: input, N: checkpoint.Bundle.ByteSize + 1}
-	digest := sha256.New()
-	stream := io.TeeReader(limited, digest)
-	reader := NewWorkspaceCheckpointTarReader(stream)
-	header, err := reader.Next()
-	if err != nil || header.Name != workspaceCheckpointManifestEntry {
-		return WorkspaceCheckpointBundleManifest{}, errors.New("workspace checkpoint manifest must be the first tar member")
+	var manifest WorkspaceCheckpointBundleManifest
+	decode := func(document []byte) ([]archiveMember, error) {
+		var err error
+		manifest, err = DecodeWorkspaceCheckpointBundleManifest(document)
+		if err != nil {
+			return nil, err
+		}
+		if err := ValidateWorkspaceCheckpointPair(checkpoint, manifest); err != nil {
+			return nil, err
+		}
+		return manifest.archiveMembers(), nil
 	}
-	if err := validateCheckpointTarHeader(header, workspaceCheckpointManifestEntry, 0o644, header.Size, checkpoint.Version); err != nil {
-		return WorkspaceCheckpointBundleManifest{}, err
-	}
-	if header.Size <= 0 || header.Size > MaxWorkspaceCheckpointManifest {
-		return WorkspaceCheckpointBundleManifest{}, errors.New("workspace checkpoint manifest exceeds its bound")
-	}
-	manifestBytes, err := io.ReadAll(io.LimitReader(reader, MaxWorkspaceCheckpointManifest+1))
-	if err != nil || int64(len(manifestBytes)) != header.Size {
-		return WorkspaceCheckpointBundleManifest{}, errors.New("workspace checkpoint manifest length does not match")
-	}
-	manifest, err := DecodeWorkspaceCheckpointBundleManifest(manifestBytes)
-	if err != nil {
-		return WorkspaceCheckpointBundleManifest{}, err
-	}
-	if err := ValidateWorkspaceCheckpointPair(checkpoint, manifest); err != nil {
-		return WorkspaceCheckpointBundleManifest{}, err
-	}
-	type expectedMember struct {
-		entry WorkspaceCheckpointBundleEntry
-		mode  int64
-	}
-	expected := []expectedMember{{entry: manifest.TrackedPatch, mode: 0o644}}
+	ref := BodyReference{ByteSize: checkpoint.Bundle.ByteSize, SHA256: checkpoint.Bundle.SHA256}
+	err := readWorkspaceArchive(ref, checkpoint.Version, input, decode, visit)
+	return manifest, err
+}
+
+type archiveMember struct {
+	entry WorkspaceCheckpointBundleEntry
+	mode  int64
+}
+
+func (manifest WorkspaceCheckpointBundleManifest) archiveMembers() []archiveMember {
+	expected := []archiveMember{{entry: manifest.TrackedPatch, mode: 0o644}}
 	if manifest.Repository != nil {
 		expected[0].entry = *manifest.Repository
 	}
 	for _, file := range manifest.UntrackedFiles {
-		expected = append(expected, expectedMember{
+		expected = append(expected, archiveMember{
 			entry: WorkspaceCheckpointBundleEntry{Entry: file.Entry, SHA256: file.SHA256, ByteSize: file.ByteSize},
 			mode:  file.Mode,
 		})
 	}
 	for _, file := range manifest.TaskProjection.Files {
-		expected = append(expected, expectedMember{
+		expected = append(expected, archiveMember{
 			entry: WorkspaceCheckpointBundleEntry{Entry: file.Entry, SHA256: file.SHA256, ByteSize: file.ByteSize},
 			mode:  file.Mode,
 		})
 	}
 	if manifest.GateReceipt != nil {
-		expected = append(expected, expectedMember{entry: *manifest.GateReceipt, mode: 0o644})
+		expected = append(expected, archiveMember{entry: *manifest.GateReceipt, mode: 0o644})
+	}
+	return expected
+}
+
+func readWorkspaceArchive(ref BodyReference, version int, input io.Reader,
+	decode func([]byte) ([]archiveMember, error), visit func(*tar.Header, io.Reader) error) error {
+	if err := ref.Validate(); err != nil {
+		return err
+	}
+	limited := &io.LimitedReader{R: input, N: ref.ByteSize + 1}
+	digest := sha256.New()
+	stream := io.TeeReader(limited, digest)
+	reader := NewWorkspaceCheckpointTarReader(stream)
+	header, err := reader.Next()
+	if err != nil || header.Name != workspaceCheckpointManifestEntry {
+		return errors.New("workspace checkpoint manifest must be the first tar member")
+	}
+	if err := validateCheckpointTarHeader(header, workspaceCheckpointManifestEntry, 0644, header.Size, version); err != nil {
+		return err
+	}
+	if header.Size <= 0 || header.Size > MaxWorkspaceCheckpointManifest {
+		return errors.New("workspace checkpoint manifest exceeds its bound")
+	}
+	document, err := io.ReadAll(io.LimitReader(reader, MaxWorkspaceCheckpointManifest+1))
+	if err != nil || int64(len(document)) != header.Size {
+		return errors.New("workspace checkpoint manifest length does not match")
+	}
+	expected, err := decode(document)
+	if err != nil {
+		return err
 	}
 	for _, member := range expected {
 		header, err := reader.Next()
 		if err != nil {
-			return WorkspaceCheckpointBundleManifest{}, fmt.Errorf("workspace checkpoint member %q is missing", member.entry.Entry)
+			return fmt.Errorf("workspace checkpoint member %q is missing", member.entry.Entry)
 		}
-		if err := validateCheckpointTarHeader(header, member.entry.Entry, member.mode, member.entry.ByteSize, checkpoint.Version); err != nil {
-			return WorkspaceCheckpointBundleManifest{}, err
+		if err := validateCheckpointTarHeader(header, member.entry.Entry, member.mode, member.entry.ByteSize, version); err != nil {
+			return err
 		}
 		memberHash := sha256.New()
 		body := &io.LimitedReader{R: io.TeeReader(reader, memberHash), N: member.entry.ByteSize}
 		if visit != nil {
 			if err := visit(header, body); err != nil {
-				return WorkspaceCheckpointBundleManifest{}, err
+				return err
 			}
 		}
 		_, err = io.Copy(io.Discard, body)
 		if err != nil || body.N != 0 || hex.EncodeToString(memberHash.Sum(nil)) != member.entry.SHA256 {
-			return WorkspaceCheckpointBundleManifest{}, fmt.Errorf("workspace checkpoint member %q identity does not match", member.entry.Entry)
+			return fmt.Errorf("workspace checkpoint member %q identity does not match", member.entry.Entry)
 		}
 	}
 	if _, err := reader.Next(); !errors.Is(err, io.EOF) {
-		return WorkspaceCheckpointBundleManifest{}, errors.New("workspace checkpoint bundle contains undeclared members")
+		return errors.New("workspace checkpoint bundle contains undeclared members")
 	}
 	if _, err := io.Copy(checkpointZeroWriter{}, stream); err != nil || limited.N != 1 ||
-		hex.EncodeToString(digest.Sum(nil)) != checkpoint.Bundle.SHA256 {
-		return WorkspaceCheckpointBundleManifest{}, errors.New("workspace checkpoint bundle identity does not match")
+		hex.EncodeToString(digest.Sum(nil)) != ref.SHA256 {
+		return errors.New("workspace checkpoint bundle identity does not match")
 	}
-	return manifest, nil
+	return nil
 }
 
 type checkpointZeroWriter struct{}

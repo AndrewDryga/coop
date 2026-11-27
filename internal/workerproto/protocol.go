@@ -66,14 +66,25 @@ type Capability struct {
 }
 
 type Capacity struct {
-	SessionSlotsFree    int        `json:"session_slots_free"`
-	SessionSlotsTotal   int        `json:"session_slots_total"`
-	TurnSlotsFree       int        `json:"turn_slots_free"`
-	TurnSlotsTotal      int        `json:"turn_slots_total"`
-	WorkspaceSlotsFree  int        `json:"workspace_slots_free"`
-	WorkspaceSlotsTotal int        `json:"workspace_slots_total"`
-	State               string     `json:"state"`
-	CooldownUntil       *time.Time `json:"cooldown_until"`
+	Machine             *MachineCapacity `json:"machine,omitempty"`
+	SessionSlotsFree    int              `json:"session_slots_free"`
+	SessionSlotsTotal   int              `json:"session_slots_total"`
+	TurnSlotsFree       int              `json:"turn_slots_free"`
+	TurnSlotsTotal      int              `json:"turn_slots_total"`
+	WorkspaceSlotsFree  int              `json:"workspace_slots_free"`
+	WorkspaceSlotsTotal int              `json:"workspace_slots_total"`
+	State               string           `json:"state"`
+	CooldownUntil       *time.Time       `json:"cooldown_until"`
+}
+
+// MachineCapacity names the Docker daemon that owns these resources. The
+// allocatable budget excludes host headroom. Free subtracts active/warm jobs.
+type MachineCapacity struct {
+	Daemon          string `json:"daemon"`
+	CPUMillis       int64  `json:"cpu_millis"`
+	MemoryBytes     int64  `json:"memory_bytes"`
+	FreeCPUMillis   int64  `json:"free_cpu_millis"`
+	FreeMemoryBytes int64  `json:"free_memory_bytes"`
 }
 
 type CommandResult struct {
@@ -265,6 +276,9 @@ func (w WorkerHello) validate() error {
 }
 
 func (c Capacity) Validate() error {
+	if m := c.Machine; m != nil && (!digestPattern.MatchString(m.Daemon) || m.CPUMillis <= 0 || m.MemoryBytes <= 0 || m.FreeCPUMillis < 0 || m.FreeMemoryBytes < 0 || m.FreeCPUMillis > m.CPUMillis || m.FreeMemoryBytes > m.MemoryBytes) {
+		return errors.New("invalid worker machine capacity")
+	}
 	if !slots(c.SessionSlotsFree, c.SessionSlotsTotal) || !slots(c.TurnSlotsFree, c.TurnSlotsTotal) || !slots(c.WorkspaceSlotsFree, c.WorkspaceSlotsTotal) {
 		return errors.New("invalid worker capacity slots")
 	}

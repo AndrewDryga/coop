@@ -65,7 +65,9 @@ type geminiNativeIdentity struct {
 }
 
 func (geminiAgent) NativeCredentials() NativeCredentialSpec {
-	return NativeCredentialSpec{Environment: func(selection, key, value string) (NativeCredentialState, error) {
+	return NativeCredentialSpec{APIKeyFiles: func(key string) (map[string][]byte, error) {
+		return map[string][]byte{"settings.json": []byte(`{"security":{"auth":{"selectedType":"gemini-api-key"}}}`), "api-key": []byte(key)}, nil
+	}, Environment: func(selection, key, value string) (NativeCredentialState, error) {
 		if key == "GOOGLE_API_KEY" {
 			return NativeCredentialState{}, fmt.Errorf("native Gemini vertex-ai authentication is not supported by the native broker")
 		}
@@ -74,7 +76,7 @@ func (geminiAgent) NativeCredentials() NativeCredentialSpec {
 		{Name: "settings.json", Limit: 1 << 20, Required: true, Import: importGeminiSelector, AccessOnly: importGeminiSelector},
 		{Name: "oauth_creds.json", Limit: 1 << 20, Import: importGeminiOAuth, AccessOnly: projectGeminiOAuth},
 		{Name: "google_accounts.json", Limit: 1 << 20, Import: importGeminiIdentity, AccessOnly: importGeminiIdentity},
-		{Name: "api-key", Limit: 4 << 10, Import: importGeminiKey, AccessOnly: importGeminiKey},
+		{Name: "api-key", Limit: 4 << 10, Import: importNativeAPIKey, AccessOnly: importNativeAPIKey},
 	}, Select: selectGeminiNative, Inspect: inspectGeminiNative, Renew: renewGeminiNative, Complete: completeGeminiNative, Broker: NativeBrokerSpec{BindStorageIdentity: true, MergeJSON: []string{"settings.json"}, Seed: seedGeminiBroker, Env: geminiBrokerEnv, Routes: geminiBrokerRoutes, Check: checkGeminiBroker, CheckFiles: []NativeCredentialArtifact{{Name: "gemini-credentials.json", Limit: 1 << 20}}}}
 }
 
@@ -269,13 +271,6 @@ func importGeminiIdentity(data []byte) ([]byte, error) {
 	}
 	identity.Old = []string{}
 	return nativeJSON(identity)
-}
-
-func importGeminiKey(data []byte) ([]byte, error) {
-	if len(data) == 0 || len(data) > 4<<10 || !validNativeGrant(string(data)) {
-		return nil, fmt.Errorf("invalid Gemini API key")
-	}
-	return bytes.Clone(data), nil
 }
 
 func importGeminiOAuth(data []byte) ([]byte, error) {

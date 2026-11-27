@@ -396,6 +396,7 @@ func TestEveryRetainedReasonHasItsOwnSentence(t *testing.T) {
 		"native_broker_request_refused", "native_broker_account_refused", "native_broker_origin_refused", "native_broker_connect_refused",
 		"clock_namespace_mismatch", "clock_unsupported",
 		"collector_configuration_invalid", "collector_unavailable", "enforcement_shutdown_unconfirmed", "gateway_configuration_invalid",
+		"service_port_invalid", "service_unavailable", "service_stream_closed", "service_stream_expired",
 		"gateway_generation_used", "gateway_role_invalid", "gateway_listener_stopped", "gateway_listener_unavailable", "gateway_shutdown_unconfirmed",
 		"gateway_socket_occupied", "gateway_start_timeout", "kernel_counters_invalid", "maintenance_shutdown_unconfirmed",
 		"observation_generation_used", "observation_invalid", "observation_limit", "observation_storage_unavailable",

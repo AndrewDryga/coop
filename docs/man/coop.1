@@ -316,6 +316,8 @@ coop credentials: show and manage your agent accounts
 Usage:
   coop credentials                            show all accounts
   coop credentials <agent>                    show one agent's accounts
+  coop credentials <agent> <account> import   receive an encrypted bundle
+  coop credentials <agent> <account> export   make a bundle for a receive code
   coop credentials <agent> <account>          show an account
   coop credentials <agent> <account> default  use it by default
   coop credentials <agent> <account> rm       remove it
@@ -326,6 +328,7 @@ USE AN ACCOUNT
 
   The list marks the default account with "default".
 
+Copy or move an account:       coop help credentials transfer
 Account removal options:       coop help credentials rm
 Models and automatic rotation: coop help models
 
@@ -370,6 +373,22 @@ EXAMPLES
 
 Use by default: coop help credentials default
 Remove account: coop help credentials rm
+
+==============================================================================
+
+coop credentials <agent> <account> import|export: copy account access offline
+
+  On the destination, start import and leave it open. On the signed-in
+  Coop, start export and paste the destination's receive code. Paste the
+  encrypted result at the destination. Press Enter on an empty line to finish.
+
+  API keys stay usable on both installations. A subscription moves after you
+  confirm MOVE. To recover a missed paste, repeat
+  import on the same destination and export to the same receive code.
+
+EXAMPLES
+  coop credentials codex build import
+  coop credentials codex work export
 
 ==============================================================================
 
@@ -2115,6 +2134,7 @@ COMMANDS
   check       see whether this build can use the session data as it is
   quiescence  inspect queued and running work before a restart
   compact     back up session data and reduce its disk usage
+  fleet       run a local fleet controller and submit jobs
 
 CONNECT THIS MACHINE
   coop sessions connect --controller https://controller.example \e
@@ -2247,6 +2267,50 @@ RUNNING
   Leave this command running. Connection failures are retried automatically.
   Press Ctrl-C to disconnect and stop the local service it started.
   On restart, use the same controller and state directory; omit --token-file.
+
+==============================================================================
+
+coop sessions fleet: manage a local worker fleet
+
+Usage:
+  coop sessions fleet serve <state-dir> <listen> <tls-cert> <tls-key>
+    [<github-app.json>]
+  coop sessions fleet invite <state-dir> <worker> <pool> [--slots-only]
+  coop sessions fleet revoke <state-dir> <worker>
+  coop sessions fleet submit <state-dir> <pool> <job.json> <prompt-file>
+  coop sessions fleet status <state-dir> <job-ref>
+  coop sessions fleet workers <state-dir>
+  coop sessions fleet cancel <state-dir> <job-ref>
+  coop sessions fleet drain <state-dir> <worker>
+  coop sessions fleet resume <state-dir> <worker>
+  coop sessions fleet limit-account <state-dir> <provider@account> <jobs>
+  coop sessions fleet forward <gateway-address> < preview-grant.json
+  coop sessions fleet artifacts <job-uuid> <output-dir> [file ...] < checkpoint
+  coop sessions fleet checkout <job-uuid> <repo> <output-dir> < checkpoint
+  coop sessions fleet snapshot <job-uuid> <repo-ref> <repo> <base> [file ...]
+  coop sessions fleet events <state-dir> <job-ref> [<after-sequence>]
+
+COMMANDS
+  serve          Listen for outbound worker connections
+  invite         Issue a one-time worker invitation
+  revoke         End a worker's access
+  submit         Queue an immutable job and prompt
+  status         Read the job's state and result
+  workers        List enrolled workers and capacity
+  cancel         Request cancellation of a job
+  drain          Stop assigning work to a worker
+  resume         Allow a worker to accept work
+  limit-account  Set fleet-wide account concurrency
+  events         Read retained job events
+  forward        Open a private local HTTP preview of a Ryker job service
+  snapshot       Write tracked changes and selected untracked files to stdout
+  artifacts      List or retrieve saved files from the task artifacts directory
+  checkout       Restore an exported Ryker job into a fresh local directory
+
+STATE
+  Worker identities and job results stay in the private state directory.
+  Invitations work once, within one hour. Deliver them privately.
+  The TLS certificate must match the controller hostname workers connect to.
 
 ==============================================================================
 

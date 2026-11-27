@@ -7,6 +7,114 @@ terms.
 
 ## Connect
 
+### Run your own controller
+
+`coop sessions fleet` queues individual jobs on a private controller. Choose a hostname or VPN
+address that every worker can reach. Supply its TLS certificate and private key. On the controller:
+
+```bash
+umask 077
+state="$HOME/.local/state/coop/fleet"
+coop sessions fleet serve "$state" :9443 controller.crt controller.key
+```
+
+In another terminal, create one invitation for each worker. Transfer the resulting files over
+your existing private connection to their respective VMs. A worker consumes its file on enrollment.
+
+```bash
+coop sessions fleet invite "$state" vm-a build > vm-a.token
+coop sessions fleet invite "$state" vm-b build > vm-b.token
+```
+
+On each VM, start the worker using its own token and the CA for the controller's HTTPS certificate:
+
+```bash
+coop sessions connect --controller https://controller.example:9443 \
+  --token-file /run/secrets/worker.token --ca-file /etc/coop/controller-ca.crt
+```
+
+Use the controller's state directory to submit a v2 job document and a UTF-8 prompt file.
+The command prints the job reference. The pool name selects eligible workers. Each target must
+select its account explicitly, for example `claude:sonnet@work`. A GitHub App can supply source
+access. The standalone controller waits for a worker reporting all selected model accounts as
+signed in. You can copy a signed-in account between Coop installations with the offline transfer described in `coop help credentials transfer`. For controller-managed credentials, enroll the workers in Ryker and use its local
+`scripts/compose.sh fleet-submit` command. Ryker authorizes model requests on the controller.
+
+```bash
+coop sessions fleet workers "$state"
+coop sessions fleet submit "$state" build job.json prompt.txt
+coop sessions fleet status "$state" job-1
+coop sessions fleet events "$state" job-1
+coop sessions fleet cancel "$state" job-1
+```
+
+For queued jobs, `status` reports when the pool is offline or draining, a model account is
+missing, or account permits are occupied. Otherwise the job waits for an eligible worker with
+enough free capacity to poll.
+
+By default one job at a time may use a given `provider@account` across the fleet. Give the same
+provider account the same name on all workers. Use `limit-account "$state" claude@work 3` under
+`coop sessions fleet` to allow three concurrent jobs. A limit of zero pauses new placements.
+Fresh exhausted usage windows can defer placements until their reset. Each fallback and preset
+account holds a permit for the job's lifetime.
+
+Docker workers measure the daemon's CPU and memory. The worker holds back one quarter for the host.
+For Compose jobs set `runtime.max_services` to the number of sidecars the job may start. The
+controller reserves the per-container limits for the agent and each allowed sidecar. A normal
+invitation waits for a machine report before offering jobs. An operator can explicitly admit a
+slot-only worker with `invite <state-dir> <worker> <pool> --slots-only`. That mode uses the
+worker's slot report for placement and accepts jobs without a Compose stack.
+
+For private GitHub sources, pass a final configuration file to `serve` with numeric `app_id`,
+numeric `installation_id`, and `private_key_file` pointing to a private PEM file on the controller.
+The App needs read access to repository contents. Each source grant names a repository from the
+assigned job and carries a single-repository installation token. Without an App, source access
+uses anonymous GitHub reads.
+
+`drain` stops new placements on a worker while it finishes assigned jobs. `resume` enables
+placement again. `revoke` denies future controller requests by that worker. To replace a lost
+invitation for a worker that has never received work, revoke the identity and invite it again.
+If the controller is offline, new work waits. Running turns may continue on the worker, which
+journals receipts for reconnection. Restart `serve` with the same state directory. Loss of a
+worker may still require manual recovery of its workspace.
+
+### Recover a Ryker job locally
+
+On the Ryker controller, run `scripts/compose.sh fleet-checkout <job-uuid> <source-repo> <output-parent>`.
+For unpublished local work, submit the managed repository reference and its approved
+commit along with the path to your clone. Any additional names are untracked files
+relative to that clone. For example,
+
+```sh
+scripts/compose.sh fleet-submit-local "$job" local project ./my-clone "$base" fixtures/sample.bin < prompt.txt
+```
+
+The controller authenticates the archive and holds it encrypted. The first assigned
+worker verifies it against the job and managed commit before it can start a turn.
+Coop includes tracked working changes and unpublished commits, and rejects hidden
+files, unresolved conflicts, dirty submodules, and changes to the approved project setup.
+Subsequent recovery uses the worker's last saved checkpoint.
+
+Use an existing output directory and a clone that contains the job's base commit, any upstream commit the worker rebased onto, and the pinned objects for initialized submodules. The wrapper
+streams the saved workspace to `coop sessions fleet checkout`. Coop validates the checkpoint
+and its task identity, reconstructs the Git objects, and prints the path of a fresh checkout.
+You can inspect the recovered commits and any tracked or untracked edits there. The source
+clone keeps its working tree and index, including edits made while the worker was running.
+
+For generated reports and binaries, have the worker write files inside the active
+task's `artifacts/` directory. Ryker retains them in the authenticated checkpoint.
+List the saved names, media types, sizes and SHA-256 digests from the controller host:
+
+```sh
+scripts/compose.sh fleet-artifacts "$job" /path/to/results
+scripts/compose.sh fleet-artifacts "$job" /path/to/results tests/junit.xml dist/output.bin
+```
+
+The second command retrieves the selected files into a fresh private directory under
+the existing results directory. It works after worker loss and requires no source clone.
+
+### Connect to a controller
+
 ```bash
 coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
 ```
@@ -34,6 +142,8 @@ Git LFS. On a native worker, install `git-lfs` with your package manager.
 Jobs use the worker's base image (`COOP_BASE_IMAGE`) unless the controller grants a project
 runtime. That grant can select a project Dockerfile and an isolated Compose test stack. The worker
 builds the toolchain from its private frozen source and gives Work and review the same image.
+Work reads its Compose definition from that same source. Relative mounts still point into the
+job workspace. A review can select its own candidate test stack.
 Filtered jobs use co:op's locked client image and refuse custom controller toolchains. An open-network
 job without a project runtime runs in an image with the tools the repository lists in
 `.tool-versions`, built once on the worker and reused.
@@ -493,7 +603,7 @@ private state.
 With `limits.warm_idle_timeout_ms` above 0, you get a warm session: co:op can authenticate the ACP
 connection before the first turn and keep the same process and provider session for later turns.
 Turns still run one at a time. The daemon keeps at most four sessions warm, and each one occupies
-one of the four runtime slots while idle.
+one of the shared runtime slots while idle.
 
 co:op stops the process and removes its box, services and temporary credential files when any of
 these happens:
@@ -595,13 +705,16 @@ use up one of those review attempts.
 | --- | --- | --- |
 | `GET` | `/healthz` | `{"healthy":true}` |
 | `GET` | `/readyz` | `{"ready":true}` after daemon startup |
-| `GET` | `/v1/capabilities` | `{"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1],"checkpoint_upstream_versions":[1],"fast_target_versions":[1]}`. Check these versions before choosing which protocol features to use. |
+| `GET` | `/v1/capabilities` | `{"project_service_budget_versions":[1],"job_spec_versions":[2],"project_runtime_versions":[1],"job_preset_versions":[1],"controller_tools_versions":[1],"repository_freshness_receipt_versions":[2],"session_evidence_versions":[1],"review_commit_message_versions":[1],"existing_pr_publication_versions":[1],"checkpoint_upstream_versions":[1],"fast_target_versions":[1]}`. Check these versions before choosing which protocol features to use. |
 | `GET` | `/v1/capacity` | Current shared active and warm runtime slots. The connector forwards this measurement in the hello it sends with every poll. |
 | `GET` | `/v1/storage` | Disk use measured by this daemon: `storage` (the summary for a fleet controller), `budget`, `totals`, `roots`, `forks` and `problems` |
 | `GET` | `/v1/usage` | `{"usage": …}`: the allowance each account's provider last reported, read at most every five minutes (see [Account usage](#account-usage)) |
 
-The worker has four slots for model processes, shared by active turns and idle warm sessions. The
-session, turn and workspace counts all describe those same slots, so don't add them together. Time
+On Docker workers, Coop reserves one quarter of the daemon CPU and RAM for other work and
+calculates the shared slot count from the remaining CPU budget (one slot per 250 millicores,
+with at least one slot). Each active or warm session reserves its requested CPU and memory,
+including approved sidecars. Workers without a machine report use four shared slots. The
+session, turn and workspace counts all describe the same pool. Time
 spent waiting in the queue doesn't count toward a turn's model timeout. If cleanup fails, the
 process keeps its slot until cleanup succeeds. At startup, the worker reports busy with zero free
 slots until it has checked which runtimes it owns.
@@ -823,6 +936,21 @@ removed from the job setup. Named data volumes survive ordinary turns on the sam
 anonymous volumes and tmpfs are disposable. Final discard removes owned containers, networks and
 named volumes before deleting the workspace, using immutable labels even if project files changed.
 A replacement worker reconstructs test services; checkpoints do not transfer database volumes.
+An open controller job exposes its service catalog at `GET /v1/sessions/{id}/services`.
+Each entry identifies the service name, declared numeric TCP `expose` ports, runtime state and
+current full container ID. A missing service has state `absent`. For a present container,
+`GET /v1/sessions/{id}/services/{name}/logs?container={id}&cursor={cursor}` returns retained
+stdout and stderr records. Omit the cursor on the first read. A cursor also permits polling at
+the end and becomes unusable if the logs rotate past it. The worker filters credential-shaped
+records before transport. Ryker stores pages as encrypted response bodies and applies its own
+secret redaction when displaying them.
+
+Workers advertising `service-relay:1` can open an outbound, placement-scoped connection on
+request. Ryker's operator command `scripts/compose.sh fleet-forward JOB_UUID SERVICE PORT`
+prints a private loopback HTTP URL. The worker needs the matching trusted helper image
+installed by `coop net setup`. Stopping the preview closes the local listener. A changed
+placement, revoked certificate, completed job or expired ten-minute grant closes the tunnel.
+
 A candidate's `review.compose` can replace the Work stack with a separate disposable review stack.
 
 
@@ -1372,6 +1500,13 @@ can't exceed the job's `max_patch_bytes`, and offsets can't exceed 1 GiB. Check 
 you page through the result. If it changes, start again at offset zero so you don't combine pages
 from different patches. The `truncated` field is true whenever the response contains less than the
 complete patch.
+
+For an operator fleet verification job, request the unpaged changes with
+`verification_turn` and `candidate_sha256`. Coop checks that exact pending candidate
+and finishes runtime cleanup before computing `working_source_digest`. The digest
+covers HEAD, the index, the tracked working tree and unignored untracked files.
+The bound task's generated artifacts travel in its checkpoint. Other untracked
+files in the task folder still affect verification.
 
 The JSON response encodes `patch`, `path_bytes` and `old_path_bytes` as base64. `patch_bytes` is an
 integer giving the complete patch's size. A valid UTF-8 filename also appears in `path`. Filenames
@@ -1973,3 +2108,17 @@ When building a production controller, you are responsible for:
 
 Never put chat-service tokens, GitHub credentials, Emisar administrative credentials or other
 credentials that authorize publication into a co:op prompt or box.
+
+### Controller-owned model access
+
+A job may set `model_credentials` to `controller`. The controller then keeps all
+provider keys and OAuth tokens and issues temporary proxy grants to the worker.
+The shipped Docker runner advertises `model-proxy:1` only when its session service
+has a model relay and runs on Linux with local Docker. The guard and worker host
+must share a Linux filesystem for their private Unix socket. A macOS controller
+can manage these workers. A macOS-hosted Docker worker refuses this new credential
+mode and keeps accepting compatible jobs in its existing credential mode.
+
+Model grants use a private worker API outside ordinary command journals. They bind
+the selected provider/account and frozen job digest to a runtime reservation.
+Wrong-account requests and uncertain cleanup fail closed.

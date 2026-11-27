@@ -116,6 +116,7 @@
 <li><a href="#coop-credentials-agent-account-default-choose-the-default-account">coop credentials &lt;agent&gt; &lt;account&gt; default</a></li>
 <li><a href="#coop-credentials-agent-account-rm-remove-a-saved-account">coop credentials &lt;agent&gt; &lt;account&gt; rm</a></li>
 <li><a href="#coop-credentials-agent-account-show-an-account">coop credentials &lt;agent&gt; &lt;account&gt;</a></li>
+<li><a href="#coop-credentials-agent-account-importexport-copy-account-access-offline">coop credentials &lt;agent&gt; &lt;account&gt; import|export</a></li>
 <li><a href="#coop-models-list-models-available-to-each-agent">coop models</a></li>
 <li><a href="#coop-usage-show-limits-and-a-30-day-api-estimate">coop usage</a></li>
 <li><a href="#coop-presets-init-create-a-preset-you-can-edit">coop presets init</a></li>
@@ -189,6 +190,7 @@
 <li><a href="#coop-sessions-quiescence-inspect-queued-and-running-work-before-a-restart">coop sessions quiescence</a></li>
 <li><a href="#coop-sessions-compact-back-up-session-data-and-reduce-its-disk-usage">coop sessions compact</a></li>
 <li><a href="#coop-sessions-connect-run-a-worker-for-a-remote-controller">coop sessions connect</a></li>
+<li><a href="#coop-sessions-fleet-manage-a-local-worker-fleet">coop sessions fleet</a></li>
 <li><a href="#coop-prompt-print-a-short-project-status-for-your-shell-or-tmux">coop prompt</a></li>
 <li><a href="#coop-completion-print-shell-integration-for-bash-or-zsh">coop completion</a></li>
 </ul></nav>
@@ -461,6 +463,8 @@ Show accounts:  coop credentials
 Start an agent: coop claude</code></pre></div></section><section class="doc-section reference-section" id="coop-credentials-show-and-manage-your-agent-accounts"><h2>coop credentials: show and manage your agent accounts</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop credentials: show and manage your agent accounts code example" tabindex="0"><code>Usage:
   coop credentials                            show all accounts
   coop credentials &lt;agent&gt;                    show one agent&#39;s accounts
+  coop credentials &lt;agent&gt; &lt;account&gt; import   receive an encrypted bundle
+  coop credentials &lt;agent&gt; &lt;account&gt; export   make a bundle for a receive code
   coop credentials &lt;agent&gt; &lt;account&gt;          show an account
   coop credentials &lt;agent&gt; &lt;account&gt; default  use it by default
   coop credentials &lt;agent&gt; &lt;account&gt; rm       remove it
@@ -471,6 +475,7 @@ USE AN ACCOUNT
 
   The list marks the default account with &#34;default&#34;.
 
+Copy or move an account:       coop help credentials transfer
 Account removal options:       coop help credentials rm
 Models and automatic rotation: coop help models</code></pre></div></section><section class="doc-section reference-section" id="coop-credentials-agent-account-default-choose-the-default-account"><h2>coop credentials &lt;agent&gt; &lt;account&gt; default: choose the default account</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop credentials &lt;agent&gt; &lt;account&gt; default: choose the default account code example" tabindex="0"><code>Usage: coop credentials &lt;agent&gt; &lt;account&gt; default
 
@@ -496,7 +501,17 @@ EXAMPLES
   coop credentials codex personal
 
 Use by default: coop help credentials default
-Remove account: coop help credentials rm</code></pre></div></section><section class="doc-section reference-section" id="coop-models-list-models-available-to-each-agent"><h2>coop models: list models available to each agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop models: list models available to each agent code example" tabindex="0"><code>Usage:
+Remove account: coop help credentials rm</code></pre></div></section><section class="doc-section reference-section" id="coop-credentials-agent-account-importexport-copy-account-access-offline"><h2>coop credentials &lt;agent&gt; &lt;account&gt; import|export: copy account access offline</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop credentials &lt;agent&gt; &lt;account&gt; import|export: copy account access offline code example" tabindex="0"><code>  On the destination, start import and leave it open. On the signed-in
+  Coop, start export and paste the destination&#39;s receive code. Paste the
+  encrypted result at the destination. Press Enter on an empty line to finish.
+
+  API keys stay usable on both installations. A subscription moves after you
+  confirm MOVE. To recover a missed paste, repeat
+  import on the same destination and export to the same receive code.
+
+EXAMPLES
+  coop credentials codex build import
+  coop credentials codex work export</code></pre></div></section><section class="doc-section reference-section" id="coop-models-list-models-available-to-each-agent"><h2>coop models: list models available to each agent</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop models: list models available to each agent code example" tabindex="0"><code>Usage:
   coop models [claude|codex|gemini|grok] [--refresh]
 
 LIST MODELS
@@ -1834,6 +1849,7 @@ COMMANDS
   check       see whether this build can use the session data as it is
   quiescence  inspect queued and running work before a restart
   compact     back up session data and reduce its disk usage
+  fleet       run a local fleet controller and submit jobs
 
 CONNECT THIS MACHINE
   coop sessions connect --controller https://controller.example \
@@ -1935,7 +1951,45 @@ RUNNING
 
   Leave this command running. Connection failures are retried automatically.
   Press Ctrl-C to disconnect and stop the local service it started.
-  On restart, use the same controller and state directory; omit --token-file.</code></pre></div></section><section class="doc-section reference-section" id="coop-prompt-print-a-short-project-status-for-your-shell-or-tmux"><h2>coop prompt: print a short project status for your shell or tmux</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop prompt: print a short project status for your shell or tmux code example" tabindex="0"><code>Usage:
+  On restart, use the same controller and state directory; omit --token-file.</code></pre></div></section><section class="doc-section reference-section" id="coop-sessions-fleet-manage-a-local-worker-fleet"><h2>coop sessions fleet: manage a local worker fleet</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop sessions fleet: manage a local worker fleet code example" tabindex="0"><code>Usage:
+  coop sessions fleet serve &lt;state-dir&gt; &lt;listen&gt; &lt;tls-cert&gt; &lt;tls-key&gt;
+    [&lt;github-app.json&gt;]
+  coop sessions fleet invite &lt;state-dir&gt; &lt;worker&gt; &lt;pool&gt; [--slots-only]
+  coop sessions fleet revoke &lt;state-dir&gt; &lt;worker&gt;
+  coop sessions fleet submit &lt;state-dir&gt; &lt;pool&gt; &lt;job.json&gt; &lt;prompt-file&gt;
+  coop sessions fleet status &lt;state-dir&gt; &lt;job-ref&gt;
+  coop sessions fleet workers &lt;state-dir&gt;
+  coop sessions fleet cancel &lt;state-dir&gt; &lt;job-ref&gt;
+  coop sessions fleet drain &lt;state-dir&gt; &lt;worker&gt;
+  coop sessions fleet resume &lt;state-dir&gt; &lt;worker&gt;
+  coop sessions fleet limit-account &lt;state-dir&gt; &lt;provider@account&gt; &lt;jobs&gt;
+  coop sessions fleet forward &lt;gateway-address&gt; &lt; preview-grant.json
+  coop sessions fleet artifacts &lt;job-uuid&gt; &lt;output-dir&gt; [file ...] &lt; checkpoint
+  coop sessions fleet checkout &lt;job-uuid&gt; &lt;repo&gt; &lt;output-dir&gt; &lt; checkpoint
+  coop sessions fleet snapshot &lt;job-uuid&gt; &lt;repo-ref&gt; &lt;repo&gt; &lt;base&gt; [file ...]
+  coop sessions fleet events &lt;state-dir&gt; &lt;job-ref&gt; [&lt;after-sequence&gt;]
+
+COMMANDS
+  serve          Listen for outbound worker connections
+  invite         Issue a one-time worker invitation
+  revoke         End a worker&#39;s access
+  submit         Queue an immutable job and prompt
+  status         Read the job&#39;s state and result
+  workers        List enrolled workers and capacity
+  cancel         Request cancellation of a job
+  drain          Stop assigning work to a worker
+  resume         Allow a worker to accept work
+  limit-account  Set fleet-wide account concurrency
+  events         Read retained job events
+  forward        Open a private local HTTP preview of a Ryker job service
+  snapshot       Write tracked changes and selected untracked files to stdout
+  artifacts      List or retrieve saved files from the task artifacts directory
+  checkout       Restore an exported Ryker job into a fresh local directory
+
+STATE
+  Worker identities and job results stay in the private state directory.
+  Invitations work once, within one hour. Deliver them privately.
+  The TLS certificate must match the controller hostname workers connect to.</code></pre></div></section><section class="doc-section reference-section" id="coop-prompt-print-a-short-project-status-for-your-shell-or-tmux"><h2>coop prompt: print a short project status for your shell or tmux</h2><div class="reference-code-frame"><pre class="code" role="region" aria-label="coop prompt: print a short project status for your shell or tmux code example" tabindex="0"><code>Usage:
   coop prompt
 
 OUTPUT

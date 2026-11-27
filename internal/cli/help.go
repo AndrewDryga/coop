@@ -252,7 +252,7 @@ func anyAgentSignedIn(cfg *config.Config) bool {
 // is drift TestManualCoversEveryCommand catches. Presets are resolved BY NAME (`coop help
 // frontier`), never added here: the manual's bytes must not depend on the host.
 var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
-	"login", "credentials", "credentials default", "credentials rm", "credentials account",
+	"login", "credentials", "credentials default", "credentials rm", "credentials account", "credentials transfer",
 	"models", "usage", "presets init", "presets",
 	"tasks", "tasks ls", "tasks add", "tasks claim", "tasks release", "tasks lease",
 	"tasks block", "tasks unblock", "tasks park", "tasks done", "tasks path", "tasks queues",
@@ -266,7 +266,7 @@ var manualOrder = append(append([]string{"run", "shell"}, agents.Names()...),
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "setup", "setup apparmor", "version",
-	"acp", "sessions", "sessions doctor", "sessions check", "sessions quiescence", "sessions compact", "sessions connect",
+	"acp", "sessions", "sessions doctor", "sessions check", "sessions quiescence", "sessions compact", "sessions connect", "sessions fleet",
 	"prompt", "completion")
 
 // manualPage is one command's page for the manual, in plain text: run and fork have their own
@@ -448,6 +448,7 @@ func helpRowsAt(rows [][2]string, column int) string {
 // own richer forkHelp, run has runHelp, and the agents use agentHelp (their own CLI's help is
 // `coop <agent> -- --help`). Each value's first line is the synopsis.
 var commandHelp = map[string]string{
+	"sessions fleet": fleetHelp,
 	"sessions": `coop sessions: let other applications start and manage agents
 
 Usage: coop sessions <command>
@@ -458,6 +459,7 @@ COMMANDS
   check       see whether this build can use the session data as it is
   quiescence  inspect queued and running work before a restart
   compact     back up session data and reduce its disk usage
+  fleet       run a local fleet controller and submit jobs
 
 CONNECT THIS MACHINE
   coop sessions connect --controller https://controller.example \
@@ -705,6 +707,8 @@ Guide:       https://coop.dryga.com/usage-reports.html`,
 Usage:
   coop credentials                            show all accounts
   coop credentials <agent>                    show one agent's accounts
+  coop credentials <agent> <account> import   receive an encrypted bundle
+  coop credentials <agent> <account> export   make a bundle for a receive code
   coop credentials <agent> <account>          show an account
   coop credentials <agent> <account> default  use it by default
   coop credentials <agent> <account> rm       remove it
@@ -715,6 +719,7 @@ USE AN ACCOUNT
 
   The list marks the default account with "default".
 
+Copy or move an account:       coop help credentials transfer
 Account removal options:       coop help credentials rm
 Models and automatic rotation: coop help models`,
 
@@ -728,6 +733,20 @@ EXAMPLES
   coop credentials codex work default
 
 Accounts: coop credentials codex`,
+
+	"credentials transfer": `coop credentials <agent> <account> import|export: copy account access offline
+
+  On the destination, start import and leave it open. On the signed-in
+  Coop, start export and paste the destination's receive code. Paste the
+  encrypted result at the destination. Press Enter on an empty line to finish.
+
+  API keys stay usable on both installations. A subscription moves after you
+  confirm MOVE. To recover a missed paste, repeat
+  import on the same destination and export to the same receive code.
+
+EXAMPLES
+  coop credentials codex build import
+  coop credentials codex work export`,
 
 	"credentials rm": `coop credentials <agent> <account> rm: remove a saved account
 

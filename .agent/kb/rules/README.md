@@ -158,6 +158,7 @@ updated: <YYYY-MM-DD>                # last edit
 - [filtered-services-share-network-restrictions](filtered-services-share-network-restrictions.md) — agent-controlled services obey network restrictions while ordinary code and image updates stay live; elevated host-data grants pin the image
 - [destructive-confirm-gate](destructive-confirm-gate.md) — every unrecoverable delete routes through the one shared `ui.DestroyGate`
 - [renew-before-access-only-projection](renew-before-access-only-projection.md) — refreshable credentials renew in one canonical host authority before and during brokered runs
+- [ryker-remote-model-custody](ryker-remote-model-custody.md) — Ryker keeps raw model credentials and grants remote workers temporary proxy access
 - [network-authority-is-proven-not-passed](network-authority-is-proven-not-passed.md) — a filtered child proves owner-private authority; controller grants are admitted once, never passed to the child
 - [provider-bundles-carry-function-not-chatter](provider-bundles-carry-function-not-chatter.md) — a provider bundle grants what the client needs to function; its update/telemetry chatter is switched off in the box, never granted and never hidden
 - [run-teammates-share-credential-boundary](run-teammates-share-credential-boundary.md) — protect credentials at the run boundary; teammates share selected routes, while mutually untrusted agents use separate boxes

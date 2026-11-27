@@ -214,6 +214,11 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 		return a.showProfile(agent, profile)
 	}
 	switch rest[0] {
+	case "export", "import":
+		if len(rest) != 1 {
+			return 2, ui.UnexpectedArgument(rest[1], "coop credentials", "coop credentials <agent> <account> "+rest[0])
+		}
+		return a.accountTransfer(agent, profile, rest[0])
 	case "default":
 		if len(rest) > 1 {
 			return 2, ui.UnexpectedArgument(rest[1], "coop credentials", fmt.Sprintf("coop credentials %s %s default", agent, profile))
@@ -228,11 +233,11 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 		return a.removeProfile(agent, profile, hasYes(rest))
 	default:
 		suggestion := ""
-		if guess, ok := nearestCommand(rest[0], []string{"default", "rm"}); ok {
+		if guess, ok := nearestCommand(rest[0], []string{"default", "rm", "export", "import"}); ok {
 			suggestion = fmt.Sprintf("coop credentials %s %s %s", agent, profile, guess)
 		}
 		return 2, ui.UnknownValue("action", rest[0], "coop credentials",
-			"Choose default or rm.", suggestion)
+			"Choose default, rm, export or import.", suggestion)
 	}
 }
 
@@ -240,6 +245,11 @@ func (a *app) profilePath(agent, profile string, rest []string) (int, error) {
 // it — the agent's own list, and signing this one in. It fails closed: an account a failed listing
 // hides is refused too, but by naming the failure, since signing in would not bring it back.
 func (a *app) requireProfile(agent, profile string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if controlled, err := box.ControllerModelAccount(ctx, agent, profile); controlled {
+		return err
+	}
 	profiles, err := box.EffectiveProfiles(a.cfg, agent)
 	switch {
 	case slices.Contains(profiles, profile):

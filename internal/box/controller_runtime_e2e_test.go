@@ -5,6 +5,7 @@ package box
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,7 @@ func TestRuntimeComposeControllerProjectCanTestAndRetainItsOwnData(t *testing.T)
 	compose := `services:
   db:
     image: postgres:18.6-alpine
+    expose: ["5432"]
     environment:
       POSTGRES_PASSWORD: test
     healthcheck:
@@ -46,7 +48,7 @@ func TestRuntimeComposeControllerProjectCanTestAndRetainItsOwnData(t *testing.T)
       timeout: 2s
       retries: 50
       start_period: 60s
-    volumes: ["data:/var/lib/postgresql"]
+    volumes: ["data:/var/lib/postgresql", "../marker:/job-marker:ro"]
     networks:
       default:
         aliases: [project-db]
@@ -88,7 +90,15 @@ volumes:
 		})
 		return repo
 	}
-	first, second, review := newProject(), newProject(), newProject()
+	source, first, second, review := newProject(), newProject(), newProject(), newProject()
+	for _, repo := range []string{first, second, review} {
+		if err := os.WriteFile(filepath.Join(repo, "marker"), []byte("workspace-marker"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(repo, "dev/services.yml")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(review, ".agent"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -104,12 +114,15 @@ volumes:
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		var output bytes.Buffer
-		grant := &ControllerRuntime{Version: 1, JobDigest: strings.Repeat("a", 64), Repository: repo, Runtime: &workerproto.JobRuntime{Version: 1, Dockerfile: "Dockerfile", Compose: "dev/services.yml", Environment: map[string]string{"PGHOST": "project-db", "PGPASSWORD": "test"}}}
+		grant := &ControllerRuntime{Version: 1, JobDigest: strings.Repeat("a", 64), Repository: source, Runtime: &workerproto.JobRuntime{Version: 1, Dockerfile: "Dockerfile", Compose: "dev/services.yml", Environment: map[string]string{"PGHOST": "project-db", "PGPASSWORD": "test"}}}
 		code, err := Run(cfg, rt, RunSpec{Image: image, Repo: repo, Workdir: "/workspace", ControllerJob: true, ControllerRuntime: grant, Review: checking, Batch: true, Quiet: true, Ctx: ctx, Stdout: &output, Stderr: os.Stderr, Cmd: []string{"sh", "-c", "test -f /project-toolchain-ready && psql -U postgres -At -v ON_ERROR_STOP=1 -c \"" + sql + "\""}})
 		if err != nil || code != 0 {
 			t.Fatalf("project test (review=%v): %d %v; %s", checking, code, err, output.String())
 		}
 		return strings.TrimSpace(output.String())
+	}
+	if got := run(first, "SELECT pg_read_file('/job-marker');", false); got != "workspace-marker" {
+		t.Fatalf("wrong relative bind: %q", got)
 	}
 	run(first, "CREATE TABLE custody(value text); INSERT INTO custody VALUES ('first-job');", false)
 	if err := StopControllerServices(t.Context(), rt, first, false); err != nil {
@@ -126,6 +139,53 @@ volumes:
 	}
 	// A completed review has no runtime left, including its volume.
 	assertControllerRuntimeGone(t, rt, review)
+	frozen, err := rt.FreezeCompose(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rawDaemon := frozen.ComposeBinding()
+	daemon := fmt.Sprintf("%x", sha256.Sum256([]byte(rawDaemon)))
+	observe := func(workspace, digest string) ControllerService {
+		t.Helper()
+		project := ControllerProject{Workspace: workspace, Repository: source, Definition: "dev/services.yml", JobDigest: digest, Daemon: daemon}
+		services, err := project.Services(t.Context(), rt)
+		if err != nil || len(services) != 1 {
+			t.Fatalf("observe controller project: %+v, %v", services, err)
+		}
+		return services[0]
+	}
+	one, two := observe(first, strings.Repeat("a", 64)), observe(second, strings.Repeat("a", 64))
+	if one.State != "running" || two.State != "running" || one.ContainerID == two.ContainerID || len(one.Ports) != 1 || one.Ports[0] != 5432 {
+		t.Fatalf("independent services did not resolve: %+v, %+v", one, two)
+	}
+	project := ControllerProject{Workspace: first, Repository: source, Definition: "dev/services.yml", JobDigest: strings.Repeat("a", 64), Daemon: daemon}
+	if os.Getenv("COOP_TEST_SERVICE_RELAY") == "1" {
+		// Send PostgreSQL's SSLRequest. Even a server that refuses TLS must reply
+		// with N before closing the stream. This crosses the real helper image.
+		relayCtx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
+		var reply bytes.Buffer
+		finished := false
+		err := project.ForwardService(relayCtx, rt, "db", one.ContainerID, 5432,
+			bytes.NewReader([]byte{0, 0, 0, 8, 4, 210, 22, 47}), &reply,
+			func() error { finished = true; return nil })
+		if err != nil || !finished || reply.String() != "N" {
+			t.Fatalf("PostgreSQL SSL negotiation through relay: %q, FIN %t, error %v", reply.Bytes(), finished, err)
+		}
+	}
+	logs, err := project.ServiceLogs(t.Context(), rt, "db", one.ContainerID, "")
+	if err != nil || len(logs.Records) == 0 || logs.Cursor == "" {
+		t.Fatalf("service logs: %+v %v", logs, err)
+	}
+	if _, err := project.ServiceLogs(t.Context(), rt, "db", one.ContainerID, logs.Cursor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := project.ServiceLogs(t.Context(), rt, "db", two.ContainerID, ""); err == nil {
+		t.Fatal("another project's logs were returned")
+	}
+	if other := observe(first, strings.Repeat("b", 64)); other.ContainerID != "" {
+		t.Fatal("another job selected this service")
+	}
 	if err := os.RemoveAll(filepath.Join(first, "dev")); err != nil {
 		t.Fatal(err)
 	}

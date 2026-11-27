@@ -1534,6 +1534,15 @@ func removeProjectedSessionFile(path string) error {
 }
 
 func (r *sessionTurnRunner) projectCredentials(bound session.Session, target agents.Target, agent agents.Agent, deadline time.Time) (*sessionACPProjection, error) {
+	job, err := sessionJobSpec(bound)
+	if err != nil {
+		return nil, err
+	}
+	if job.ModelCredentials == "controller" {
+		if err = ensurePrivateDirectory(r.sourceCfg.ConfigDir); err != nil {
+			return nil, err
+		}
+	}
 	if r.stateRoot == "" || !validSessionPathComponent(bound.ID) {
 		return nil, acpFailure(sessionACPCredentialError, "private credential root is unavailable")
 	}
@@ -1569,10 +1578,6 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 		return nil, acpFailure(sessionACPCredentialError, "private credential root overlaps source credentials")
 	}
 	target.Accounts = []string{account}
-	job, err := sessionJobSpec(bound)
-	if err != nil {
-		return nil, err
-	}
 	accounts, err := projectedJobAccounts(job, target)
 	if err != nil {
 		return nil, err
@@ -1615,7 +1620,15 @@ func (r *sessionTurnRunner) projectCredentials(bound session.Session, target age
 				return projection, acpFailure(sessionACPCredentialError, "preset role provider is unavailable")
 			}
 		}
-		if err := r.prepareProjectedAccount(projection, selected, provider, startupDeadline); err != nil {
+		var err error
+		if job.ModelCredentials == "controller" {
+			if r.service == nil || r.service.modelAccess == nil {
+				return projection, acpFailure(sessionACPCredentialError, "controller model relay is unavailable")
+			}
+		} else {
+			err = r.prepareProjectedAccount(projection, selected, provider, startupDeadline)
+		}
+		if err != nil {
 			return projection, err
 		}
 		defaults.WriteString(selected.Provider + "=" + selected.Account() + "\n")
@@ -2222,6 +2235,13 @@ func (r *sessionTurnRunner) startChildWithRunID(ctx context.Context, bound sessi
 		return nil, errors.Join(acpFailure(sessionACPProcessError, "session project runtime is invalid"), err)
 	}
 	env = append(env, runtimeEnv...)
+	if job.ModelCredentials == "controller" {
+		encoded, err := box.ControllerModelEnvironment(filepath.Join(r.stateRoot, "control.sock"), bound.ID, bound.JobDigest)
+		if err != nil {
+			return nil, err
+		}
+		env = append(env, box.ControllerModelsEnv+"="+encoded)
+	}
 	if job.Preset != nil {
 		_, digest, err := box.EncodeControllerPreset(bound.JobDigest, job)
 		if err != nil {

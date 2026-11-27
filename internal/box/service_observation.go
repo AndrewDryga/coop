@@ -159,7 +159,7 @@ func stackRunning(ctx context.Context, rt runtime.Runtime, repo, file, owner str
 	if err != nil {
 		return startedServices{}, false
 	}
-	data, err := readValidatedCompose(file, repo, repoReadOnly)
+	data, err := serviceComposeDefinition(ctx, file, repo, repoReadOnly)
 	if err != nil || refuseRunningServiceWriters(ctx, bound, repo) != nil {
 		return startedServices{}, false
 	}

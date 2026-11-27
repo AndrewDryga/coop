@@ -27,7 +27,11 @@ import (
 type codexAgent struct{}
 
 func (codexAgent) NativeCredentials() NativeCredentialSpec {
-	return NativeCredentialSpec{
+	return NativeCredentialSpec{ControllerImport: codexControllerImport,
+		APIKeyFiles: func(key string) (map[string][]byte, error) {
+			data, err := nativeJSON(codexSourceCredential{AuthMode: "apikey", OpenAIAPIKey: key})
+			return map[string][]byte{"auth.json": data}, err
+		},
 		Environment: nativeAPIEnvironment("apikey", "OPENAI_API_KEY"),
 		Artifacts:   []NativeCredentialArtifact{{Name: "auth.json", Limit: codexCredentialLimit, Required: true, Import: importCodexNative, AccessOnly: projectCodexCredential}},
 		Inspect:     inspectCodexNative, Renew: renewCodexNative, Complete: completeCodexNative,
@@ -214,6 +218,21 @@ func importCodexNative(data []byte) ([]byte, error) {
 	}
 	_, err = inspectCodexNative(map[string][]byte{"auth.json": out}, time.Now())
 	return out, err
+}
+
+func codexControllerImport(state NativeCredentialState, files map[string][]byte) error {
+	if !controllerToken(state.AccessToken) {
+		return errors.New("the selected account does not meet Ryker’s token requirements")
+	}
+	if state.APIKey {
+		return nil
+	}
+	var identity []string
+	var doc codexSourceCredential
+	if json.Unmarshal([]byte(state.Principal), &identity) != nil || len(identity) != 2 || len(identity[0])+1+len(identity[1]) > 512 || state.ExpiresAt.Year() > 9999 || !state.Refreshable || len(state.AccountID) > 512 || json.Unmarshal(files["auth.json"], &doc) != nil || doc.Tokens == nil || !controllerToken(doc.Tokens.IDToken) || !controllerToken(doc.Tokens.RefreshToken) {
+		return errors.New("this Codex profile does not contain the renewable login required by Ryker")
+	}
+	return nil
 }
 
 func inspectCodexNative(files map[string][]byte, now time.Time) (NativeCredentialState, error) {

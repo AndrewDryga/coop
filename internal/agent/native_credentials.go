@@ -11,16 +11,18 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // NativeCredentialArtifact is a bounded native input to the host-only account
 // authority. Import retains renewal grants but strips settings and history.
 type NativeCredentialArtifact struct {
-	Name       string
-	Limit      int64
-	Required   bool
-	Import     func([]byte) ([]byte, error)
-	AccessOnly func([]byte) ([]byte, error) // explicit nonrenewable export for isolated live tests
+	Name             string
+	Limit            int64
+	Required         bool
+	RequiredAtSignIn bool // written by the native login, but optional in a transferred account
+	Import           func([]byte) ([]byte, error)
+	AccessOnly       func([]byte) ([]byte, error) // explicit nonrenewable export for isolated live tests
 }
 
 // NativeCredentialState separates stable account identity from usability of a
@@ -37,11 +39,13 @@ type NativeCredentialState struct {
 }
 
 type NativeCredentialSpec struct {
-	Environment func(selection, key, value string) (NativeCredentialState, error)
-	Artifacts   []NativeCredentialArtifact
-	Select      func(map[string][]byte) (map[string][]byte, error)
-	Inspect     func(map[string][]byte, time.Time) (NativeCredentialState, error)
-	Renew       func(context.Context, map[string][]byte, time.Time, func([]byte) error) (map[string][]byte, error)
+	ControllerImport func(NativeCredentialState, map[string][]byte) error // supported authority for a controller-managed account
+	APIKeyFiles      func(string) (map[string][]byte, error)              // canonical storage for a key selected in the Coop environment file
+	Environment      func(selection, key, value string) (NativeCredentialState, error)
+	Artifacts        []NativeCredentialArtifact
+	Select           func(map[string][]byte) (map[string][]byte, error)
+	Inspect          func(map[string][]byte, time.Time) (NativeCredentialState, error)
+	Renew            func(context.Context, map[string][]byte, time.Time, func([]byte) error) (map[string][]byte, error)
 	// Complete is Renew's second half: it turns the provider's 200 answer, received at the given
 	// time, into the next credential files without contacting the provider. Coop runs it again on
 	// the answer it kept when a renewal was interrupted before the grant was published.
@@ -301,4 +305,15 @@ func requestNativeRefresh(ctx context.Context, endpoint, contentType string, bod
 		return nil, fmt.Errorf("%w: response incomplete", ErrRenewalUnavailable)
 	}
 	return raw, nil
+}
+
+func importNativeAPIKey(data []byte) ([]byte, error) {
+	if len(data) == 0 || len(data) > 4<<10 || !validNativeGrant(string(data)) {
+		return nil, errors.New("invalid API key")
+	}
+	return bytes.Clone(data), nil
+}
+
+func controllerToken(s string) bool {
+	return len(s) >= 8 && len(s) <= 8192 && utf8.ValidString(s) && !strings.ContainsAny(s, "\r\n\x00")
 }

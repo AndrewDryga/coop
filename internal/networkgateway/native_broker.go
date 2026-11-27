@@ -217,6 +217,8 @@ func (line NativeBrokerRequestLine) valid() bool {
 }
 
 type NativeBrokerOrigin struct {
+	// Relay is guard-owned transport for centrally held provider credentials.
+	Relay       http.RoundTripper
 	Host        string
 	Certificate tls.Certificate
 	Requests    []NativeBrokerRequestLine
@@ -467,6 +469,9 @@ func NewNativeBroker(parent context.Context, binding NativeBrokerBinding, origin
 					}
 					http.Error(w, "native provider unavailable", http.StatusBadGateway)
 				}, FlushInterval: -1}
+			if declared.Relay != nil {
+				proxy.Transport = declared.Relay
+			}
 			origin.routes = append(origin.routes, nativeBrokerRoute{line: line, proxy: proxy})
 		}
 		b.origins[host] = origin

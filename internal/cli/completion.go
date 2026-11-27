@@ -298,8 +298,9 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 			return accounts
 		}
 		if slices.Contains(accounts, prev[2]) {
-			return []string{"default", "rm"}
+			return []string{"default", "rm", "export", "import"}
 		}
+		return []string{"import"}
 	case "login", "models":
 		if len(prev) == 1 {
 			return agents.Names()
@@ -315,6 +316,9 @@ func (a *app) completionCandidatesFor(prev []string, cur string) []string {
 	case "sessions":
 		if len(prev) == 1 {
 			return sessionCommands
+		}
+		if prev[1] == "fleet" && len(prev) == 2 {
+			return fleetCommands
 		}
 		return sessionFlags[prev[1]]
 	}

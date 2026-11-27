@@ -2,8 +2,8 @@
 name: session-checkpoint-object-custody
 description: a checkpoint transports and scans only Git objects the restoring worker cannot fetch itself from the job's authorized source; an upstream past the base is proven by a controller-granted refresh, never by workspace refs
 subsystem: sessions
-sources: [internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/source.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/http.go, internal/workerconnector/capabilities.go, internal/workerconnector/job_sources.go]
-updated: 2026-11-20
+sources: [internal/sessionsvc/checkpoint_artifacts.go, internal/sessionsvc/fleet_workspace_init.go, internal/sessionsvc/fleet_workspace.go, internal/sessionsvc/checkpoint.go, internal/sessionsvc/checkpoint_repository.go, internal/sessionsvc/checkpoint_restore.go, internal/sessionsvc/source.go, internal/workerproto/checkpoint_manifest.go, internal/sessionsvc/http.go, internal/workerconnector/capabilities.go, internal/workerconnector/job_sources.go]
+updated: 2026-11-27
 ---
 
 `writeCheckpointRepository` streams raw typed objects from `rev-list --objects HEAD <tree>` minus
@@ -63,6 +63,12 @@ Restore's `git clean -qfdx` drops empty folders and the bundle carries files onl
 `restoreTaskStateDirs` recreates the four task-state folders (a queue missing one fails `coop tasks
 lint`, and a hand `mv` into it renames the task); a path already standing there is left alone.
 
+Fleet artifact export streams through the checkpoint verifier and spools only the task
+projection. The controller task draft binds the requested job. A private staging file
+must have a single link before task metadata is read, even when both links are
+controller-owned. Reports under the bound task's `artifacts/` can be returned without
+materializing Git. Selection uses regular verified members and a fresh private destination.
+
 ## Changelog
 - 2026-11-20 — restore recreates the empty task-state folders; the credential refusal names no
   path, reason recorded (task 2026-11-20-tidy-three-notes-from-the-15-2-live-pass-wide-re).
@@ -73,3 +79,15 @@ lint`, and a hand `mv` into it renames the task); a path already standing there 
   proof (TestCheckpointAfterRebaseOntoAuthorizedUpstreamRestoresOnAFreshWorker and the refusal
   tests in checkpoint_upstream_test.go); mutation-checked the refresh, the ancestry checks and the
   private-copy proof.
+
+
+Operator input uses the same portable Git objects and a separate manifest. Its stable offer
+reference identifies the operator request. The mTLS fetch uses the execution generation's job
+reference. The worker compares the archive's repository and selected source revision against
+the frozen job and installs the tree under the workspace-task mutation lock. A durable task
+binding permits execution. An interrupted initialization can reapply the archive before that
+binding. A bound session can replay the receipt without rewriting later edits.
+
+- 2026-11-27 — Operator verification compares HEAD, index, tracked working tree and untracked file path/mode/content against the admitted source. Read the exact pending candidate under the runtime cleanup lock. Only the bound task's artifact subtree is excluded from source comparison; it is retained by the existing checkpoint projection.
+- 2026-11-27 — Traced operator capture, generation-specific fetch, setup restrictions and
+  recovery from an interrupted task binding through the worker and its Git closure checks.

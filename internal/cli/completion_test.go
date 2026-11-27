@@ -247,11 +247,11 @@ func TestCredentialCompletionFollowsAccountCommand(t *testing.T) {
 		{[]string{"credentials", "codex", "w"}, "work\n"},
 		{[]string{"credentials", "codex", "other"}, ""},
 		{[]string{"credentials", "claude", "other"}, "other-provider\n"},
-		{[]string{"credentials", "codex", "personal", ""}, "default\nrm\n"},
+		{[]string{"credentials", "codex", "personal", ""}, "default\nrm\nexport\nimport\n"},
 		{[]string{"credentials", "codex", "personal", "d"}, "default\n"},
 		{[]string{"credentials", "codex", "personal", "r"}, "rm\n"},
 		{[]string{"credentials", "unknown", ""}, ""},
-		{[]string{"credentials", "codex", "missing", ""}, ""},
+		{[]string{"credentials", "codex", "missing", ""}, "import\n"},
 		{[]string{"credentials", "codex", "personal", "default", ""}, ""},
 		{[]string{"credentials", "codex", "personal", "rm", "--yes", ""}, ""},
 		{[]string{"login", "cod"}, "codex\n"},
@@ -639,6 +639,7 @@ func TestCompletionClaimOffersOnlyClaimableTasks(t *testing.T) {
 func TestSessionsCompletionMatchesTheParsers(t *testing.T) {
 	a := &app{}
 	parse := map[string]func([]string) error{
+		"fleet":      parseFleetArgs,
 		"connect":    func(args []string) error { _, err := parseSessionConnectFlags(args); return err },
 		"doctor":     func(args []string) error { _, _, err := parseSessionDoctorFlags(args); return err },
 		"check":      func(args []string) error { _, err := parseSessionCheckFlags(args); return err },

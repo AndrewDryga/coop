@@ -38,6 +38,8 @@ type Docker struct {
 }
 
 type DockerInfo struct {
+	NCPU                                                   int
+	MemTotal                                               int64
 	ID, OSType, Architecture, ServerVersion, KernelVersion string
 	CgroupDriver, CgroupVersion                            string
 	SecurityOptions                                        []string

@@ -26,11 +26,15 @@ func TestControllerWorkStartsItsGrantedServicesBeforeTheCommand(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, ".agent/project.yaml"), []byte("box: [broken]\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, "test-services.yml"), []byte("services:\n  db:\n    image: postgres:18\n"), 0644); err != nil {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "test-services.yml"), []byte("invalid workspace rewrite"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "test-services.yml"), []byte("services:\n  db:\n    image: postgres:18\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	digest := strings.Repeat("a", 64)
-	grant, _ := json.Marshal(map[string]any{"version": 1, "job_digest": digest, "repository": repo, "runtime": map[string]any{"version": 1, "dockerfile": "", "compose": "test-services.yml", "environment": map[string]string{}}})
+	grant, _ := json.Marshal(map[string]any{"version": 1, "job_digest": digest, "repository": source, "runtime": map[string]any{"version": 1, "dockerfile": "", "compose": "test-services.yml", "environment": map[string]string{}}})
 	t.Setenv("COOP_CONTROLLER_JOB", digest)
 	t.Setenv("COOP_CONTROLLER_RUNTIME", string(grant))
 	recorder := filepath.Join(t.TempDir(), "calls")
@@ -348,5 +352,13 @@ func TestControllerServicesRequireAReachableDefaultNetwork(t *testing.T) {
 		if err := validateControllerServices(data); err != nil {
 			t.Fatalf("default-connected stack refused: %v", err)
 		}
+	}
+}
+
+func TestControllerServiceCatalogUsesOnlyDeclaredTCPPorts(t *testing.T) {
+	services, err := controllerServices([]byte("services:\n  web:\n    image: local/fixture\n    expose: [8080, '8080', '5353/udp', '80-90']\n    ports: ['127.0.0.1:8000:8000']\n  db:\n    image: db\n"))
+	if err != nil || len(services) != 2 || services[0].Name != "db" || len(services[0].Ports) != 0 ||
+		services[1].Name != "web" || len(services[1].Ports) != 1 || services[1].Ports[0] != 8080 {
+		t.Fatalf("unexpected service catalog: %+v, %v", services, err)
 	}
 }

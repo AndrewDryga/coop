@@ -240,7 +240,7 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 	// Repository downloads run in the background, their Git children in process groups of their
 	// own: a stop ends them and waits, so none outlives the worker.
 	defer jobSources.Close()
-	owned, err := startLocalSessionService(ctx, cfg, state, socket, jobSources.RefreshDefault, transport.PublishReview)
+	owned, err := startLocalSessionService(ctx, cfg, state, socket, jobSources.RefreshDefault, transport.PublishReview, transport)
 	if err != nil {
 		return 1, err
 	}
@@ -275,7 +275,9 @@ func runSessionConnect(cfg *config.Config, options sessionConnectOptions) (int, 
 		capacity := workerconnector.LiveCapacity(ctx, privateAPI)
 		return workerproto.WorkerHello{
 			ID: identity.ID, WorkspaceRef: identity.WorkspaceRef, ProtocolVersion: "2",
-			BuildVersion: resolveVersion(), ClockAt: clock.UTC(), State: capacity.State,
+			// Go appends +dirty to locally built modules. The existing controller wire
+			// grammar accepts '-' for the same suffix as our Makefile's git describe.
+			BuildVersion: strings.ReplaceAll(resolveVersion(), "+", "-"), ClockAt: clock.UTC(), State: capacity.State,
 			SandboxDigest: hex.EncodeToString(sandbox[:]),
 			Capabilities:  reports.Capabilities(ctx),
 			Storage:       reports.Storage(ctx),
@@ -330,7 +332,7 @@ func (o *ownedSessionService) stop() {
 
 // Each connection owns its private service and its controller credentials. A live service is
 // never reused: it may belong to a different controller, and only its owner can stop it.
-func startLocalSessionService(ctx context.Context, cfg *config.Config, state, socket string, refresh sessionsvc.SourceRefresher, publish sessionsvc.ReviewPublisher) (*ownedSessionService, error) {
+func startLocalSessionService(ctx context.Context, cfg *config.Config, state, socket string, refresh sessionsvc.SourceRefresher, publish sessionsvc.ReviewPublisher, transport *workerconnector.HTTPTransport) (*ownedSessionService, error) {
 	if _, listening := sessionServiceReady(socket); listening {
 		return nil, fmt.Errorf("a session connection is already listening at %s; stop that connection or choose a different --state directory", socket)
 	}
@@ -339,7 +341,7 @@ func startLocalSessionService(ctx context.Context, cfg *config.Config, state, so
 	done := make(chan error, 1)
 	listening := make(chan struct{})
 	go func() {
-		done <- serveLocalSession(serviceCtx, cfg, state, socket, refresh, publish, func() { close(listening) })
+		done <- serveLocalSession(serviceCtx, cfg, state, socket, refresh, publish, transport, func() { close(listening) })
 	}()
 	owned := &ownedSessionService{cancel: cancel, done: done}
 

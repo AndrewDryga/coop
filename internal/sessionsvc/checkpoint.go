@@ -483,6 +483,10 @@ func buildWorkspaceCheckpoint(
 // projection carries: the queue identity and the bound task's own folder. Any other queue file,
 // such as a follow-up task the agent filed, is ordinary workspace content and travels with it.
 func checkpointUntrackedFiles(ctx context.Context, workspace, taskID string) ([]checkpointBlob, error) {
+	return workspaceUntrackedFiles(ctx, workspace, func(path []byte) bool { return checkpointTaskProjectionPath(path, taskID) })
+}
+
+func workspaceUntrackedFiles(ctx context.Context, workspace string, excluded func([]byte) bool) ([]checkpointBlob, error) {
 	limit := workerproto.MaxWorkspaceCheckpointFiles*(workerproto.MaxWorkspaceCheckpointPathBytes+1) + 1
 	raw, truncated, err := runSessionWorkspaceGitWithEnvContext(ctx, workspace, limit, nil, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
@@ -497,7 +501,7 @@ func checkpointUntrackedFiles(ctx context.Context, workspace, taskID string) ([]
 	}
 	filtered := make([][]byte, 0, len(paths))
 	for _, value := range paths {
-		if checkpointTaskProjectionPath(value, taskID) {
+		if excluded(value) {
 			continue
 		}
 		filtered = append(filtered, append([]byte(nil), value...))

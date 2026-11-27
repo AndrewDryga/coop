@@ -23,6 +23,39 @@ import (
 	"github.com/AndrewDryga/coop/internal/workerproto"
 )
 
+func (s *Service) reserveRuntimeSlot(id string) (bool, <-chan struct{}) {
+	return s.reserveRuntimeResources(id, workerproto.JobResources{})
+}
+
+func TestMeasuredMachineAdmitsOnlyAggregateRequests(t *testing.T) {
+	s := &Service{machine: &workerproto.MachineCapacity{CPUMillis: 8000, MemoryBytes: 8 << 30, Daemon: strings.Repeat("b", 64)}}
+	request := workerproto.JobResources{CPUMillis: 1000, MemoryBytes: 1 << 30, PIDs: 128}
+	var got atomic.Int32
+	var workers sync.WaitGroup
+	for i := range 32 {
+		workers.Go(func() {
+			if ok, _ := s.reserveRuntimeResources(fmt.Sprint(i), request); ok {
+				got.Add(1)
+			}
+		})
+	}
+	workers.Wait()
+	if got.Load() != 8 || s.RuntimeCapacity().Machine.FreeMemoryBytes != 0 {
+		t.Fatalf("admitted %d, capacity %+v", got.Load(), s.RuntimeCapacity())
+	}
+	for id := range s.runtimeSlots {
+		s.runtimeCleanupFailed(id)
+		s.runtimeCleaned(id)
+		break
+	}
+	if ok, _ := s.reserveRuntimeResources("larger", workerproto.JobResources{CPUMillis: 2000, MemoryBytes: 1 << 30, PIDs: 128}); ok {
+		t.Fatal("overbooked cpu")
+	}
+	if ok, _ := s.reserveRuntimeResources("fits", request); !ok {
+		t.Fatal("could not reuse proven capacity")
+	}
+}
+
 func TestRuntimeCapacityReservationIsAtomicAndCleanupFailureStaysOccupied(t *testing.T) {
 	s := &Service{}
 	var admitted atomic.Int32

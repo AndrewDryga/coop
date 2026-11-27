@@ -339,3 +339,18 @@ func TestGenericAPIPermanentFetchRefusalIsDefinite(t *testing.T) {
 		t.Fatalf("refusal %+v %v", result, err)
 	}
 }
+
+func TestServiceLogsTravelInEncryptedControllerBodyCustody(t *testing.T) {
+	const data = `{"records":[{"text":"database startup complete"}],"at_end":true}`
+	transport := &testBodyTransport{}
+	executor := tunnelFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, data)
+	}), transport)
+	command := createCommand(time.Now().Add(time.Minute))
+	command.Payload = apiPayload("GET", "/v1/sessions/s/services/db/logs?container=a", nil)
+	result, err := executor.Execute(t.Context(), command)
+	if err != nil || result.State != "succeeded" || strings.Contains(string(result.Resource), "database startup") || string(transport.uploaded) != data {
+		t.Fatalf("service log was not sent as a separate response body: %s, %v", result.State, err)
+	}
+}

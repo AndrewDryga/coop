@@ -1612,6 +1612,19 @@ func (s *Store) SubmitTurn(ctx context.Context, key string, req SubmitTurnReques
 	} else if err != nil {
 		return Turn{}, fmt.Errorf("read session for turn: %w", err)
 	}
+	// A signed input is installed under the workspace mutation fence. The task
+	// binding is its durable completion receipt, also set by checkpoint restore.
+	if sess.WorkspaceTask == nil && len(sess.JobDocument) > 0 {
+		var job struct {
+			Input json.RawMessage `json:"workspace_input"`
+		}
+		if err := json.Unmarshal(sess.JobDocument, &job); err != nil {
+			return Turn{}, err
+		}
+		if len(job.Input) > 0 {
+			return Turn{}, &Error{Code: CodeInvalidSessionState, Detail: "initialize the submitted workspace before starting a turn"}
+		}
+	}
 	if err := validateRevision(sess, req.ExpectedRevision); err != nil {
 		return Turn{}, s.failAndCommit(tx, op.ID, err)
 	}

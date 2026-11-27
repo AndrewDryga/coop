@@ -29,6 +29,10 @@ import (
 // upstream, when set, is a commit of the job's authorized source (see checkpointUpstream) that
 // restore fetches on its own, so its objects stay out of the transfer like the base's.
 func writeCheckpointRepository(ctx context.Context, workspace, base, upstream, head, tree string, env []string, output io.Writer) error {
+	return writePortableRepository(ctx, workspace, base, upstream, head, tree, env, output, nil)
+}
+
+func writePortableRepository(ctx context.Context, workspace, base, upstream, head, tree string, env []string, output io.Writer, allowPath func(string) error) error {
 	command := func(args ...string) *exec.Cmd {
 		cmd := forkspace.TrustedGitCommand(ctx, workspace, env, args...)
 		cmd.Env = env
@@ -131,6 +135,22 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, upstream, h
 		if !forkspace.ValidObjectID(commit) {
 			return errors.New("invalid checkpoint LFS tree")
 		}
+		if allowPath != nil {
+			raw, truncated, err := runSessionPrivateGitContext(ctx, workspace, sessionWorkspaceGitOutputLimit, env, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", base, commit, "--")
+			if err != nil {
+				return err
+			}
+			if truncated {
+				return errors.New("changed path manifest exceeds its bound")
+			}
+			for path := range strings.SplitSeq(string(raw), "\x00") {
+				if path != "" {
+					if err := allowPath(path); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		links, err := forkspace.Gitlinks(ctx, private, commit)
 		if err != nil {
 			return err
@@ -142,6 +162,11 @@ func writeCheckpointRepository(ctx context.Context, workspace, base, upstream, h
 			return err
 		}
 		return forkspace.VisitLFSPointers(ctx, private, commit, func(pointer forkspace.LFSPointer) error {
+			if allowPath != nil {
+				if err := allowPath(pointer.Path); err != nil {
+					return err
+				}
+			}
 			mark, err := os.OpenFile(filepath.Join(seen, pointer.OID), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if errors.Is(err, os.ErrExist) {
 				previous, readErr := os.ReadFile(filepath.Join(seen, pointer.OID))

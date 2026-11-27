@@ -66,9 +66,15 @@ type claudeNativeIdentity struct {
 }
 
 func (claudeAgent) NativeCredentials() NativeCredentialSpec {
-	return NativeCredentialSpec{Environment: nativeAPIEnvironment("apikey", "ANTHROPIC_API_KEY"), Artifacts: []NativeCredentialArtifact{
-		{Name: ".credentials.json", Limit: claudeCredentialLimit, Required: true, Import: importClaudeNative, AccessOnly: projectClaudeCredential},
-		{Name: ".claude.json", Limit: 1 << 20, Required: true, Import: importClaudeIdentity, AccessOnly: importClaudeIdentity},
+	return NativeCredentialSpec{ControllerImport: func(state NativeCredentialState, _ map[string][]byte) error {
+		if !state.APIKey || !controllerToken(state.AccessToken) {
+			return errors.New("use an Anthropic API key for Ryker or move this Claude subscription to another Coop")
+		}
+		return nil
+	}, APIKeyFiles: func(key string) (map[string][]byte, error) { return map[string][]byte{"api-key": []byte(key)}, nil }, Environment: nativeAPIEnvironment("apikey", "ANTHROPIC_API_KEY"), Artifacts: []NativeCredentialArtifact{
+		{Name: ".credentials.json", Limit: claudeCredentialLimit, RequiredAtSignIn: true, Import: importClaudeNative, AccessOnly: projectClaudeCredential},
+		{Name: ".claude.json", Limit: 1 << 20, RequiredAtSignIn: true, Import: importClaudeIdentity, AccessOnly: importClaudeIdentity},
+		{Name: "api-key", Limit: 4 << 10, Import: importNativeAPIKey, AccessOnly: importNativeAPIKey},
 	}, Inspect: inspectClaudeNative, Renew: renewClaudeNative, Complete: completeClaudeNative, Broker: NativeBrokerSpec{MergeJSON: []string{"settings.json", ".claude.json"}, Seed: seedClaudeBroker, Routes: claudeBrokerRoutes, Check: checkClaudeBroker}}
 }
 
@@ -165,6 +171,12 @@ func importClaudeNative(data []byte) ([]byte, error) {
 }
 
 func inspectClaudeNative(files map[string][]byte, now time.Time) (NativeCredentialState, error) {
+	if value, ok := files["api-key"]; ok {
+		if len(files) != 1 {
+			return NativeCredentialState{}, errors.New("mixed Claude sign-in methods")
+		}
+		return nativeAPIEnvironment("apikey", "ANTHROPIC_API_KEY")("apikey", "ANTHROPIC_API_KEY", string(value))
+	}
 	var identity claudeNativeIdentity
 	if json.Unmarshal(files[".claude.json"], &identity) != nil || !validNativeIdentity(identity.OAuth.Account) || !validNativeIdentity(identity.OAuth.Organization) {
 		return NativeCredentialState{}, errors.New("native Claude native identity missing")

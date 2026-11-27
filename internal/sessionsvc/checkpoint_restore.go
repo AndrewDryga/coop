@@ -90,20 +90,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 		return fail(err)
 	}
 	defer body.Close()
-	members := make(map[string]string)
-	manifest, err := workerproto.ReadWorkspaceCheckpointBundle(req.Checkpoint, io.TeeReader(reviewScanReader{ctx, req.Stream}, body), func(header *tar.Header, input io.Reader) error {
-		name := filepath.Join(stage, "members", header.Name)
-		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
-			return err
-		}
-		file, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return err
-		}
-		err = copyCheckpointContent(ctx, file, input, header.Size, "")
-		members[header.Name] = name
-		return errors.Join(err, file.Close())
-	})
+	manifest, members, err := stageCheckpointMembers(ctx, stage, req.Checkpoint, io.TeeReader(reviewScanReader{ctx, req.Stream}, body))
 	if errors.Is(err, workerproto.ErrInvalidWorkspaceCheckpointBundle) {
 		// The detail stays fixed: the cause can quote member names from the bundle.
 		return fail(&session.Error{Code: session.CodeInvalidRequest, Detail: "checkpoint bundle is invalid"})
@@ -128,7 +115,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	if err := validateCheckpointRepository(ctx, repository, req.Checkpoint, manifest); err != nil {
 		return fail(err)
 	}
-	if err := materializeCheckpoint(ctx, sess.Repository, repository, repository, req.Checkpoint, manifest, members); err != nil {
+	if err := materializeCheckpoint(ctx, sess.Repository, repository, repository, req.Checkpoint, manifest, members, managedWorkerSource); err != nil {
 		return fail(err)
 	}
 	verification := sess
@@ -158,7 +145,7 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	if err != nil || strings.TrimSpace(string(branch)) != sess.ForkName {
 		return fail(checkpointRefusal("replacement workspace branch authority changed"))
 	}
-	if err := materializeCheckpoint(ctx, sess.Repository, repository, sess.Workspace, req.Checkpoint, manifest, members); err != nil {
+	if err := materializeCheckpoint(ctx, sess.Repository, repository, sess.Workspace, req.Checkpoint, manifest, members, managedWorkerSource); err != nil {
 		return fail(err)
 	}
 	if err := s.validateSessionForkAuthority(ctx, sess); err != nil {
@@ -181,6 +168,24 @@ func (s *Service) restoreStreamedCheckpoint(ctx context.Context, op session.Oper
 	// A succeeded receipt replays from the journal, not the now-unused body.
 	_ = os.Remove(filepath.Join(s.stateRoot, "workspace-checkpoints", op.ID+".checkpoint"))
 	return bound, nil
+}
+
+func stageCheckpointMembers(ctx context.Context, stage string, checkpoint workerproto.WorkspaceCheckpoint, input io.Reader) (workerproto.WorkspaceCheckpointBundleManifest, map[string]string, error) {
+	members := make(map[string]string)
+	manifest, err := workerproto.ReadWorkspaceCheckpointBundle(checkpoint, input, func(header *tar.Header, input io.Reader) error {
+		name := filepath.Join(stage, "members", header.Name)
+		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+			return err
+		}
+		file, err := os.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		err = copyCheckpointContent(ctx, file, input, header.Size, "")
+		members[header.Name] = name
+		return errors.Join(err, file.Close())
+	})
+	return manifest, members, err
 }
 
 func initializeCheckpointRepository(ctx context.Context, source, repository, base string) error {
@@ -290,12 +295,16 @@ func checkpointCommitMissing(ctx context.Context, repository, commit string) boo
 }
 
 func validateCheckpointRepository(ctx context.Context, repository string, checkpoint workerproto.WorkspaceCheckpoint, manifest workerproto.WorkspaceCheckpointBundleManifest) error {
+	return validatePortableRepository(ctx, repository, checkpoint.BaseRevision, checkpoint.CommittedRevision, manifest.TrackedTree, manifest.UpstreamRevision)
+}
+
+func validatePortableRepository(ctx context.Context, repository, base, head, tree, upstream string) error {
 	checks := [][]string{
-		{"merge-base", "--is-ancestor", checkpoint.BaseRevision, checkpoint.CommittedRevision},
-		{"fsck", "--full", "--strict", "--unreachable", "--no-progress", checkpoint.CommittedRevision, manifest.TrackedTree},
+		{"merge-base", "--is-ancestor", base, head},
+		{"fsck", "--full", "--strict", "--unreachable", "--no-progress", head, tree},
 	}
-	if manifest.UpstreamRevision != "" {
-		checks = append(checks, []string{"merge-base", "--is-ancestor", manifest.UpstreamRevision, checkpoint.CommittedRevision})
+	if upstream != "" {
+		checks = append(checks, []string{"merge-base", "--is-ancestor", upstream, head})
 	}
 	for _, args := range checks {
 		output, truncated, err := runSessionCompanionGitContext(ctx, repository, 4096, args...)
@@ -303,12 +312,12 @@ func validateCheckpointRepository(ctx context.Context, repository string, checkp
 			return errors.New("checkpoint repository object closure is invalid")
 		}
 	}
-	wantLinks, err := forkspace.Gitlinks(ctx, repository, checkpoint.BaseRevision)
+	wantLinks, err := forkspace.Gitlinks(ctx, repository, base)
 	if err != nil {
 		return err
 	}
 	seen := filepath.Join(repository, ".git", "checkpoint-seen")
-	err = visitCheckpointTrees(ctx, repository, checkpoint.BaseRevision, checkpoint.CommittedRevision, manifest.TrackedTree, func(commit string) error {
+	err = visitCheckpointTrees(ctx, repository, base, head, tree, func(commit string) error {
 		links, err := forkspace.Gitlinks(ctx, repository, commit)
 		if err != nil || !maps.Equal(wantLinks, links) {
 			return &session.Error{Code: session.CodeInvalidRequest, Detail: "checkpoint contains submodule changes without separate custody"}
@@ -354,32 +363,17 @@ func validateCheckpointRepository(ctx context.Context, repository string, checkp
 	}
 }
 
-func materializeCheckpoint(ctx context.Context, source, objects, workspace string, checkpoint workerproto.WorkspaceCheckpoint, manifest workerproto.WorkspaceCheckpointBundleManifest, members map[string]string) error {
-	if objects != workspace {
-		for _, oid := range []string{checkpoint.CommittedRevision, manifest.TrackedTree} {
-			if err := forkspace.GitFetchPinnedContext(ctx, objects, workspace, oid); err != nil {
-				return err
-			}
-		}
-		if err := visitCheckpointTrees(ctx, workspace, checkpoint.BaseRevision, checkpoint.CommittedRevision, manifest.TrackedTree, func(commit string) error {
-			if _, _, err := runSessionCompanionGitContext(ctx, workspace, 128, "read-tree", commit); err != nil {
-				return err
-			}
-			return forkspace.CopyLFSObjects(ctx, workspace, commit, objects)
-		}); err != nil {
-			return err
-		}
-	}
-	for _, args := range [][]string{
-		{"reset", "--hard", checkpoint.CommittedRevision},
-		{"clean", "-qfdx", "-e", "/" + forkspace.GenerationMarkerName},
-		{"read-tree", "--reset", "-u", manifest.TrackedTree},
-	} {
-		if _, _, err := runSessionCompanionGitContext(ctx, workspace, sessionWorkspaceGitOutputLimit, args...); err != nil {
-			return err
-		}
-	}
-	if err := materializeSessionSubmodules(ctx, source, workspace, manifest.TrackedTree, objects); err != nil {
+// The operator's Git clone can be on another revision and have local edits.
+// A worker instead owns a private managed source staged at its exact pin.
+type portableSourceKind uint8
+
+const (
+	managedWorkerSource portableSourceKind = iota
+	operatorCheckoutSource
+)
+
+func materializeCheckpoint(ctx context.Context, source, objects, workspace string, checkpoint workerproto.WorkspaceCheckpoint, manifest workerproto.WorkspaceCheckpointBundleManifest, members map[string]string, sourceKind portableSourceKind) error {
+	if err := materializePortableTree(ctx, source, objects, workspace, checkpoint.BaseRevision, checkpoint.CommittedRevision, manifest.TrackedTree, sourceKind); err != nil {
 		return err
 	}
 	root, err := os.OpenRoot(workspace)
@@ -409,6 +403,37 @@ func materializeCheckpoint(ctx context.Context, source, objects, workspace strin
 		}
 	}
 	return restoreTaskStateDirs(root)
+}
+
+func materializePortableTree(ctx context.Context, source, objects, workspace, base, head, tree string, sourceKind portableSourceKind) error {
+	if objects != workspace {
+		for _, oid := range []string{head, tree} {
+			if err := forkspace.GitFetchPinnedContext(ctx, objects, workspace, oid); err != nil {
+				return err
+			}
+		}
+		if err := visitCheckpointTrees(ctx, workspace, base, head, tree, func(commit string) error {
+			if _, _, err := runSessionCompanionGitContext(ctx, workspace, 128, "read-tree", commit); err != nil {
+				return err
+			}
+			return forkspace.CopyLFSObjects(ctx, workspace, commit, objects)
+		}); err != nil {
+			return err
+		}
+	}
+	for _, args := range [][]string{
+		{"reset", "--hard", head},
+		{"clean", "-qfdx", "-e", "/" + forkspace.GenerationMarkerName},
+		{"read-tree", "--reset", "-u", tree},
+	} {
+		if _, _, err := runSessionCompanionGitContext(ctx, workspace, sessionWorkspaceGitOutputLimit, args...); err != nil {
+			return err
+		}
+	}
+	if sourceKind == operatorCheckoutSource {
+		return materializeFleetResultTree(ctx, source, workspace, tree, objects)
+	}
+	return materializeSessionSubmodules(ctx, source, workspace, tree, objects)
 }
 
 // restoreTaskStateDirs puts back the empty state folders the clean above removed: the bundle

@@ -509,7 +509,7 @@ func TestSessionConnectRefusesToReuseAReadyService(t *testing.T) {
 	state := filepath.Join(home, "sessions")
 	socket := filepath.Join(state, "control.sock")
 	fakeService(t, socket, true)
-	owned, err := startLocalSessionService(context.Background(), freshConfig(t), state, socket, nil, nil)
+	owned, err := startLocalSessionService(context.Background(), freshConfig(t), state, socket, nil, nil, nil)
 	if owned != nil || err == nil || !strings.Contains(err.Error(), "already listening") {
 		t.Fatalf("foreign ready service = %v, %v", owned, err)
 	}
@@ -527,7 +527,7 @@ func TestSessionConnectRefusesToDisplaceAnUnhealthyService(t *testing.T) {
 	socket := filepath.Join(state, "control.sock")
 	fakeService(t, socket, false)
 
-	owned, err := startLocalSessionService(context.Background(), freshConfig(t), state, socket, nil, nil)
+	owned, err := startLocalSessionService(context.Background(), freshConfig(t), state, socket, nil, nil, nil)
 	if err == nil {
 		if owned != nil {
 			owned.stop()
@@ -558,7 +558,7 @@ func TestSessionConnectStartsAndOwnsAService(t *testing.T) {
 	var owned *ownedSessionService
 	out := captureStderr(t, func() {
 		var err error
-		owned, err = startLocalSessionService(context.Background(), cfg, state, socket, nil, nil)
+		owned, err = startLocalSessionService(context.Background(), cfg, state, socket, nil, nil, nil)
 		if err != nil {
 			t.Fatalf("autostart failed: %v", err)
 		}
@@ -589,7 +589,7 @@ func TestSessionConnectReportsAServiceThatNeverBecameReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	socket := filepath.Join(state, "control.sock")
-	owned, err := startLocalSessionService(context.Background(), signedInConfig(t), state, socket, nil, nil)
+	owned, err := startLocalSessionService(context.Background(), signedInConfig(t), state, socket, nil, nil, nil)
 	if owned != nil {
 		owned.stop()
 		t.Fatal("failed service claimed ownership")
@@ -616,7 +616,7 @@ func TestSessionConnectResolvesARaceThroughTheStorageLock(t *testing.T) {
 	for range 2 {
 		go func() {
 			<-start
-			owned, err := startLocalSessionService(context.Background(), cfg, state, socket, nil, nil)
+			owned, err := startLocalSessionService(context.Background(), cfg, state, socket, nil, nil, nil)
 			results <- result{owned, err}
 		}()
 	}

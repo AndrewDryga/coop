@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -32,6 +33,7 @@ import (
 )
 
 type nativeRunAccount struct {
+	remote            *remoteNativeAccount
 	agent             agents.Agent
 	account           string
 	record            *accountAuthority
@@ -48,6 +50,8 @@ type nativeRunAccount struct {
 }
 
 type nativeRun struct {
+	source        *ControllerModels
+	relay         *http.Server
 	cfg           *config.Config
 	runID         string
 	accounts      []*nativeRunAccount
@@ -66,6 +70,11 @@ func planNativeRun(ctx context.Context, cfg *config.Config, rt runtime.Runtime, 
 func planNativeAccounts(ctx context.Context, cfg *config.Config, rt runtime.Runtime, spec RunSpec, persistent bool) (*nativeRun, error) {
 	if !spec.Homes || spec.Login || cfg.Egress == "none" {
 		return nil, nil
+	}
+	if source, err := controllerModels(); err != nil {
+		return nil, err
+	} else if source != nil {
+		return planRemoteNativeAccounts(ctx, cfg, spec, persistent, source)
 	}
 	run := &nativeRun{cfg: cfg.NativeAuthorityConfig(), runID: randid.Hex(16), filtered: cfg.Egress == "filtered"}
 	for _, provider := range credentialScope(cfg, spec) {
@@ -161,10 +170,20 @@ func planNativeAccounts(ctx context.Context, cfg *config.Config, rt runtime.Runt
 }
 
 func (a *nativeRunAccount) inspect(record *accountAuthority) (agents.NativeCredentialState, error) {
+	if a.remote != nil {
+		return agents.NativeCredentialState{Selection: a.remote.selection, AccountID: a.remote.accountID, Ready: true}, nil
+	}
 	if a.ephemeral != nil {
 		return *a.ephemeral, nil
 	}
 	return a.agent.NativeCredentials().Inspect(record.Artifacts, time.Now())
+}
+
+func (a *nativeRunAccount) epoch() uint64 {
+	if a.remote != nil {
+		return a.remote.epoch
+	}
+	return a.record.Epoch
 }
 
 // A running box starts renewing its access once less than nativeRenewalLead of it is left, so it rides
@@ -667,6 +686,11 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 	if err := os.Chmod(r.dir, 0755); err != nil {
 		return err
 	}
+	if r.source != nil {
+		if err := r.startModelRelay(ctx); err != nil {
+			return err
+		}
+	}
 	ca, key, public, err := nativeCertificateAuthority()
 	if err != nil {
 		return err
@@ -682,8 +706,8 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 		if err != nil {
 			return err
 		}
-		selected := networkgateway.NativeAccountConfig{Binding: networkgateway.NativeBrokerBinding{
-			RunID: r.runID, Provider: account.agent.Name(), Account: account.account, Epoch: account.record.Epoch}}
+		selected := networkgateway.NativeAccountConfig{Relay: account.remote != nil, Binding: networkgateway.NativeBrokerBinding{
+			RunID: r.runID, Provider: account.agent.Name(), Account: account.account, Epoch: account.epoch()}}
 		for _, host := range r.origins() {
 			if !r.filtered && publicDownloadOrigin(account.routes, host) {
 				continue
@@ -727,6 +751,12 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 				AccountHeaders: realHeaders, ClientAccountHeaders: publicHeaders})
 		}
 		plan.Accounts = append(plan.Accounts, selected)
+		if account.remote != nil {
+			if err := r.publishRemote(account, false); err != nil {
+				return err
+			}
+			continue
+		}
 		// As at planning, a failed renewal stops the launch, so renew only what would not cover the deadline.
 		current, err := r.refresh(ctx, account, time.Now(), true, nativeRenewalDeadline)
 		if err != nil {
@@ -749,7 +779,13 @@ func (r *nativeRun) prepare(ctx context.Context, parent string) error {
 	lifetime, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
 	for _, account := range r.accounts {
-		r.workers.Go(func() { r.serve(lifetime, account) })
+		r.workers.Go(func() {
+			if account.remote != nil {
+				r.serveRemote(lifetime, account)
+			} else {
+				r.serve(lifetime, account)
+			}
+		})
 	}
 	return nil
 }
@@ -867,9 +903,16 @@ func (r *nativeRun) close() error {
 		r.workers.Wait()
 	}
 	var result error
+	if r.relay != nil {
+		result = errors.Join(result, r.relay.Close())
+	}
 	if r.dir != "" {
 		for _, account := range r.accounts {
-			result = errors.Join(result, r.publish(account, nil, context.Canceled))
+			if account.remote != nil {
+				result = errors.Join(result, r.publishRemote(account, true))
+			} else {
+				result = errors.Join(result, r.publish(account, nil, context.Canceled))
+			}
 		}
 	}
 	return result

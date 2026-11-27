@@ -4034,6 +4034,13 @@ func stageAwaitingValidationTurn(t *testing.T, service *sessionFixture, key stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	return stageCandidateOnSession(t, service, key, sess)
+}
+
+func stageCandidateOnSession(t *testing.T, service *sessionFixture, key string, sess session.Session) (session.Session, session.Turn, awaitingValidationSnapshot) {
+	t.Helper()
+	ctx := t.Context()
+	var err error
 	if sess, err = service.Store().BindNativeSession(ctx, sess.ID, "native-"+key); err != nil {
 		t.Fatal(err)
 	}

@@ -114,7 +114,10 @@ func (e *Executor) forwardRequest(ctx context.Context, entry journalEntry, comma
 	if len(prefix) == 0 {
 		return encodeWireJSON(envelope)
 	}
-	if len(prefix) <= inlineLimit && mediaType == "application/json" && json.Valid(prefix) {
+	// A Compose service controls its output. Keep it in encrypted body custody on
+	// the controller, including small pages that would otherwise enter the command row.
+	serviceLog := request.Method == http.MethodGet && serviceLogRequest(request.Path)
+	if !serviceLog && len(prefix) <= inlineLimit && mediaType == "application/json" && json.Valid(prefix) {
 		envelope.Body = prefix
 		return encodeWireJSON(envelope)
 	}
@@ -144,6 +147,15 @@ func (e *Executor) forwardRequest(ctx context.Context, entry journalEntry, comma
 		return nil, err
 	}
 	return e.uploadSavedResponse(ctx, command.CommandID, envelope)
+}
+
+func serviceLogRequest(path string) bool {
+	parsed, err := url.ParseRequestURI(path)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(parsed.Path, "/"), "/")
+	return len(parts) == 6 && parts[0] == "v1" && parts[1] == "sessions" && parts[3] == "services" && parts[5] == "logs"
 }
 
 // tunnelProjection returns the filter a forwarded read must pass before it leaves the worker, or nil.
@@ -255,6 +267,18 @@ func (t *HTTPTransport) FetchRequestBody(ctx context.Context, id string, ref wor
 		return errors.New("invalid request body reference")
 	}
 	endpoint := t.baseURL.ResolveReference(&url.URL{Path: "/v1/coop-workers/commands/" + url.PathEscape(id) + "/request-body"})
+	return t.fetchBoundBody(ctx, endpoint, ref, destination)
+}
+
+func (t *HTTPTransport) FetchWorkspaceInput(ctx context.Context, jobRef string, ref workerproto.BodyReference, destination io.Writer) error {
+	if !reference(jobRef, 256) || ref.Validate() != nil {
+		return errors.New("invalid fleet workspace input reference")
+	}
+	endpoint := t.baseURL.ResolveReference(&url.URL{Path: "/v1/coop-workers/jobs/" + url.PathEscape(jobRef) + "/workspace-input"})
+	return t.fetchBoundBody(ctx, endpoint, ref, destination)
+}
+
+func (t *HTTPTransport) fetchBoundBody(ctx context.Context, endpoint *url.URL, ref workerproto.BodyReference, destination io.Writer) error {
 	request, err := http.NewRequestWithContext(ctx, "GET", endpoint.String(), nil)
 	if err != nil {
 		return err

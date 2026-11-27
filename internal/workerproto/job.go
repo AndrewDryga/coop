@@ -21,6 +21,8 @@ import (
 // Version 2 of this document belongs to worker protocol v2. No source path, remote URL or
 // credential is accepted here; the trusted host fetches verified source with a separate grant.
 type JobSpec struct {
+	WorkspaceInput     *BodyReference    `json:"workspace_input,omitempty"`
+	ModelCredentials   string            `json:"model_credentials,omitempty"`
 	Version            int               `json:"version"`
 	JobRef             string            `json:"job_ref"`
 	Source             *JobSource        `json:"source"`
@@ -41,6 +43,7 @@ type JobSpec struct {
 // paths select the shared toolchain or no services. Environment contains project defaults, below
 // review overrides and controller-enforced values; repository policy cannot widen this grant.
 type JobRuntime struct {
+	MaxServices int               `json:"max_services,omitempty"`
 	Version     int               `json:"version"`
 	Dockerfile  string            `json:"dockerfile"`
 	Compose     string            `json:"compose"`
@@ -52,7 +55,7 @@ type JobRuntime struct {
 const maxProjectEnvironmentBytes = 64 << 10
 
 func (r JobRuntime) Validate() error {
-	if r.Version != 1 || !validJobRuntimePath(r.Dockerfile) || !validJobRuntimePath(r.Compose) || !validJobEnvironment(r.Environment) {
+	if r.Version != 1 || r.MaxServices < 0 || r.MaxServices > 64 || r.MaxServices > 0 && r.Compose == "" || !validJobRuntimePath(r.Dockerfile) || !validJobRuntimePath(r.Compose) || !validJobEnvironment(r.Environment) {
 		return errors.New("invalid job project runtime")
 	}
 	encoded, err := json.Marshal(r.Environment)
@@ -228,9 +231,14 @@ func requireJobFields(document []byte) error {
 		return value, nil
 	}
 	root, err := object(document, []string{"version", "job_ref", "companions", "targets", "mode",
-		"repository_read_only", "egress", "limits", "environment", "check", "resources"}, "source", "runtime", "preset")
+		"repository_read_only", "egress", "limits", "environment", "check", "resources"}, "source", "runtime", "preset", "model_credentials", "workspace_input")
 	if err != nil {
 		return err
+	}
+	if raw, ok := root["workspace_input"]; ok {
+		if _, err := object(raw, []string{"sha256", "byte_size"}); err != nil {
+			return fmt.Errorf("job workspace input: %w", err)
+		}
 	}
 	if raw, ok := root["preset"]; ok {
 		preset, err := object(raw, []string{"version", "name", "lead_prompt", "roles"})
@@ -248,7 +256,7 @@ func requireJobFields(document []byte) error {
 		}
 	}
 	if raw, ok := root["runtime"]; ok {
-		if _, err := object(raw, []string{"version", "dockerfile", "compose", "environment"}); err != nil {
+		if _, err := object(raw, []string{"version", "dockerfile", "compose", "environment"}, "max_services"); err != nil {
 			return fmt.Errorf("job runtime: %w", err)
 		}
 	}
@@ -401,6 +409,12 @@ func rejectDuplicateJobKeys(document []byte) error {
 }
 
 func (s JobSpec) Validate() error {
+	if s.WorkspaceInput != nil && (s.WorkspaceInput.Validate() != nil || s.Source == nil || s.RepositoryReadOnly) {
+		return errors.New("workspace input requires an exact writable source and a valid content reference")
+	}
+	if s.ModelCredentials != "" && s.ModelCredentials != "controller" {
+		return errors.New("invalid model credential authority")
+	}
 	if s.Version != 2 || reference(s.JobRef, 256, "job ref") != nil {
 		return errors.New("invalid job version or reference")
 	}

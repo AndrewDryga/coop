@@ -106,6 +106,9 @@
         <summary>On this page</summary><script>if(!matchMedia("(min-width:1280px)").matches)document.currentScript.parentElement.open=false</script>
         <nav aria-label="On this page"><ul role="list"><li><a href="#overview">Overview</a></li>
 <li><a href="#connect">Connect</a></li>
+<li class="reference-subsection"><a href="#run-your-own-controller">Run your own controller</a></li>
+<li class="reference-subsection"><a href="#recover-a-ryker-job-locally">Recover a Ryker job locally</a></li>
+<li class="reference-subsection"><a href="#connect-to-a-controller">Connect to a controller</a></li>
 <li><a href="#session-authority">Session authority</a></li>
 <li class="reference-subsection"><a href="#job-network-rules">Job network rules</a></li>
 <li class="reference-subsection"><a href="#workspace-storage">Workspace storage</a></li>
@@ -137,6 +140,7 @@
 <li><a href="#errors">Errors</a></li>
 <li><a href="#operational-recovery">Operational recovery</a></li>
 <li><a href="#consumer-responsibilities">Consumer responsibilities</a></li>
+<li class="reference-subsection"><a href="#controller-owned-model-access">Controller-owned model access</a></li>
 </ul></nav>
       </details>
       <article class="docs-main reference-content" aria-label="Reference">
@@ -146,7 +150,86 @@ isolation and keeps their workspaces. The worker can share a VM with its control
 separate VM. Ryker uses this protocol, but it can serve other products and has no Ryker-specific
 terms.</p>
 </section><section class="doc-section reference-section" id="connect"><h2>Connect</h2>
-<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect code example" tabindex="0"><code class="language-bash">coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
+<h3 id="run-your-own-controller">Run your own controller</h3>
+<p><code>coop sessions fleet</code> queues individual jobs on a private controller. Choose a hostname or VPN
+address that every worker can reach. Supply its TLS certificate and private key. On the controller:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Run your own controller code example" tabindex="0"><code class="language-bash">umask 077
+state=&#34;$HOME/.local/state/coop/fleet&#34;
+coop sessions fleet serve &#34;$state&#34; :9443 controller.crt controller.key
+</code></pre></div>
+<p>In another terminal, create one invitation for each worker. Transfer the resulting files over
+your existing private connection to their respective VMs. A worker consumes its file on enrollment.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Run your own controller code example" tabindex="0"><code class="language-bash">coop sessions fleet invite &#34;$state&#34; vm-a build &gt; vm-a.token
+coop sessions fleet invite &#34;$state&#34; vm-b build &gt; vm-b.token
+</code></pre></div>
+<p>On each VM, start the worker using its own token and the CA for the controller&#39;s HTTPS certificate:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Run your own controller code example" tabindex="0"><code class="language-bash">coop sessions connect --controller https://controller.example:9443 \
+  --token-file /run/secrets/worker.token --ca-file /etc/coop/controller-ca.crt
+</code></pre></div>
+<p>Use the controller&#39;s state directory to submit a v2 job document and a UTF-8 prompt file.
+The command prints the job reference. The pool name selects eligible workers. Each target must
+select its account explicitly, for example <code>claude:sonnet@work</code>. A GitHub App can supply source
+access. The standalone controller waits for a worker reporting all selected model accounts as
+signed in. You can copy a signed-in account between Coop installations with the offline transfer described in <code>coop help credentials transfer</code>. For controller-managed credentials, enroll the workers in Ryker and use its local
+<code>scripts/compose.sh fleet-submit</code> command. Ryker authorizes model requests on the controller.</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Run your own controller code example" tabindex="0"><code class="language-bash">coop sessions fleet workers &#34;$state&#34;
+coop sessions fleet submit &#34;$state&#34; build job.json prompt.txt
+coop sessions fleet status &#34;$state&#34; job-1
+coop sessions fleet events &#34;$state&#34; job-1
+coop sessions fleet cancel &#34;$state&#34; job-1
+</code></pre></div>
+<p>For queued jobs, <code>status</code> reports when the pool is offline or draining, a model account is
+missing, or account permits are occupied. Otherwise the job waits for an eligible worker with
+enough free capacity to poll.</p>
+<p>By default one job at a time may use a given <code>provider@account</code> across the fleet. Give the same
+provider account the same name on all workers. Use <code>limit-account &#34;$state&#34; claude@work 3</code> under
+<code>coop sessions fleet</code> to allow three concurrent jobs. A limit of zero pauses new placements.
+Fresh exhausted usage windows can defer placements until their reset. Each fallback and preset
+account holds a permit for the job&#39;s lifetime.</p>
+<p>Docker workers measure the daemon&#39;s CPU and memory. The worker holds back one quarter for the host.
+For Compose jobs set <code>runtime.max_services</code> to the number of sidecars the job may start. The
+controller reserves the per-container limits for the agent and each allowed sidecar. A normal
+invitation waits for a machine report before offering jobs. An operator can explicitly admit a
+slot-only worker with <code>invite &lt;state-dir&gt; &lt;worker&gt; &lt;pool&gt; --slots-only</code>. That mode uses the
+worker&#39;s slot report for placement and accepts jobs without a Compose stack.</p>
+<p>For private GitHub sources, pass a final configuration file to <code>serve</code> with numeric <code>app_id</code>,
+numeric <code>installation_id</code>, and <code>private_key_file</code> pointing to a private PEM file on the controller.
+The App needs read access to repository contents. Each source grant names a repository from the
+assigned job and carries a single-repository installation token. Without an App, source access
+uses anonymous GitHub reads.</p>
+<p><code>drain</code> stops new placements on a worker while it finishes assigned jobs. <code>resume</code> enables
+placement again. <code>revoke</code> denies future controller requests by that worker. To replace a lost
+invitation for a worker that has never received work, revoke the identity and invite it again.
+If the controller is offline, new work waits. Running turns may continue on the worker, which
+journals receipts for reconnection. Restart <code>serve</code> with the same state directory. Loss of a
+worker may still require manual recovery of its workspace.</p>
+<h3 id="recover-a-ryker-job-locally">Recover a Ryker job locally</h3>
+<p>On the Ryker controller, run <code>scripts/compose.sh fleet-checkout &lt;job-uuid&gt; &lt;source-repo&gt; &lt;output-parent&gt;</code>.
+For unpublished local work, submit the managed repository reference and its approved
+commit along with the path to your clone. Any additional names are untracked files
+relative to that clone. For example,</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Recover a Ryker job locally code example" tabindex="0"><code class="language-sh">scripts/compose.sh fleet-submit-local &#34;$job&#34; local project ./my-clone &#34;$base&#34; fixtures/sample.bin &lt; prompt.txt
+</code></pre></div>
+<p>The controller authenticates the archive and holds it encrypted. The first assigned
+worker verifies it against the job and managed commit before it can start a turn.
+Coop includes tracked working changes and unpublished commits, and rejects hidden
+files, unresolved conflicts, dirty submodules, and changes to the approved project setup.
+Subsequent recovery uses the worker&#39;s last saved checkpoint.</p>
+<p>Use an existing output directory and a clone that contains the job&#39;s base commit, any upstream commit the worker rebased onto, and the pinned objects for initialized submodules. The wrapper
+streams the saved workspace to <code>coop sessions fleet checkout</code>. Coop validates the checkpoint
+and its task identity, reconstructs the Git objects, and prints the path of a fresh checkout.
+You can inspect the recovered commits and any tracked or untracked edits there. The source
+clone keeps its working tree and index, including edits made while the worker was running.</p>
+<p>For generated reports and binaries, have the worker write files inside the active
+task&#39;s <code>artifacts/</code> directory. Ryker retains them in the authenticated checkpoint.
+List the saved names, media types, sizes and SHA-256 digests from the controller host:</p>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Recover a Ryker job locally code example" tabindex="0"><code class="language-sh">scripts/compose.sh fleet-artifacts &#34;$job&#34; /path/to/results
+scripts/compose.sh fleet-artifacts &#34;$job&#34; /path/to/results tests/junit.xml dist/output.bin
+</code></pre></div>
+<p>The second command retrieves the selected files into a fresh private directory under
+the existing results directory. It works after worker loss and requires no source clone.</p>
+<h3 id="connect-to-a-controller">Connect to a controller</h3>
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect to a controller code example" tabindex="0"><code class="language-bash">coop sessions connect --controller https://controller.example --token-file /run/secrets/coop-token
 </code></pre></div>
 <p>This is the only command that starts a worker. It starts a private local service, the daemon, and a
 connector that sends requests to your controller, so you don&#39;t need to open an inbound TCP port.
@@ -167,6 +250,8 @@ Git LFS. On a native worker, install <code>git-lfs</code> with your package mana
 <p>Jobs use the worker&#39;s base image (<code>COOP_BASE_IMAGE</code>) unless the controller grants a project
 runtime. That grant can select a project Dockerfile and an isolated Compose test stack. The worker
 builds the toolchain from its private frozen source and gives Work and review the same image.
+Work reads its Compose definition from that same source. Relative mounts still point into the
+job workspace. A review can select its own candidate test stack.
 Filtered jobs use co:op&#39;s locked client image and refuse custom controller toolchains. An open-network
 job without a project runtime runs in an image with the tools the repository lists in
 <code>.tool-versions</code>, built once on the worker and reused.</p>
@@ -177,7 +262,7 @@ The session API requires those checks to stay valid but doesn&#39;t build the ne
 Installing Docker or accepting JobSpec version 2 isn&#39;t enough to show that the worker can enforce
 filtered networking.</p>
 <p>To check the local session service:</p>
-<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect code example" tabindex="0"><code class="language-bash">coop sessions doctor
+<div class="reference-code-frame reference-example"><p class="code-file-name">Shell examples</p><pre class="code" role="region" aria-label="Connect to a controller code example" tabindex="0"><code class="language-bash">coop sessions doctor
 coop sessions doctor --socket /var/lib/coop-sessions/control.sock --json
 </code></pre></div>
 <p>The local socket and state are private to the worker&#39;s OS account. Never mount the socket into a
@@ -597,7 +682,7 @@ private state.</p>
 <p>With <code>limits.warm_idle_timeout_ms</code> above 0, you get a warm session: co:op can authenticate the ACP
 connection before the first turn and keep the same process and provider session for later turns.
 Turns still run one at a time. The daemon keeps at most four sessions warm, and each one occupies
-one of the four runtime slots while idle.</p>
+one of the shared runtime slots while idle.</p>
 <p>co:op stops the process and removes its box, services and temporary credential files when any of
 these happens:</p>
 <ul>
@@ -697,7 +782,7 @@ use up one of those review attempts.</p>
 <tr>
 <td><code>GET</code></td>
 <td><code>/v1/capabilities</code></td>
-<td><code>{&#34;job_<wbr/>spec_<wbr/>versions&#34;:[2],&#34;project_<wbr/>runtime_<wbr/>versions&#34;:[1],&#34;job_<wbr/>preset_<wbr/>versions&#34;:[1],&#34;controller_<wbr/>tools_<wbr/>versions&#34;:[1],&#34;repository_<wbr/>freshness_<wbr/>receipt_<wbr/>versions&#34;:[2],&#34;session_<wbr/>evidence_<wbr/>versions&#34;:[1],&#34;review_<wbr/>commit_<wbr/>message_<wbr/>versions&#34;:[1],&#34;existing_<wbr/>pr_<wbr/>publication_<wbr/>versions&#34;:[1],&#34;checkpoint_<wbr/>upstream_<wbr/>versions&#34;:[1],&#34;fast_<wbr/>target_<wbr/>versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
+<td><code>{&#34;project_<wbr/>service_<wbr/>budget_<wbr/>versions&#34;:[1],&#34;job_<wbr/>spec_<wbr/>versions&#34;:[2],&#34;project_<wbr/>runtime_<wbr/>versions&#34;:[1],&#34;job_<wbr/>preset_<wbr/>versions&#34;:[1],&#34;controller_<wbr/>tools_<wbr/>versions&#34;:[1],&#34;repository_<wbr/>freshness_<wbr/>receipt_<wbr/>versions&#34;:[2],&#34;session_<wbr/>evidence_<wbr/>versions&#34;:[1],&#34;review_<wbr/>commit_<wbr/>message_<wbr/>versions&#34;:[1],&#34;existing_<wbr/>pr_<wbr/>publication_<wbr/>versions&#34;:[1],&#34;checkpoint_<wbr/>upstream_<wbr/>versions&#34;:[1],&#34;fast_<wbr/>target_<wbr/>versions&#34;:[1]}</code>. Check these versions before choosing which protocol features to use.</td>
 </tr>
 <tr>
 <td><code>GET</code></td>
@@ -716,8 +801,11 @@ use up one of those review attempts.</p>
 </tr>
 </tbody>
 </table></div></div>
-<p>The worker has four slots for model processes, shared by active turns and idle warm sessions. The
-session, turn and workspace counts all describe those same slots, so don&#39;t add them together. Time
+<p>On Docker workers, Coop reserves one quarter of the daemon CPU and RAM for other work and
+calculates the shared slot count from the remaining CPU budget (one slot per 250 millicores,
+with at least one slot). Each active or warm session reserves its requested CPU and memory,
+including approved sidecars. Workers without a machine report use four shared slots. The
+session, turn and workspace counts all describe the same pool. Time
 spent waiting in the queue doesn&#39;t count toward a turn&#39;s model timeout. If cleanup fails, the
 process keeps its slot until cleanup succeeds. At startup, the worker reports busy with zero free
 slots until it has checked which runtimes it owns.</p>
@@ -918,7 +1006,20 @@ removed from the job setup. Named data volumes survive ordinary turns on the sam
 anonymous volumes and tmpfs are disposable. Final discard removes owned containers, networks and
 named volumes before deleting the workspace, using immutable labels even if project files changed.
 A replacement worker reconstructs test services; checkpoints do not transfer database volumes.
-A candidate&#39;s <code>review.compose</code> can replace the Work stack with a separate disposable review stack.</p>
+An open controller job exposes its service catalog at <code>GET /v1/sessions/{id}/services</code>.
+Each entry identifies the service name, declared numeric TCP <code>expose</code> ports, runtime state and
+current full container ID. A missing service has state <code>absent</code>. For a present container,
+<code>GET /v1/sessions/{id}/services/{name}/logs?container={id}&amp;cursor={cursor}</code> returns retained
+stdout and stderr records. Omit the cursor on the first read. A cursor also permits polling at
+the end and becomes unusable if the logs rotate past it. The worker filters credential-shaped
+records before transport. Ryker stores pages as encrypted response bodies and applies its own
+secret redaction when displaying them.</p>
+<p>Workers advertising <code>service-relay:1</code> can open an outbound, placement-scoped connection on
+request. Ryker&#39;s operator command <code>scripts/compose.sh fleet-forward JOB_UUID SERVICE PORT</code>
+prints a private loopback HTTP URL. The worker needs the matching trusted helper image
+installed by <code>coop net setup</code>. Stopping the preview closes the local listener. A changed
+placement, revoked certificate, completed job or expired ten-minute grant closes the tunnel.</p>
+<p>A candidate&#39;s <code>review.compose</code> can replace the Work stack with a separate disposable review stack.</p>
 <p>co:op computes the job digest itself. It writes the job&#39;s JSON the way Go&#39;s <code>encoding/json</code>
 does: no extra whitespace, object keys in sorted order, and <code>&amp;</code>, <code>&lt;</code> and <code>&gt;</code> inside strings
 escaped as <code>\u0026</code>, <code>\u003c</code> and <code>\u003e</code>. U+2028 and U+2029 become <code>\u2028</code> and <code>\u2029</code>. Tab,
@@ -1509,6 +1610,12 @@ can&#39;t exceed the job&#39;s <code>max_patch_bytes</code>, and offsets can&#39
 you page through the result. If it changes, start again at offset zero so you don&#39;t combine pages
 from different patches. The <code>truncated</code> field is true whenever the response contains less than the
 complete patch.</p>
+<p>For an operator fleet verification job, request the unpaged changes with
+<code>verification_turn</code> and <code>candidate_sha256</code>. Coop checks that exact pending candidate
+and finishes runtime cleanup before computing <code>working_source_digest</code>. The digest
+covers HEAD, the index, the tracked working tree and unignored untracked files.
+The bound task&#39;s generated artifacts travel in its checkpoint. Other untracked
+files in the task folder still affect verification.</p>
 <p>The JSON response encodes <code>patch</code>, <code>path_bytes</code> and <code>old_path_bytes</code> as base64. <code>patch_bytes</code> is an
 integer giving the complete patch&#39;s size. A valid UTF-8 filename also appears in <code>path</code>. Filenames
 containing arbitrary bytes are preserved in <code>path_bytes</code>. If Git fails, the endpoint returns an
@@ -2162,6 +2269,17 @@ only on directory names.</p>
 </ul>
 <p>Never put chat-service tokens, GitHub credentials, Emisar administrative credentials or other
 credentials that authorize publication into a co:op prompt or box.</p>
+<h3 id="controller-owned-model-access">Controller-owned model access</h3>
+<p>A job may set <code>model_credentials</code> to <code>controller</code>. The controller then keeps all
+provider keys and OAuth tokens and issues temporary proxy grants to the worker.
+The shipped Docker runner advertises <code>model-proxy:1</code> only when its session service
+has a model relay and runs on Linux with local Docker. The guard and worker host
+must share a Linux filesystem for their private Unix socket. A macOS controller
+can manage these workers. A macOS-hosted Docker worker refuses this new credential
+mode and keeps accepting compatible jobs in its existing credential mode.</p>
+<p>Model grants use a private worker API outside ordinary command journals. They bind
+the selected provider/account and frozen job digest to a runtime reservation.
+Wrong-account requests and uncertain cleanup fail closed.</p>
 </section>
         <nav class="docs-pager" aria-label="Previous and next pages"><a class="docs-pager-previous" href="configuration.html"><span>Previous</span>Configuration</a><a class="docs-pager-next" href="migrating.html"><span>Next</span>Upgrading</a></nav>
         <p class="reference-source"><a href="https://github.com/AndrewDryga/coop/blob/main/docs/session-api.md" target="_blank" rel="nofollow noopener">View this page on GitHub</a></p>

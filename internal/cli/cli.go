@@ -633,6 +633,8 @@ func helpForPath(path []string, cfg *config.Config, asHelp bool) (int, error) {
 		switch path[len(path)-1] {
 		case "default":
 			leaf = "credentials default"
+		case "import", "export":
+			leaf = "credentials transfer"
 		case "rm":
 			leaf = "credentials rm"
 		}

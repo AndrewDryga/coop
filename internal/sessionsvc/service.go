@@ -224,6 +224,17 @@ func (s *Service) executeEnsureWorkspaceTask(
 				Code: session.CodeInvalidSessionState, Detail: err.Error(),
 			})
 		}
+		if sessionHasJobField(sess, "workspace_input") {
+			if req.Task.OfferRef != sess.ExternalRef {
+				return session.Session{}, s.failServiceOperation(ctx, op.ID, checkpointRefusal("workspace input requires its original task offer"))
+			}
+			if pending, err := s.store.HasPendingWorkspaceRestore(ctx, sess.ID, ""); err != nil || pending {
+				return session.Session{}, s.failServiceOperation(ctx, op.ID, errors.Join(err, checkpointRefusal("checkpoint recovery must finish first")))
+			}
+			if err := s.initializeFleetWorkspace(ctx, sess); err != nil {
+				return session.Session{}, s.failServiceOperation(ctx, op.ID, err)
+			}
+		}
 		instance, err := tasks.EnsureControllerTask(sess.Workspace, req.Task)
 		if err != nil {
 			return session.Session{}, s.failServiceOperation(ctx, op.ID, &session.Error{
@@ -307,22 +318,26 @@ type RunnerFactory func(*session.Store) Runner
 
 // SourceRefresher uses trusted host credentials to fetch only the saved job's default
 // ref. It must leave the admitted source and its working tree unchanged.
+type WorkspaceInputFetcher func(context.Context, string, workerproto.BodyReference, io.Writer) error
+
 type SourceRefresher func(context.Context, string, workerproto.JobSource, string) (string, error)
 
 type Config struct {
-	StateRoot           string
-	SourceConfig        *config.Config
-	Runtime             runtime.Runtime
-	Executable          string
-	Host                Host
-	Runner              Runner
-	RunnerFactory       RunnerFactory
-	ReviewGate          ReviewGate
-	SourceRefresher     SourceRefresher
-	ReviewPublisher     ReviewPublisher
-	StopTimeout         time.Duration
-	CleanupInterval     time.Duration
-	OperationStaleAfter time.Duration
+	ModelAccess           ModelAccess
+	StateRoot             string
+	SourceConfig          *config.Config
+	Runtime               runtime.Runtime
+	Executable            string
+	Host                  Host
+	Runner                Runner
+	RunnerFactory         RunnerFactory
+	ReviewGate            ReviewGate
+	SourceRefresher       SourceRefresher
+	WorkspaceInputFetcher WorkspaceInputFetcher
+	ReviewPublisher       ReviewPublisher
+	StopTimeout           time.Duration
+	CleanupInterval       time.Duration
+	OperationStaleAfter   time.Duration
 	// StorageLimits overrides the storage policy derived from the volume's measured capacity.
 	StorageLimits *StorageLimits
 	Logger        *slog.Logger
@@ -379,21 +394,24 @@ type runtimeCleanupCandidate struct {
 }
 
 type Service struct {
-	store               *session.Store
-	stateRoot           string
-	sourceCfg           *config.Config
-	rt                  runtime.Runtime
-	executable          string
-	host                Host
-	runner              Runner
-	reviewGate          ReviewGate
-	sourceRefresher     SourceRefresher
-	reviewPublisher     ReviewPublisher
-	journalPruner       PublicationJournalPruner
-	stopTimeout         time.Duration
-	cleanupInterval     time.Duration
-	operationStaleAfter time.Duration
-	log                 *slog.Logger
+	serviceRelays         map[string]struct{}
+	modelAccess           ModelAccess
+	store                 *session.Store
+	stateRoot             string
+	sourceCfg             *config.Config
+	rt                    runtime.Runtime
+	executable            string
+	host                  Host
+	runner                Runner
+	reviewGate            ReviewGate
+	sourceRefresher       SourceRefresher
+	workspaceInputFetcher WorkspaceInputFetcher
+	reviewPublisher       ReviewPublisher
+	journalPruner         PublicationJournalPruner
+	stopTimeout           time.Duration
+	cleanupInterval       time.Duration
+	operationStaleAfter   time.Duration
+	log                   *slog.Logger
 
 	stopMu         sync.Mutex
 	mu             sync.Mutex
@@ -430,6 +448,8 @@ type Service struct {
 	runtimeMu               sync.Mutex
 	runtimeLocks            map[string]*sessionOperationLock
 	runtimeSlots            map[string]bool
+	machine                 *workerproto.MachineCapacity
+	runtimeRequests         map[string]workerproto.JobResources
 	runtimeChanged          chan struct{}
 	parkedRuntimeWait       time.Duration   // how long a "parked" precondition waits out a held runtime
 	restoring               map[string]bool // sessions whose workspace a restore is rewriting right now
@@ -472,18 +492,20 @@ func NewService(cfg Config) (*Service, error) {
 		return nil, err
 	}
 	service := &Service{
-		store: store, stateRoot: cfg.StateRoot,
+		modelAccess: cfg.ModelAccess,
+		store:       store, stateRoot: cfg.StateRoot,
 		sourceCfg: sourceCfg,
 		rt:        cfg.Runtime, executable: cfg.Executable, host: cfg.Host, runner: cfg.Runner,
-		reviewGate:          cfg.ReviewGate,
-		sourceRefresher:     cfg.SourceRefresher,
-		reviewPublisher:     cfg.ReviewPublisher,
-		journalPruner:       cfg.PublicationJournalPruner,
-		stopTimeout:         cfg.StopTimeout,
-		cleanupInterval:     cfg.CleanupInterval,
-		operationStaleAfter: cfg.OperationStaleAfter,
-		log:                 cfg.Logger,
-		workers:             make(map[string]*sessionWorker), active: make(map[string]*activeSessionTurn),
+		reviewGate:            cfg.ReviewGate,
+		sourceRefresher:       cfg.SourceRefresher,
+		workspaceInputFetcher: cfg.WorkspaceInputFetcher,
+		reviewPublisher:       cfg.ReviewPublisher,
+		journalPruner:         cfg.PublicationJournalPruner,
+		stopTimeout:           cfg.StopTimeout,
+		cleanupInterval:       cfg.CleanupInterval,
+		operationStaleAfter:   cfg.OperationStaleAfter,
+		log:                   cfg.Logger,
+		workers:               make(map[string]*sessionWorker), active: make(map[string]*activeSessionTurn),
 		pendingCancels:   make(map[string]*pendingSessionCancel),
 		quarantined:      make(map[string]struct{}),
 		operationLocks:   make(map[string]*sessionOperationLock),
@@ -695,6 +717,9 @@ func (s *Service) Start(parent context.Context) error {
 		s.starting = false
 		s.mu.Unlock()
 		return err
+	}
+	if s.rt.Name == "docker" {
+		s.measureRuntimeMachine(parent)
 	}
 	sessions, err := s.store.ListSessionsForRecovery(parent)
 	if err != nil {
@@ -1152,6 +1177,7 @@ func (s *Service) runSessionMaintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			s.measureRuntimeMachine(ctx)
 			s.cleanupIdleSessionRuntimes(ctx)
 			if err := s.reconcileInterruptedOperations(ctx, false); err != nil && ctx.Err() == nil {
 				s.log.Error("session operation reconciliation failed", "error", err)
@@ -1818,6 +1844,9 @@ func (s *Service) beginCreateOperation(
 	if err != nil {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: err.Error()}
 	}
+	if job.ModelCredentials == "controller" && !s.supportsControllerModels() {
+		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: "controller model access requires a configured Linux worker with local Docker"}
+	}
 	if _, err := jobEgressRules(job); err != nil {
 		return session.Operation{}, &session.Error{Code: session.CodeInvalidRequest, Detail: err.Error()}
 	}
@@ -2262,6 +2291,41 @@ func (s *Service) GetSession(ctx context.Context, id string) (session.Session, e
 	return s.store.GetSession(ctx, id)
 }
 
+// controllerProject reads the source bound to the admitted session, never its writable checkout.
+func (s *Service) controllerProject(ctx context.Context, id string) (*box.ControllerProject, error) {
+	bound, err := s.GetSession(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	job, err := sessionJobSpec(bound)
+	if err != nil || bound.State != session.SessionOpen || bound.Workspace == "" || job.Source == nil {
+		return nil, &session.Error{Code: "service_unavailable", Detail: "no active project service session"}
+	}
+	if job.Runtime == nil || job.Runtime.Compose == "" {
+		return nil, nil
+	}
+	repository, err := stagedJobRepository(s.store.Root(), *job.Source)
+	if err != nil {
+		return nil, err
+	}
+	machine := s.runtimeMachine()
+	if machine == nil {
+		return nil, &session.Error{Code: "service_unavailable", Detail: "worker has no current runtime measurement"}
+	}
+	return &box.ControllerProject{Workspace: bound.Workspace, Repository: repository, Definition: job.Runtime.Compose, JobDigest: bound.JobDigest, Daemon: machine.Daemon}, nil
+}
+
+func (s *Service) ControllerServices(ctx context.Context, id string) ([]box.ControllerService, error) {
+	project, err := s.controllerProject(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if project == nil {
+		return []box.ControllerService{}, nil
+	}
+	return project.Services(ctx, s.rt)
+}
+
 func (s *Service) PrepareSession(ctx context.Context, id string, expectedRevision int64) (session.Session, error) {
 	var bound session.Session
 	var policy executionConfig
@@ -2691,6 +2755,21 @@ func (s *Service) closeQuarantinedSession(ctx context.Context, key string, req s
 }
 
 func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceChanges, error) {
+	return s.getWorkspaceChanges(ctx, sessionID, false)
+}
+
+// The candidate is visible before its child and Compose cleanup finishes. Share
+// validation's runtime fence so no job process can change the inspected inputs.
+func (s *Service) getVerificationChanges(ctx context.Context, sessionID, turnID, candidate string) (WorkspaceChanges, error) {
+	unlock, err := s.lockAndReapAwaitingCandidateRuntime(ctx, sessionID, turnID, candidate)
+	if err != nil {
+		return WorkspaceChanges{}, err
+	}
+	defer unlock()
+	return s.getWorkspaceChanges(ctx, sessionID, true)
+}
+
+func (s *Service) getWorkspaceChanges(ctx context.Context, sessionID string, verifyInput bool) (WorkspaceChanges, error) {
 	sess, err := s.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return WorkspaceChanges{}, err
@@ -2718,6 +2797,9 @@ func (s *Service) GetChanges(ctx context.Context, sessionID string) (WorkspaceCh
 		changes.AdmittedSourceTree, err = sessionWorkspaceTree(
 			sess.Workspace, sess.Source.SelectedCommit,
 		)
+	}
+	if err == nil && verifyInput {
+		changes.WorkingSourceDigest, err = fleetWorkingSourceDigest(ctx, sess, changes.ForkHead)
 	}
 	return changes, err
 }

@@ -26,6 +26,9 @@ func (s *Service) sessionExecution(ctx context.Context, bound session.Session) (
 	if err != nil {
 		return executionConfig{}, err
 	}
+	if job.WorkspaceInput != nil && bound.WorkspaceTask == nil {
+		return executionConfig{}, errors.New("initialize the submitted workspace before execution")
+	}
 	policy, err := s.resolveJobExecution(ctx, job)
 	if err != nil {
 		return executionConfig{}, err

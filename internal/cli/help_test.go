@@ -481,7 +481,7 @@ func TestManualOpensWithTheApprovedMenu(t *testing.T) {
 // a command a person can run is a command the manual explains.
 var wantManualOrder = []string{
 	"run", "shell", "claude", "codex", "gemini", "grok",
-	"login", "credentials", "credentials default", "credentials rm", "credentials account",
+	"login", "credentials", "credentials default", "credentials rm", "credentials account", "credentials transfer",
 	"models", "usage", "presets init", "presets",
 	"tasks", "tasks ls", "tasks add", "tasks claim", "tasks release", "tasks lease",
 	"tasks block", "tasks unblock", "tasks park", "tasks done", "tasks path", "tasks queues",
@@ -495,7 +495,7 @@ var wantManualOrder = []string{
 	"doctor", "approve", "net", "net runs", "net inspect", "net check", "net blocked",
 	"net watch", "net export", "net forget", "net setup", "net recover", "check-secrets", "sign",
 	"init", "build", "update", "setup", "setup apparmor", "version",
-	"acp", "sessions", "sessions doctor", "sessions check", "sessions quiescence", "sessions compact", "sessions connect",
+	"acp", "sessions", "sessions doctor", "sessions check", "sessions quiescence", "sessions compact", "sessions connect", "sessions fleet",
 	"prompt", "completion",
 }
 

@@ -127,7 +127,7 @@ func (root *accountAuthorityRoot) holdsOnlyUnpublished() (bool, error) {
 		names = append(names, entry.Name())
 	}
 	for _, name := range names {
-		if name != ".authority.lock" && !strings.HasPrefix(name, ".authority-") {
+		if name != ".authority.lock" && !strings.HasPrefix(name, ".private-") && !strings.HasPrefix(name, ".authority-") {
 			return false, nil
 		}
 	}
@@ -178,7 +178,7 @@ func ImportNativeSignIn(ctx context.Context, cfg *config.Config, provider, accou
 	files := make(map[string][]byte)
 	for _, artifact := range native.Artifacts {
 		data, err := safefile.ReadRegular(root, artifact.Name, artifact.Limit)
-		if errors.Is(err, os.ErrNotExist) && !artifact.Required {
+		if errors.Is(err, os.ErrNotExist) && !artifact.Required && !artifact.RequiredAtSignIn {
 			continue
 		}
 		if errors.Is(err, os.ErrNotExist) {

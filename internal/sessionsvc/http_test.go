@@ -127,8 +127,12 @@ func TestSessionHTTPCapabilitiesAdvertiseSupportedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	versions, ok := document["repository_freshness_receipt_versions"].([]any)
-	if !ok || len(document) != 10 || len(versions) != 1 || versions[0] != float64(2) {
+	if !ok || len(document) != 11 || len(versions) != 1 || versions[0] != float64(2) {
 		t.Fatalf("capabilities = %#v", document)
+	}
+	serviceBudget, ok := document["project_service_budget_versions"].([]any)
+	if !ok || len(serviceBudget) != 1 || serviceBudget[0] != float64(1) || document["model_proxy_versions"] != nil {
+		t.Fatalf("unconfigured model proxy or service budget = %#v", document)
 	}
 	jobs, ok := document["job_spec_versions"].([]any)
 	if !ok || len(jobs) != 1 || jobs[0] != float64(2) {

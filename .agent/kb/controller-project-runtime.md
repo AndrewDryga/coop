@@ -3,7 +3,7 @@ name: controller-project-runtime
 description: frozen controller selectors provide project toolchains and workspace-owned test services
 subsystem: worker
 sources: [internal/workerproto/job.go, internal/box/controller_runtime.go, internal/box/run.go, internal/box/services.go, internal/sessionsvc/job.go, internal/sessionsvc/service.go, docs/session-api.md, internal/workerconnector/capabilities.go]
-updated: 2026-11-17
+updated: 2026-11-27
 ---
 
 # Project tools and services in controller jobs
@@ -49,7 +49,13 @@ A review uses its granted toolchain, project defaults and Work stack by default.
 and `review.env` can provide a separate test stack, as before. A declared review stack is required,
 and its containers, network and named volumes are removed when the review ends.
 
+A remote operator finds the exact service by its frozen Compose declaration, the worker daemon
+identity, the workspace project and job digest. Its granted TCP ports come from literal
+`expose` entries. A capless release helper joins the observed container's network namespace
+and dials its loopback address. This also reaches services on an engine in a separate container.
+
 ## Changelog
+- 2026-11-27 — documented remote service observation, log continuation and private ingress.
 - 2026-11-17 — added the files where the card's named symbols live to sources (audit K2-6; checked with grep).
 - 2026-11-04 — added the frozen project-runtime contract, tested toolchain/service startup,
   per-job PostgreSQL isolation, named-volume continuity, and cleanup after Compose deletion.

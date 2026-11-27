@@ -8,7 +8,7 @@ import (
 )
 
 func TestAPIRequestOnlyAddressesPrivateCoopRoutes(t *testing.T) {
-	for _, path := range []string{"https://example.com/v1/sessions", "//example.com/v1/sessions", "/other", "/v1/../secrets", "/v1/%2e%2e/secrets", "/v1/a//b", "/v1/a%00b", "/v1/a%5cb"} {
+	for _, path := range []string{"https://example.com/v1/sessions", "//example.com/v1/sessions", "/other", "/v1/../secrets", "/v1/%2e%2e/secrets", "/v1/a//b", "/v1/a%00b", "/v1/a%5cb", "/v1/model-access/session/grant", "/v1/%6dodel-access/session/grant", "/v1/model-access%2fsession/grant", "/v1/model-access"} {
 		if (APIRequest{Method: "GET", Path: path}).Validate() == nil {
 			t.Errorf("accepted %q", path)
 		}

@@ -227,7 +227,7 @@ func quiescenceFailure(state string, err error) error {
 
 // sessionCommands are the `coop sessions` subcommands — the one list the dispatch below, the
 // unknown-subcommand correction, the help router and shell completion all read.
-var sessionCommands = []string{"connect", "doctor", "check", "quiescence", "compact"}
+var sessionCommands = []string{"connect", "doctor", "check", "quiescence", "compact", "fleet"}
 
 // sessionFlags are each subcommand's flags as its parser accepts them; shell completion reads them,
 // and TestSessionsCompletionMatchesTheParsers holds the two together.
@@ -244,6 +244,8 @@ func (a *app) cmdSessions(args []string) (int, error) {
 		return groupHelp("sessions")
 	}
 	switch args[0] {
+	case "fleet":
+		return runFleet(args[1:])
 	case "connect":
 		path, err := parseSessionConnectFlags(args[1:])
 		if err != nil {
@@ -519,15 +521,24 @@ func reportSessionCheck(state string, store session.StoreCheck, records []worker
 }
 
 // serveLocalSession is the private API owned by the controller connection.
-func serveLocalSession(ctx context.Context, cfg *config.Config, state, socket string, refresh sessionsvc.SourceRefresher, publish sessionsvc.ReviewPublisher, listening func()) error {
+func serveLocalSession(ctx context.Context, cfg *config.Config, state, socket string, refresh sessionsvc.SourceRefresher, publish sessionsvc.ReviewPublisher, transport *workerconnector.HTTPTransport, listening func()) error {
+	var models sessionsvc.ModelAccess
+	var input sessionsvc.WorkspaceInputFetcher
+	if transport != nil {
+		models = transport
+		input = transport.FetchWorkspaceInput
+	}
+
 	if err := sessionsvc.EnsureAncestors(filepath.Dir(state)); err != nil {
 		return err
 	}
 	serviceConfig := sessionsvc.Config{
-		StateRoot: state, SourceConfig: cfg, Executable: os.Args[0],
-		SourceRefresher: refresh,
-		ReviewPublisher: publish,
-		Host:            sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+		ModelAccess: models,
+		StateRoot:   state, SourceConfig: cfg, Executable: os.Args[0],
+		SourceRefresher:       refresh,
+		WorkspaceInputFetcher: input,
+		ReviewPublisher:       publish,
+		Host:                  sessionHost(), Logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)),
 		PublicationJournalPruner: func(settled func(string) (bool, error)) (int, error) {
 			return workerconnector.PrunePublicationProgress(state, time.Now(), settled)
 		},

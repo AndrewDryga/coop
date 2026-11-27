@@ -52,6 +52,9 @@ func (r APIRequest) Validate() error {
 		strings.ContainsAny(parsed.Path, "\\\x00\r\n") {
 		return errors.New("API path must be a relative Coop /v1 path")
 	}
+	if parsed.Path == "/v1/model-access" || strings.HasPrefix(parsed.Path, "/v1/model-access/") {
+		return errors.New("model credentials use the private host relay")
+	}
 	if len(r.Body) > 256<<10 || (len(r.Body) > 0 && !json.Valid(r.Body)) ||
 		(r.BodyRef != nil && (len(r.Body) > 0 || r.BodyRef.Validate() != nil)) {
 		return errors.New("invalid API body")

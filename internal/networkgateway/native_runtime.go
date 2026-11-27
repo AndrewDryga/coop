@@ -38,6 +38,7 @@ type NativeRunConfig struct {
 }
 
 type NativeAccountConfig struct {
+	Relay   bool
 	Binding NativeBrokerBinding
 	Origins []NativeOriginConfig
 }
@@ -242,7 +243,11 @@ func (r *nativeRunRuntime) serve(ctx context.Context, ready func()) error {
 			if r.ordinary != nil {
 				ordinaryDecision = func(port int) egress.Decision { return r.ordinary(host, port) }
 			}
-			origins = append(origins, NativeBrokerOrigin{Host: host, Certificate: certificate, Requests: origin.Requests,
+			var relay http.RoundTripper
+			if account.Relay {
+				relay = &nativeRelayTransport{provider: account.Binding.Provider, upstream: host}
+			}
+			origins = append(origins, NativeBrokerOrigin{Relay: relay, Host: host, Certificate: certificate, Requests: origin.Requests,
 				AccountHeaders: origin.AccountHeaders, ClientAccountHeaders: origin.ClientAccountHeaders,
 				DialContext: r.dial[host], OrdinaryDecision: ordinaryDecision})
 		}
