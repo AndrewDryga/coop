@@ -3,7 +3,7 @@ name: supply-chain-checks
 description: Lockfile auditing and final-image vulnerability coverage
 subsystem: development
 sources: [internal/box/image.go, internal/gatewayimage/Dockerfile, Makefile, .github/workflows/ci.yml, tools/imagevuln/main.go, tools/installtrivy/main.go, tools/installtrivy/checksums.txt, internal/box/base_candidate.go, internal/fsimage/Dockerfile, .agent/project.yaml, agent_config_test.go, .agent/Dockerfile, internal/box/locked_image.go]
-updated: 2026-11-17
+updated: 2026-11-28
 ---
 
 `npm-audit` uses the embedded-client source lock without installation or lifecycle scripts. Its
@@ -47,6 +47,7 @@ Node24/Bookworm; the gateway retains its Envoy digest and installs exact patched
 from a dated snapshot. Updating one base image cannot patch the other image's OS packages.
 
 ## Changelog
+- 2026-11-28 — verified that refreshing APT indexes alone leaves inherited PAM and zstd packages at the versions in the Node base. The shared install list now explicitly upgrades them in both worker images. The four-image scan confirmed zero fixable high or critical findings.
 - 2026-11-17 — added the gate-pin tests, the repo's own Dockerfile and locked_image.go to sources (audit K6-9; checked with grep).
 - 2026-11-10 — rebuilt unchanged asdf0.20.2 from its verified source commit with the existing
   pinnedGo1.27.3 stage; removed vulnerable prebuilt downloads and architecture-specific asset map.
