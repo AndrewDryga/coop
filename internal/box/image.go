@@ -137,6 +137,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential autoconf m4 libncurses-dev libssl-dev unzip locales curl git git-lfs ca-certificates \
       postgresql-client procps inotify-tools util-linux socat \
+      libpam-modules libpam-modules-bin libpam-runtime libpam0g libzstd1 \
       python3 python-is-python3 python3-pip \
       ripgrep fd-find jq tree shellcheck \
  && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
